@@ -1,0 +1,3 @@
+provider,api,scope,rows,duplicate_count,invalid_ohlc_count,invalid_volume_count,invalid_amount_count,null_required_count
+tushare,daily,sample_codes_3y,3863,0,0,0,0,0
+tushare,daily,market_20260806,5533,0,0,0,0,0

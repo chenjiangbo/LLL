@@ -1,0 +1,18 @@
+# Virtual environment
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Node modules & Next.js build
+node_modules/
+.next/
+out/
+build/
+
+# Logs & temp
+*.log
+.DS_Store
+.gemini/
+scratch/
+PYEOF

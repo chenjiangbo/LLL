@@ -1,0 +1,3 @@
+provider,api,scope,first_date,last_date,rows,duplicate_count,invalid_ohlc_count,invalid_volume_count,invalid_amount_count,null_required_count
+tushare,fund_daily,E03,20260702,20260806,104,0,0,0,0,0
+tushare,pro_bar,E04,20260702,20260806,26,0,0,0,0,0

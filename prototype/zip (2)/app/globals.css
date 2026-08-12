@@ -1,0 +1,284 @@
+@import "tailwindcss";
+
+/* ==========================================
+   View Transitions Setup for Circular Ripple Animation
+   ========================================== */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+::view-transition-old(root) {
+  z-index: 1;
+}
+::view-transition-new(root) {
+  z-index: 9999;
+}
+
+/* ==========================================
+   Cyber Slate Dark Mode System ([data-theme="dark"])
+   ONLY active when html has data-theme="dark".
+   Does NOT affect the default theme.
+   ========================================== */
+
+/* Fullscreen Canvas & Base Typography */
+html[data-theme="dark"],
+html[data-theme="dark"] body,
+html[data-theme="dark"] div.min-h-screen {
+  background: #0b0f17 !important;
+  background-color: #0b0f17 !important;
+  color: #f8fafc !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif !important;
+}
+
+/* Glassmorphic Header Navigation Bar */
+html[data-theme="dark"] header {
+  background-color: rgba(15, 23, 42, 0.9) !important;
+  backdrop-filter: blur(16px) !important;
+  -webkit-backdrop-filter: blur(16px) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4) !important;
+}
+
+/* Theme Toggle Button in Dark Mode */
+html[data-theme="dark"] .theme-toggle-btn {
+  background-color: #1e293b !important;
+  border-color: rgba(255, 255, 255, 0.2) !important;
+  color: #fbbf24 !important;
+}
+
+/* Major Outer Cards, Sub-cards, Tables & Sections */
+html[data-theme="dark"] section,
+html[data-theme="dark"] section.rounded-xl,
+html[data-theme="dark"] section.rounded-2xl,
+html[data-theme="dark"] div.rounded-xl,
+html[data-theme="dark"] div.rounded-2xl,
+html[data-theme="dark"] div.rounded-lg,
+html[data-theme="dark"] .bg-white,
+html[data-theme="dark"] [class*="bg-white"],
+html[data-theme="dark"] .bg-\[\#f0ece4\],
+html[data-theme="dark"] .bg-\[\#fbf7ee\],
+html[data-theme="dark"] .bg-\[\#f7f3ea\],
+html[data-theme="dark"] .bg-\[\#f4f0e8\],
+html[data-theme="dark"] .bg-\[\#fbf9f5\],
+html[data-theme="dark"] .bg-\[\#f7f5f0\],
+html[data-theme="dark"] .bg-\[\#faf8f3\],
+html[data-theme="dark"] .bg-\[\#faf6f0\],
+html[data-theme="dark"] .bg-\[\#fcfbfa\] {
+  background-color: #141a27 !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3) !important;
+  color: #f8fafc !important;
+}
+
+/* Wildcard: Soften all light grey borders into subtle slate borders */
+html[data-theme="dark"] [class*="border-[#c4c8bc]"],
+html[data-theme="dark"] [class*="border-[#e4e0d8]"],
+html[data-theme="dark"] [class*="border-[#e2d5bd]"] {
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* Sub-cards & Nested Stage Boxes (Unselected) */
+html[data-theme="dark"] section div.rounded-xl,
+html[data-theme="dark"] div.cursor-pointer.rounded-xl {
+  background-color: #111622 !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+  color: #cbd5e1 !important;
+}
+
+/* Selected Stage / State Cards - Clear Neon Blue Ring & Glow */
+html[data-theme="dark"] div.rounded-xl.ring-2,
+html[data-theme="dark"] div.rounded-xl.border-\[\#4a7c59\],
+html[data-theme="dark"] div.rounded-xl.border-\[\#705c30\],
+html[data-theme="dark"] div.rounded-xl.border-\[\#2e3230\],
+html[data-theme="dark"] div.rounded-xl.border-rose-700 {
+  background-color: #1a2336 !important;
+  border-color: #3b82f6 !important;
+  box-shadow: 0 0 18px rgba(59, 130, 246, 0.35) !important;
+  color: #ffffff !important;
+}
+
+/* Form Inputs & Text Fields in Dark Mode */
+html[data-theme="dark"] input,
+html[data-theme="dark"] input.bg-white,
+html[data-theme="dark"] input[type="text"] {
+  background-color: #1e293b !important;
+  color: #ffffff !important;
+  border-color: rgba(255, 255, 255, 0.2) !important;
+}
+
+/* ==========================================
+   HIGH CONTRAST & BRIGHT TYPOGRAPHY (NO DARK GREY TEXT)
+   ========================================== */
+
+/* All headings, stock codes, and primary text MUST be bright white */
+html[data-theme="dark"] h1,
+html[data-theme="dark"] h2,
+html[data-theme="dark"] h3,
+html[data-theme="dark"] h4,
+html[data-theme="dark"] h5,
+html[data-theme="dark"] .font-bold,
+html[data-theme="dark"] font,
+html[data-theme="dark"] code {
+  color: #ffffff !important;
+}
+
+/* Overriding dark text classes text-[#2e3230], text-[#4a4e4a], text-[#686d68] with bright slate & white */
+html[data-theme="dark"] .text-\[\#2e3230\],
+html[data-theme="dark"] [class*="text-[#2e3230]"],
+html[data-theme="dark"] .text-\[\#2e3230\]\/90 {
+  color: #f8fafc !important;
+}
+
+html[data-theme="dark"] .text-\[\#4a4e4a\],
+html[data-theme="dark"] .text-\[\#686d68\],
+html[data-theme="dark"] [class*="text-[#4a4e4a]"],
+html[data-theme="dark"] [class*="text-[#686d68]"],
+html[data-theme="dark"] .text-gray-500,
+html[data-theme="dark"] .text-gray-600 {
+  color: #cbd5e1 !important;
+}
+
+/* Table Headers & Table Data Cells */
+html[data-theme="dark"] table th {
+  color: #94a3b8 !important;
+  background-color: #141a27 !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12) !important;
+}
+
+html[data-theme="dark"] table td,
+html[data-theme="dark"] table td span {
+  color: #e2e8f0 !important;
+}
+
+html[data-theme="dark"] table td.font-mono,
+html[data-theme="dark"] table td.font-bold {
+  color: #ffffff !important;
+}
+
+/* ==========================================
+   ACTIVE / SELECTED STATES (Vibrant Neon Glow)
+   ========================================== */
+
+/* Active Primary Pill / Nav Tab / Selected Filter -> Vibrant Cyber Blue */
+html[data-theme="dark"] .bg-\[\#4a7c59\],
+html[data-theme="dark"] button.bg-\[\#4a7c59\],
+html[data-theme="dark"] .bg-\[\#2e3230\] {
+  background: linear-gradient(135deg, #2563eb 0%, #3b82f6 100%) !important;
+  color: #ffffff !important;
+  font-weight: 700 !important;
+  border: none !important;
+  border-radius: 20px !important;
+  box-shadow: 0 2px 12px rgba(37, 99, 235, 0.45) !important;
+}
+
+html[data-theme="dark"] .hover\:bg-\[\#3b6447\]:hover,
+html[data-theme="dark"] button.bg-\[\#4a7c59\]:hover {
+  background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%) !important;
+}
+
+/* Active "淘汰" Red Filter Tag -> Neon Rose Red */
+html[data-theme="dark"] .bg-\[\#8f2927\],
+html[data-theme="dark"] .bg-\[\#b83230\],
+html[data-theme="dark"] button.bg-\[\#8f2927\] {
+  background: linear-gradient(135deg, #e11d48 0%, #f43f5e 100%) !important;
+  color: #ffffff !important;
+  font-weight: 700 !important;
+  border: none !important;
+  border-radius: 20px !important;
+  box-shadow: 0 2px 12px rgba(244, 63, 94, 0.45) !important;
+}
+
+/* Active "通过" Green Filter Tag -> Neon Emerald Green */
+html[data-theme="dark"] .bg-\[\#237a4b\] {
+  background: linear-gradient(135deg, #059669 0%, #10b981 100%) !important;
+  color: #ffffff !important;
+  font-weight: 700 !important;
+  border: none !important;
+  border-radius: 20px !important;
+  box-shadow: 0 2px 12px rgba(16, 185, 129, 0.45) !important;
+}
+
+/* ==========================================
+   INACTIVE / UNSELECTED STATES (Subtle Dark Surfaces)
+   ========================================== */
+
+/* Unselected Filter Pills & Secondary Labels */
+html[data-theme="dark"] .bg-\[\#eae6de\],
+html[data-theme="dark"] .bg-\[\#e4e0d8\],
+html[data-theme="dark"] label {
+  background-color: #1a2232 !important;
+  color: #cbd5e1 !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  border-radius: 20px !important;
+}
+
+html[data-theme="dark"] .hover\:bg-\[\#e4e0d8\]:hover,
+html[data-theme="dark"] .hover\:bg-\[\#f0ece4\]:hover,
+html[data-theme="dark"] .hover\:bg-\[\#f7f5f0\]\/60:hover {
+  background-color: #242f45 !important;
+  color: #ffffff !important;
+}
+
+/* Unselected Red / Green / Yellow Tint Badges */
+html[data-theme="dark"] .text-\[\#b83230\],
+html[data-theme="dark"] .text-\[\#8f2927\] {
+  color: #fb7185 !important;
+}
+
+html[data-theme="dark"] .bg-\[\#b83230\]\/10,
+html[data-theme="dark"] .bg-\[\#8f2927\]\/10,
+html[data-theme="dark"] .bg-\[\#8f2927\]\/15 {
+  background-color: rgba(244, 63, 94, 0.18) !important;
+  color: #fb7185 !important;
+  border: 1px solid rgba(244, 63, 94, 0.3) !important;
+  border-radius: 20px !important;
+}
+
+html[data-theme="dark"] .text-\[\#237a4b\] {
+  color: #34d399 !important;
+}
+
+html[data-theme="dark"] .bg-\[\#237a4b\]\/10 {
+  background-color: rgba(16, 185, 129, 0.18) !important;
+  color: #34d399 !important;
+  border: 1px solid rgba(16, 185, 129, 0.3) !important;
+  border-radius: 20px !important;
+}
+
+html[data-theme="dark"] .text-\[\#705c30\] {
+  color: #fbbf24 !important;
+}
+
+html[data-theme="dark"] .bg-\[\#705c30\]\/10,
+html[data-theme="dark"] .bg-\[\#705c30\]\/15 {
+  background-color: rgba(245, 158, 11, 0.18) !important;
+  color: #fbbf24 !important;
+  border: 1px solid rgba(245, 158, 11, 0.3) !important;
+  border-radius: 20px !important;
+}
+
+/* Table Rows & Dividers */
+html[data-theme="dark"] table tr,
+html[data-theme="dark"] tr.border-b {
+  border-bottom-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+html[data-theme="dark"] tbody tr {
+  background-color: #111622 !important;
+  color: #f8fafc !important;
+}
+
+html[data-theme="dark"] tbody tr:hover {
+  background-color: #1e293b !important;
+}
+
+/* Select Inputs */
+html[data-theme="dark"] select {
+  color: #ffffff !important;
+  background-color: transparent !important;
+}
+html[data-theme="dark"] select option {
+  background-color: #1e293b !important;
+  color: #ffffff !important;
+}

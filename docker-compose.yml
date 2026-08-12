@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: lll-market-review-postgres
+    environment:
+      POSTGRES_USER: lll
+      POSTGRES_PASSWORD: lll_dev_password
+      POSTGRES_DB: lll_market_review
+    ports:
+      - "15432:5432"
+    volumes:
+      - lll_market_review_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lll -d lll_market_review"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  lll_market_review_pgdata:

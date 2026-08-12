@@ -1,0 +1,9 @@
+{
+  "generated_at": "2026-08-07T13:22:46.905155",
+  "python": "3.12.4 (main, Aug 29 2025, 17:12:57) [Clang 17.0.0 (clang-1700.0.13.5)]",
+  "latest_completed_trade_date": "20260806",
+  "providers": {
+    "gm": "NOT_CONFIGURED",
+    "baostock_installed": false
+  }
+}
