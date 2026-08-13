@@ -545,11 +545,6 @@ export default function SingleStockTestView() {
                 <span className="font-mono font-bold text-[#2e3230]">
                   {activeDisplayItem.trade_date.slice(0, 4)}-{activeDisplayItem.trade_date.slice(4, 6)}-{activeDisplayItem.trade_date.slice(6, 8)}
                 </span>
-                {hoveredHistoryItem && (
-                  <span className="text-[10px] text-[#4a7c59] bg-[#4a7c59]/15 px-1.5 py-0.2 rounded font-bold">
-                    自动联动中
-                  </span>
-                )}
               </div>
 
               <div className="flex items-center gap-2">
