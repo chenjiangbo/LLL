@@ -557,10 +557,10 @@ export default function KLineModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-xs p-3">
       <div className="flex flex-col w-[96vw] max-w-[1500px] h-[94vh] bg-white rounded-xl shadow-2xl overflow-hidden border border-slate-200">
-        {/* 全局单行工具栏 (Single Header Bar, 高度 46px) */}
-        <div className="flex flex-wrap items-center justify-between px-4 py-2 border-b border-slate-200 bg-slate-50 shrink-0 gap-2 h-12 text-xs">
+        {/* 全局单行工具栏 (Single Header Bar, 严格单行不换行 flex-nowrap) */}
+        <div className="flex flex-nowrap items-center justify-between px-3 py-1.5 border-b border-slate-200 bg-slate-50 shrink-0 gap-1.5 h-12 text-xs overflow-x-auto no-scrollbar">
           {/* 左区：标的信息、上一只/下一只、周期/复权控制 */}
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1 shrink-0">
             <LineChart className="w-4 h-4 text-emerald-600 mr-0.5" />
 
             {/* 上一只/下一只导航按钮 */}
@@ -663,8 +663,8 @@ export default function KLineModal({
             </div>
           </div>
 
-          {/* 中区：主图均线设置与副图指标切换 */}
-          <div className="flex items-center gap-3">
+          {/* 右区：主图均线设置与副图指标切换 */}
+          <div className="flex items-center gap-2 shrink-0">
             {/* 主图均线设置 */}
             <div ref={maConfigRef} className="relative flex items-center gap-1 bg-white border border-slate-200 px-2 py-0.5 rounded">
               <span className="font-bold text-slate-700 text-[11px]">主图MA:</span>

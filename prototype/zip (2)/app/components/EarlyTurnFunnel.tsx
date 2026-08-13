@@ -46,6 +46,7 @@ interface EarlyTurnStockItem {
 interface EarlyTurnResponse {
   total: number;
   counts: Record<string, number>;
+  industry_counts?: Record<string, number>;
   items: EarlyTurnStockItem[];
   page: number;
   page_size: number;
@@ -68,6 +69,9 @@ export default function EarlyTurnFunnel({
   const [activeState, setActiveState] = useState<EarlyTurnState>('ALL');
   const [activeBg, setActiveBg] = useState<BackgroundType>('ALL');
   const [selectedIndustry, setSelectedIndustry] = useState<string>('ALL');
+  const [industryShowCount, setIndustryShowCount] = useState<number>(20);
+  const [industrySearchQuery, setIndustrySearchQuery] = useState<string>('');
+  const [showIndustryDropdown, setShowIndustryDropdown] = useState<boolean>(false);
   const [minScore, setMinScore] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
@@ -179,6 +183,36 @@ export default function EarlyTurnFunnel({
       setRunningTask(false);
     }
   };
+
+  const industryCounts = useMemo(() => {
+    return data?.industry_counts || {};
+  }, [data]);
+
+  const totalIndustryCount = useMemo(() => {
+    if (data?.industry_counts && Object.keys(data.industry_counts).length > 0) {
+      return Object.values(data.industry_counts).reduce((s, n) => s + n, 0);
+    }
+    return data?.total || 0;
+  }, [data]);
+
+  const sortedIndustries = useMemo(() => {
+    return Object.entries(industryCounts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, count]) => ({ name, count }));
+  }, [industryCounts]);
+
+  const topIndustries = useMemo(() => {
+    return sortedIndustries.slice(0, industryShowCount);
+  }, [sortedIndustries, industryShowCount]);
+
+  const allIndustries = useMemo(() => {
+    return Object.keys(industryCounts).sort((a, b) => a.localeCompare(b, 'zh-CN'));
+  }, [industryCounts]);
+
+  const filteredIndustriesForSearch = useMemo(() => {
+    if (!industrySearchQuery.trim()) return allIndustries;
+    return allIndustries.filter((ind) => ind.toLowerCase().includes(industrySearchQuery.toLowerCase().trim()));
+  }, [allIndustries, industrySearchQuery]);
 
   const currentItems = data?.items || [];
   const selectedStock = selectedStockIndex !== null ? currentItems[selectedStockIndex] : null;
@@ -446,6 +480,117 @@ export default function EarlyTurnFunnel({
           <p className={`text-[10px] ${activeState === 'TOO_LATE' ? 'text-rose-100' : 'text-[#686d68]'}`}>
             信号强但股价已大幅拉升偏离均线
           </p>
+        </div>
+      </div>
+
+      {/* 行业筛选与统计 Pills 栏 */}
+      <div className="bg-[#f0ece4]/70 p-2.5 rounded-xl border border-[#c4c8bc]/40">
+        <div className="flex flex-wrap items-center gap-1.5 text-xs">
+          <span className="font-bold text-[#686d68] mr-1">行业筛选:</span>
+          <button
+            onClick={() => {
+              setSelectedIndustry('ALL');
+              setPage(1);
+            }}
+            className={`px-2.5 py-1 font-bold rounded-md transition ${
+              selectedIndustry === 'ALL'
+                ? 'bg-[#4a7c59] text-white shadow-xs'
+                : 'bg-white text-[#4a4e4a] hover:bg-[#e4e0d8] border border-[#c4c8bc]/40'
+            }`}
+          >
+            全部 ({totalIndustryCount})
+          </button>
+          {topIndustries.map((ind) => (
+            <button
+              key={ind.name}
+              onClick={() => {
+                setSelectedIndustry(ind.name);
+                setPage(1);
+              }}
+              className={`px-2.5 py-1 font-bold rounded-md transition ${
+                selectedIndustry === ind.name
+                  ? 'bg-[#4a7c59] text-white shadow-xs'
+                  : 'bg-white text-[#4a4e4a] hover:bg-[#e4e0d8] border border-[#c4c8bc]/40'
+              }`}
+            >
+              {ind.name} ({ind.count})
+            </button>
+          ))}
+          {industryShowCount < sortedIndustries.length && (
+            <button
+              onClick={() => setIndustryShowCount((c) => Math.min(c + 20, sortedIndustries.length))}
+              className="px-2 py-1 font-bold rounded-md border border-dashed border-[#4a7c59]/60 text-[#4a7c59] hover:bg-[#4a7c59]/10 transition"
+            >
+              更多 (+{Math.min(20, sortedIndustries.length - industryShowCount)})
+            </button>
+          )}
+          {industryShowCount > 20 && (
+            <button
+              onClick={() => setIndustryShowCount(20)}
+              className="px-2 py-1 font-bold rounded-md border border-dashed border-[#686d68]/50 text-[#686d68] hover:bg-[#686d68]/10 transition"
+            >
+              收起
+            </button>
+          )}
+
+          {/* 搜索行业 Combobox */}
+          <div className="relative ml-auto">
+            <button
+              onClick={() => setShowIndustryDropdown(!showIndustryDropdown)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 font-bold bg-white border border-[#c4c8bc]/60 rounded-md text-[#2e3230] hover:bg-slate-50 transition shadow-xs"
+            >
+              <Filter className="w-3.5 h-3.5 text-[#4a7c59]" />
+              <span>{selectedIndustry === 'ALL' ? '搜索子行业' : `已选: ${selectedIndustry}`}</span>
+            </button>
+
+            {showIndustryDropdown && (
+              <div className="absolute right-0 top-8 z-30 w-64 p-2 bg-white rounded-lg shadow-xl border border-[#c4c8bc]/60 space-y-2">
+                <div className="flex items-center gap-1 bg-[#faf6f0] px-2 py-1.5 rounded border border-[#c4c8bc]/40">
+                  <Search className="w-3.5 h-3.5 text-[#686d68]" />
+                  <input
+                    type="text"
+                    value={industrySearchQuery}
+                    onChange={(e) => setIndustrySearchQuery(e.target.value)}
+                    placeholder="输入行业打字搜索..."
+                    className="w-full text-xs bg-transparent outline-none text-[#2e3230]"
+                  />
+                </div>
+                <div className="max-h-56 overflow-y-auto space-y-0.5 pr-1">
+                  <button
+                    onClick={() => {
+                      setSelectedIndustry('ALL');
+                      setPage(1);
+                      setShowIndustryDropdown(false);
+                    }}
+                    className="w-full text-left px-2 py-1 text-xs text-[#2e3230] hover:bg-[#faf6f0] rounded font-medium"
+                  >
+                    全部 ({totalIndustryCount})
+                  </button>
+                  {filteredIndustriesForSearch.map((ind) => (
+                    <button
+                      key={ind}
+                      onClick={() => {
+                        setSelectedIndustry(ind);
+                        setPage(1);
+                        setShowIndustryDropdown(false);
+                      }}
+                      className={`w-full text-left px-2 py-1 text-xs rounded transition flex items-center justify-between ${
+                        selectedIndustry === ind
+                          ? 'bg-[#4a7c59]/15 text-[#4a7c59] font-bold'
+                          : 'text-[#2e3230] hover:bg-[#faf6f0]'
+                      }`}
+                    >
+                      <span>{ind}</span>
+                      <span className="text-[10px] text-[#686d68] font-mono">({industryCounts[ind] || 0})</span>
+                    </button>
+                  ))}
+                  {filteredIndustriesForSearch.length === 0 && (
+                    <div className="text-center py-4 text-xs text-gray-400">无匹配行业</div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

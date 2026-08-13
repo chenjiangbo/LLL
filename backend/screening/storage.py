@@ -2155,6 +2155,35 @@ class PostgresScreeningStore:
             ).fetchall()
             counts = {r["state"]: r["cnt"] for r in counts_row}
 
+            # 行业分布 counts 统计 (忽略当前 industry 筛选，但保留 state/bg_type/min_score/query_text 筛选)
+            ind_where_clauses = ["r.run_id = %s"]
+            ind_params = [run_id]
+            if state and state != "ALL":
+                ind_where_clauses.append("r.state = %s")
+                ind_params.append(state)
+            if background_type and background_type != "ALL":
+                ind_where_clauses.append("r.background_type = %s")
+                ind_params.append(background_type)
+            if min_score is not None:
+                ind_where_clauses.append("r.total_score >= %s")
+                ind_params.append(min_score)
+            if query_text:
+                ind_where_clauses.append("(r.ts_code ilike %s or a.name ilike %s)")
+                q_param = f"%{query_text.strip()}%"
+                ind_params.extend([q_param, q_param])
+                
+            ind_where_sql = " where " + " and ".join(ind_where_clauses)
+            
+            industry_sql = f"""
+                select a.raw_json->>'industry' as ind, count(*) as cnt
+                from early_turn_result r
+                left join screening_asset_master a on a.asset_code = r.ts_code
+                {ind_where_sql}
+                group by ind
+            """
+            ind_rows = conn.execute(industry_sql, ind_params).fetchall()
+            industry_counts = {r["ind"]: r["cnt"] for r in ind_rows if r["ind"]}
+
         items = []
         for row in rows:
             item = dict(row)
@@ -2164,6 +2193,7 @@ class PostgresScreeningStore:
         return {
             "total": total,
             "counts": counts,
+            "industry_counts": industry_counts,
             "items": items,
             "limit": limit,
             "offset": offset,

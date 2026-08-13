@@ -220,12 +220,12 @@ class EarlyTurnService:
                     if "." not in clean_code:
                         clean_code = clean_code + (".SH" if clean_code.startswith("6") else ".SZ")
                     rows = conn.execute(
-                        "select asset_code as ts_code, name, raw_json->>'industry' as industry from screening_asset_master where asset_code ilike %s",
+                        "select asset_code as ts_code, name, raw_json->>'industry' as industry from screening_asset_master where asset_code ilike %s and asset_type = 'stock'",
                         (f"%{clean_code}%",),
                     ).fetchall()
                 else:
                     rows = conn.execute(
-                        "select asset_code as ts_code, name, raw_json->>'industry' as industry from screening_asset_master"
+                        "select asset_code as ts_code, name, raw_json->>'industry' as industry from screening_asset_master where asset_type = 'stock'"
                     ).fetchall()
 
             eval_results = []
