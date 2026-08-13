@@ -215,11 +215,15 @@ class EarlyTurnEngine:
         )
         total_score = round(min(100.0, total_score), 1)
 
-        # 状态确定
+        # 状态确定 (新增独立精准分类 EARLY_TURN_STRICT 和 PRE_READY_STRICT)
         if is_overextended:
             state = "TOO_LATE"
+        elif total_score >= 75.0 and min_3ma_spread_atr <= 0.8 and cross_pair_count_10d >= 2:
+            state = "EARLY_TURN_STRICT"
         elif total_score >= 75.0:
             state = "EARLY_TURN"
+        elif total_score >= 65.0 and min_3ma_spread_atr <= 1.0 and cross_pair_count_10d >= 1:
+            state = "PRE_READY_STRICT"
         elif total_score >= 65.0:
             state = "PRE_READY"
         elif total_score >= 50.0:
