@@ -313,6 +313,118 @@ class EarlyTurnService:
             eval_res["target_date"] = t_date
             eval_res["hit"] = eval_res["state"] in ("EARLY_TURN", "PRE_READY", "WATCH")
 
-            validation_results.append(eval_res)
-
         return validation_results
+
+    def evaluate_single_stock_range(
+        self,
+        ts_code: str,
+        start_date: str,
+        end_date: str,
+        strategy_id: str = "A_PRE_V2",
+    ) -> dict[str, Any]:
+        """单股多日区间策略打分与 K 线整合评估"""
+        clean_code = ts_code.strip().upper()
+        if "." not in clean_code:
+            clean_code = clean_code + (".SH" if clean_code.startswith("6") else ".SZ")
+
+        # 查资产信息
+        name = clean_code
+        industry = "未知行业"
+        with self.store.connect() as conn:
+            row = conn.execute(
+                "select name, raw_json->>'industry' as industry from screening_asset_master where asset_code = %s",
+                (clean_code,),
+            ).fetchone()
+            if row:
+                name = row["name"] or clean_code
+                industry = row["industry"] or "未知行业"
+
+        s_date = start_date.replace("-", "")
+        e_date = end_date.replace("-", "")
+
+        # 查指定区间内的所有交易日 K 线
+        with self.store.connect() as conn:
+            rows = conn.execute(
+                """
+                select trade_date, open, high, low, close, vol, amount
+                from screening_daily_bar
+                where asset_code = %s and trade_date >= %s and trade_date <= %s
+                order by trade_date asc
+                """,
+                (clean_code, s_date, e_date),
+            ).fetchall()
+
+        history = []
+        for r in rows:
+            d = r["trade_date"]
+            close_p = float(r["close"])
+            feat = self.calculate_features_from_bars(clean_code, d)
+            if not feat:
+                continue
+            feat["name"] = name
+            feat["industry"] = industry
+            eval_res = self.engine.evaluate_stock(clean_code, d, feat)
+            history.append({
+                "trade_date": d,
+                "open": float(r["open"]),
+                "high": float(r["high"]),
+                "low": float(r["low"]),
+                "close": close_p,
+                "vol": float(r["vol"]),
+                "amount": float(r["amount"]),
+                "total_score": eval_res["total_score"],
+                "state": eval_res["state"],
+                "background_type": eval_res["background_type"],
+                "score_detail_json": eval_res["score_detail_json"],
+                "reasons_json": eval_res["reasons_json"],
+            })
+
+        # 获取用于 K 线图绘制的历史 K 线数据（最长截至 end_date 倒推 150 日）
+        with self.store.connect() as conn:
+            k_rows = conn.execute(
+                """
+                select trade_date, open, high, low, close, vol, amount
+                from screening_daily_bar
+                where asset_code = %s and trade_date <= %s
+                order by trade_date desc limit 150
+                """,
+                (clean_code, e_date),
+            ).fetchall()
+
+        klines = []
+        if k_rows:
+            df_k = pd.DataFrame([dict(r) for r in reversed(k_rows)])
+            for c in ["open", "high", "low", "close", "vol", "amount"]:
+                df_k[c] = df_k[c].astype(float)
+            df_k["ma5"] = df_k["close"].rolling(5).mean()
+            df_k["ma10"] = df_k["close"].rolling(10).mean()
+            df_k["ma20"] = df_k["close"].rolling(20).mean()
+            df_k["ma30"] = df_k["close"].rolling(30).mean()
+            df_k["ma60"] = df_k["close"].rolling(60).mean()
+
+            for _, r in df_k.iterrows():
+                klines.append({
+                    "trade_date": r["trade_date"],
+                    "open": float(r["open"]),
+                    "high": float(r["high"]),
+                    "low": float(r["low"]),
+                    "close": float(r["close"]),
+                    "vol": float(r["vol"]),
+                    "amount": float(r["amount"]),
+                    "ma5": float(r["ma5"]) if pd.notna(r["ma5"]) else None,
+                    "ma10": float(r["ma10"]) if pd.notna(r["ma10"]) else None,
+                    "ma20": float(r["ma20"]) if pd.notna(r["ma20"]) else None,
+                    "ma30": float(r["ma30"]) if pd.notna(r["ma30"]) else None,
+                    "ma60": float(r["ma60"]) if pd.notna(r["ma60"]) else None,
+                })
+
+        return {
+            "ts_code": clean_code,
+            "name": name,
+            "industry": industry,
+            "strategy_id": strategy_id,
+            "start_date": s_date,
+            "end_date": e_date,
+            "history": history,
+            "klines": klines,
+        }

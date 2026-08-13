@@ -391,7 +391,25 @@ def _sync_screening_trade_date(store: PostgresScreeningStore, trade_date: str | 
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="LLL Market Review API")
+    from backend.market_review.scheduler import AutoDataScheduler
+    from contextlib import asynccontextmanager
+
+    scheduler = AutoDataScheduler(_database_url())
+
+    @asynccontextmanager
+    async def lifespan(app_instance: FastAPI):
+        try:
+            scheduler.start()
+        except Exception as e:
+            print(f"[API_STARTUP] 启动自动数据调度器失败: {e}")
+        yield
+        try:
+            scheduler.stop()
+        except Exception as e:
+            print(f"[API_SHUTDOWN] 关闭自动数据调度器提示: {e}")
+
+    app = FastAPI(title="LLL Market Review API", lifespan=lifespan)
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[
@@ -882,6 +900,24 @@ def create_app() -> FastAPI:
 
 
 
+
+    # ── 单股多日策略测试 API ──────────────────────────────────────────────────
+    @app.get("/api/strategy/single-stock/eval")
+    def eval_single_stock_range(
+        ts_code: str = Query(...),
+        start_date: str = Query(...),
+        end_date: str = Query(...),
+        strategy_id: str = Query(default="A_PRE_V2"),
+    ) -> dict[str, Any]:
+        from backend.screening.early_turn_service import EarlyTurnService
+        store = PostgresScreeningStore(_database_url())
+        svc = EarlyTurnService(store=store)
+        return svc.evaluate_single_stock_range(
+            ts_code=ts_code,
+            start_date=start_date,
+            end_date=end_date,
+            strategy_id=strategy_id,
+        )
 
     # ── A-Pre V2 / Early Turn 早期转强实验 API ────────────────────────────────
     @app.get("/api/early-turn/latest")

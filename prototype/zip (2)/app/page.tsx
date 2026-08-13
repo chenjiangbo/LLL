@@ -9,6 +9,7 @@ import { History } from 'lucide-react';
 
 const EarlyTurnFunnel = dynamic(() => import('./components/EarlyTurnFunnel'), { ssr: false });
 const SampleValidationView = dynamic(() => import('./components/SampleValidationView'), { ssr: false });
+const SingleStockTestView = dynamic(() => import('./components/SingleStockTestView'), { ssr: false });
 const KLineModal = dynamic(() => import('./components/KLineModal'), { ssr: false });
 const PoolStageFunnel = dynamic(() => import('./components/PoolStageFunnel'), { ssr: false });
 const ImportModal = dynamic(() => import('./components/ImportModal'), { ssr: false });
@@ -392,7 +393,7 @@ export default function MarketReviewApp() {
   const [screeningError, setScreeningError] = useState<string | null>(null);
   const [screeningPool, setScreeningPool] = useState<ScreeningPool>('A');
   const [screeningOnlySelected, setScreeningOnlySelected] = useState(false);
-  const [screeningSubTab, setScreeningSubTab] = useState<'SECONDARY' | 'EARLY_TURN' | 'SAMPLES'>('SECONDARY');
+  const [screeningSubTab, setScreeningSubTab] = useState<'SECONDARY' | 'EARLY_TURN' | 'SAMPLES' | 'SINGLE_STOCK_TEST'>('SECONDARY');
   const [screeningRunning, setScreeningRunning] = useState(false);
   const [screeningRequest, setScreeningRequest] = useState<ScreeningRequest>(DEFAULT_SCREENING_REQUEST);
   const [taskStatus, setTaskStatus] = useState<{ status: string; progress: number; step_message: string } | null>(null);
@@ -785,6 +786,17 @@ export default function MarketReviewApp() {
               >
                 <span>🎯 正负样本回归校验看板</span>
               </button>
+
+              <button
+                onClick={() => setScreeningSubTab('SINGLE_STOCK_TEST')}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                  screeningSubTab === 'SINGLE_STOCK_TEST'
+                    ? 'bg-[#2e3230] text-white shadow-xs'
+                    : 'bg-white text-[#4a4e4a] hover:bg-[#e4e0d8] border border-[#c4c8bc]/50'
+                }`}
+              >
+                <span>🔬 单股策略测试</span>
+              </button>
             </div>
           </div>
         )}
@@ -798,6 +810,12 @@ export default function MarketReviewApp() {
         {activeView === 'screening' && screeningSubTab === 'SAMPLES' && (
           <div className="px-4 pb-6 sm:px-6 lg:px-8">
             <SampleValidationView onClose={() => setScreeningSubTab('EARLY_TURN')} />
+          </div>
+        )}
+
+        {activeView === 'screening' && screeningSubTab === 'SINGLE_STOCK_TEST' && (
+          <div className="px-4 pb-6 sm:px-6 lg:px-8">
+            <SingleStockTestView />
           </div>
         )}
 
