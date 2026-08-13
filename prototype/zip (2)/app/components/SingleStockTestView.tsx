@@ -74,6 +74,13 @@ const PRESET_STOCKS = [
   { code: '002659.SZ', name: '凯文教育' },
 ];
 
+const DEFAULT_MA_ITEMS = [
+  { day: 5, color: '#ec4899' },
+  { day: 10, color: '#f59e0b' },
+  { day: 30, color: '#3b82f6' },
+  { day: 60, color: '#8b5cf6' },
+];
+
 export default function SingleStockTestView() {
   const [strategyId, setStrategyId] = useState<string>('A_PRE_V2');
   const [stockInput, setStockInput] = useState<string>('688505.SH');
@@ -83,9 +90,11 @@ export default function SingleStockTestView() {
   const [loading, setLoading] = useState<boolean>(false);
   const [result, setResult] = useState<SingleStockEvalResult | null>(null);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [subIndicator, setSubIndicator] = useState<'MACD' | 'KDJ' | 'RSI'>('MACD');
 
   const chartRef = useRef<HTMLDivElement>(null);
   const chartInstanceRef = useRef<Chart | null>(null);
+  const currentSubIndicatorRef = useRef<'MACD' | 'KDJ' | 'RSI'>('MACD');
 
   // 执行单股多日策略测试
   const handleRunEval = useCallback(async (codeOverride?: string) => {
@@ -133,15 +142,103 @@ export default function SingleStockTestView() {
       chartInstanceRef.current = null;
     }
 
-    const chart = init(chartRef.current);
+    const chart = init(chartRef.current, {
+      styles: {
+        grid: {
+          show: true,
+          horizontal: { color: '#e2e8f0', style: 'dashed' },
+          vertical: { color: '#e2e8f0', style: 'dashed' },
+        },
+        candle: {
+          bar: {
+            upColor: '#ef4444',
+            downColor: '#10b981',
+            noChangeColor: '#6b7280',
+            upBorderColor: '#ef4444',
+            downBorderColor: '#10b981',
+            noChangeBorderColor: '#6b7280',
+            upWickColor: '#ef4444',
+            downWickColor: '#10b981',
+            noChangeWickColor: '#6b7280',
+          },
+          tooltip: {
+            showRule: 'always',
+            showType: 'standard',
+            title: {
+              show: false,
+            },
+            legend: {
+              template: (neighborData: any) => {
+                const current = neighborData.current;
+                if (!current) return [];
+
+                const prev = neighborData.prev;
+                const currentClose = typeof current.close === 'number' ? current.close : 0;
+                const prevClose = prev && typeof prev.close === 'number' ? prev.close : (typeof current.open === 'number' ? current.open : currentClose);
+
+                let changePct = 0;
+                if (prevClose > 0) {
+                  changePct = ((currentClose - prevClose) / prevClose) * 100;
+                }
+
+                const changePctStr = `${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%`;
+                const changeColor = changePct > 0 ? '#ef4444' : changePct < 0 ? '#10b981' : '#6b7280';
+
+                const rawDate = String(current.trade_date || '');
+                const dateStr = rawDate.length === 8 ? `${rawDate.slice(0, 4)}-${rawDate.slice(4, 6)}-${rawDate.slice(6)}` : rawDate;
+                const volVal = typeof current.volume === 'number' ? current.volume : 0;
+                const volStr = volVal >= 10000 ? `${(volVal / 10000).toFixed(1)}万` : `${(volVal / 1000).toFixed(1)}千`;
+
+                return [
+                  { title: '时间:', value: dateStr },
+                  { title: ' 幅:', value: { text: changePctStr, color: changeColor } },
+                  { title: ' O:', value: typeof current.open === 'number' ? current.open.toFixed(2) : '--' },
+                  { title: ' H:', value: typeof current.high === 'number' ? current.high.toFixed(2) : '--' },
+                  { title: ' L:', value: typeof current.low === 'number' ? current.low.toFixed(2) : '--' },
+                  { title: ' C:', value: typeof current.close === 'number' ? current.close.toFixed(2) : '--' },
+                  { title: ' V:', value: volStr },
+                ];
+              },
+            },
+          },
+        },
+        indicator: {
+          tooltip: {
+            showRule: 'always',
+            showType: 'standard',
+            title: {
+              showName: true,
+              showParams: false,
+            },
+          },
+        },
+      },
+    });
+
     chartInstanceRef.current = chart;
 
     if (chart) {
-      // 各种 MA 指标设置
-      chart.createIndicator('MA', false);
+      // 1. 主图 MA 均线
+      chart.createIndicator(
+        {
+          name: 'MA',
+          paneId: 'candle_pane',
+          calcParams: DEFAULT_MA_ITEMS.map((item) => item.day),
+          styles: {
+            lines: DEFAULT_MA_ITEMS.map((item) => ({ color: item.color })),
+          },
+        },
+        true,
+      );
+
+      // 2. 副图 1: VOL 成交量
       chart.createIndicator('VOL', false);
 
-      // 转换为 Klinecharts 格式的数据
+      // 3. 副图 2: MACD / KDJ / RSI
+      chart.createIndicator(subIndicator, false);
+      currentSubIndicatorRef.current = subIndicator;
+
+      // 4. 转换 K 线数据
       const dataList = result.klines.map((k) => {
         const y = parseInt(k.trade_date.slice(0, 4));
         const m = parseInt(k.trade_date.slice(4, 6)) - 1;
@@ -182,11 +279,10 @@ export default function SingleStockTestView() {
         }
       });
 
-      // 标注测试区间内的转强信号点 (EARLY_TURN_STRICT / EARLY_TURN)
+      // 5. 标注测试区间内的转强信号点
       const historyMap = new Map<string, SingleStockHistoryItem>();
       result.history.forEach((h) => historyMap.set(h.trade_date, h));
 
-      // 给有强信号的日期增加 Tag
       dataList.forEach((d) => {
         const h = historyMap.get(d.trade_date);
         if (h && (h.state === 'EARLY_TURN_STRICT' || h.state === 'EARLY_TURN' || h.state === 'PRE_READY_STRICT')) {
@@ -228,6 +324,16 @@ export default function SingleStockTestView() {
       }
     };
   }, [result]);
+
+  // 切换副图指标 (MACD / KDJ / RSI)
+  const handleChangeSubIndicator = (newIndicator: 'MACD' | 'KDJ' | 'RSI') => {
+    if (!chartInstanceRef.current || newIndicator === subIndicator) return;
+    const oldIndicator = currentSubIndicatorRef.current;
+    chartInstanceRef.current.removeIndicator({ name: oldIndicator });
+    chartInstanceRef.current.createIndicator(newIndicator, false);
+    currentSubIndicatorRef.current = newIndicator;
+    setSubIndicator(newIndicator);
+  };
 
   const maxScoreItem = useMemo(() => {
     if (!result || !result.history || result.history.length === 0) return null;
@@ -364,19 +470,52 @@ export default function SingleStockTestView() {
         </div>
       )}
 
-      {/* K 线图区域 (K线历史严格截止至 end_date) */}
-      <div className="bg-white p-4 rounded-xl border border-[#c4c8bc]/60 shadow-xs space-y-2">
-        <div className="flex items-center justify-between border-b border-[#c4c8bc]/40 pb-2 text-xs">
-          <span className="font-bold text-[#2e3230] flex items-center gap-1.5">
-            <BarChart2 className="h-4 w-4 text-[#4a7c59]" />
-            单股历史 K 线图 (图表数据截止至: <span className="font-mono text-[#d97706]">{endDate}</span>，无未来数据)
-          </span>
-          <span className="text-[11px] text-[#686d68]">
-            图标说明: <span className="px-1.5 py-0.5 bg-amber-600 text-white rounded text-[10px] font-bold mr-1">🔥精选</span>
-            <span className="px-1.5 py-0.5 bg-[#705c30] text-white rounded text-[10px] font-bold">⭐重点</span>
-          </span>
+      {/* K 线图区域 (高度加高至 h-[520px]，并支持副图指标切换) */}
+      <div className="bg-white p-4 rounded-xl border border-[#c4c8bc]/60 shadow-xs space-y-3">
+        <div className="flex flex-wrap items-center justify-between border-b border-[#c4c8bc]/40 pb-2.5 text-xs gap-2">
+          <div className="flex items-center gap-3">
+            <span className="font-bold text-[#2e3230] flex items-center gap-1.5">
+              <BarChart2 className="h-4 w-4 text-[#4a7c59]" />
+              单股历史 K 线图 (无未来数据，数据截止至: <span className="font-mono text-[#d97706]">{endDate}</span>)
+            </span>
+            <div className="flex items-center gap-1">
+              <span className="text-[11px] text-[#686d68] font-bold">均线:</span>
+              {DEFAULT_MA_ITEMS.map((ma) => (
+                <span key={ma.day} className="px-1.5 py-0.2 rounded text-[10px] font-bold text-white" style={{ backgroundColor: ma.color }}>
+                  MA{ma.day}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            {/* 副图指标切换按钮 */}
+            <div className="flex items-center gap-1 bg-[#faf6f0] p-1 rounded-lg border border-[#c4c8bc]/40 text-[11px]">
+              <span className="text-[#686d68] font-bold px-1">副图指标:</span>
+              {(['MACD', 'KDJ', 'RSI'] as const).map((item) => (
+                <button
+                  key={item}
+                  onClick={() => handleChangeSubIndicator(item)}
+                  className={`px-2 py-0.5 rounded font-bold transition ${
+                    subIndicator === item
+                      ? 'bg-[#4a7c59] text-white shadow-xs'
+                      : 'text-[#4a4e4a] hover:bg-[#e4e0d8]'
+                  }`}
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
+
+            <span className="text-[11px] text-[#686d68]">
+              信号标注: <span className="px-1.5 py-0.5 bg-amber-600 text-white rounded text-[10px] font-bold mr-1">🔥精选</span>
+              <span className="px-1.5 py-0.5 bg-[#705c30] text-white rounded text-[10px] font-bold">⭐重点</span>
+            </span>
+          </div>
         </div>
-        <div ref={chartRef} className="w-full h-80 bg-white" />
+
+        {/* 高度加高至 520px 的图表容器 */}
+        <div ref={chartRef} className="w-full h-[520px] bg-white" />
       </div>
 
       {/* 逐日得分与 7 大算子明细表格 */}
