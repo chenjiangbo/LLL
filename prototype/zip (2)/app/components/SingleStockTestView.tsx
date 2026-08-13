@@ -160,10 +160,26 @@ export default function SingleStockTestView() {
         };
       });
 
+      chart.setSymbol({
+        ticker: result.ts_code,
+        pricePrecision: 2,
+        volumePrecision: 2,
+      });
+      chart.setPeriod({
+        span: 1,
+        type: 'day',
+      });
+
       chart.setDataLoader({
         getBars: ({ callback }) => {
           callback(dataList);
         },
+      });
+
+      requestAnimationFrame(() => {
+        if (chartInstanceRef.current) {
+          chartInstanceRef.current.resize();
+        }
       });
 
       // 标注测试区间内的转强信号点 (EARLY_TURN_STRICT / EARLY_TURN)
@@ -197,7 +213,15 @@ export default function SingleStockTestView() {
       });
     }
 
+    const handleResize = () => {
+      if (chartInstanceRef.current) {
+        chartInstanceRef.current.resize();
+      }
+    };
+    window.addEventListener('resize', handleResize);
+
     return () => {
+      window.removeEventListener('resize', handleResize);
       if (chartRef.current) {
         dispose(chartRef.current);
         chartInstanceRef.current = null;
