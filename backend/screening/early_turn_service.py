@@ -379,21 +379,21 @@ class EarlyTurnService:
                 "reasons_json": eval_res["reasons_json"],
             })
 
-        # 获取用于 K 线图绘制的历史 K 线数据（最长截至 end_date 倒推 150 日）
+        # 获取截至 end_date 的全量历史 K 线数据
         with self.store.connect() as conn:
             k_rows = conn.execute(
                 """
                 select trade_date, open, high, low, close, vol, amount
                 from screening_daily_bar
                 where asset_code = %s and trade_date <= %s
-                order by trade_date desc limit 150
+                order by trade_date asc
                 """,
                 (clean_code, e_date),
             ).fetchall()
 
         klines = []
         if k_rows:
-            df_k = pd.DataFrame([dict(r) for r in reversed(k_rows)])
+            df_k = pd.DataFrame([dict(r) for r in k_rows])
             for c in ["open", "high", "low", "close", "vol", "amount"]:
                 df_k[c] = df_k[c].astype(float)
             df_k["ma5"] = df_k["close"].rolling(5).mean()

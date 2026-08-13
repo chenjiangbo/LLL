@@ -104,6 +104,7 @@ export default function SingleStockTestView() {
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [hoveredHistoryItem, setHoveredHistoryItem] = useState<SingleStockHistoryItem | null>(null);
   const [showBreakdownTable, setShowBreakdownTable] = useState<boolean>(false);
+  const [period, setPeriod] = useState<'day' | 'week'>('day');
 
   // 诊断卡片拖拽与显隐状态
   const [showDiagnosticCard, setShowDiagnosticCard] = useState<boolean>(true);
@@ -348,7 +349,7 @@ export default function SingleStockTestView() {
       });
       chart.setPeriod({
         span: 1,
-        type: 'day',
+        type: period === 'week' ? 'week' : 'day',
       });
 
       // 默认放大单根 K 线宽度 (设为 16px)
@@ -366,31 +367,33 @@ export default function SingleStockTestView() {
         }
       });
 
-      // 4. 在 K 线上标注具体得分数值
-      dataList.forEach((d) => {
-        const h = hMap.get(d.trade_date);
-        if (h && h.total_score > 0) {
-          const scoreText = `${h.total_score.toFixed(1)}`;
-          const colorInfo = getStateColor(h.state);
+      // 4. 在日线 K 线上标注具体得分数值（周线不标注）
+      if (period === 'day') {
+        dataList.forEach((d) => {
+          const h = hMap.get(d.trade_date);
+          if (h && h.total_score > 0) {
+            const scoreText = `${h.total_score.toFixed(1)}`;
+            const colorInfo = getStateColor(h.state);
 
-          chart.createOverlay({
-            name: 'simpleAnnotation',
-            extendData: scoreText,
-            points: [{ timestamp: d.timestamp, value: d.high }],
-            styles: {
-              text: {
-                color: colorInfo.text,
-                backgroundColor: colorInfo.bg,
-                borderRadius: 4,
-                paddingLeft: 5,
-                paddingRight: 5,
-                paddingTop: 2,
-                paddingBottom: 2,
+            chart.createOverlay({
+              name: 'simpleAnnotation',
+              extendData: scoreText,
+              points: [{ timestamp: d.timestamp, value: d.high }],
+              styles: {
+                text: {
+                  color: colorInfo.text,
+                  backgroundColor: colorInfo.bg,
+                  borderRadius: 4,
+                  paddingLeft: 5,
+                  paddingRight: 5,
+                  paddingTop: 2,
+                  paddingBottom: 2,
+                },
               },
-            },
-          });
-        }
-      });
+            });
+          }
+        });
+      }
     }
 
     const handleResize = () => {
@@ -407,7 +410,7 @@ export default function SingleStockTestView() {
         chartInstanceRef.current = null;
       }
     };
-  }, [result]);
+  }, [result, period]);
 
   const activeDisplayItem = useMemo(() => {
     if (hoveredHistoryItem) return hoveredHistoryItem;
@@ -500,6 +503,26 @@ export default function SingleStockTestView() {
                 <span className="text-[11px] text-[#686d68] font-mono">
                   (截止: <span className="font-bold text-[#d97706]">{endDate}</span>)
                 </span>
+
+                {/* 时间框架/周期选择 (日线 / 周线) */}
+                <div className="flex items-center gap-1 bg-[#faf6f0] p-0.5 rounded-lg border border-[#c4c8bc]/50 text-[11px] font-bold ml-1">
+                  <button
+                    onClick={() => setPeriod('day')}
+                    className={`px-2 py-0.5 rounded transition ${
+                      period === 'day' ? 'bg-[#4a7c59] text-white shadow-xs' : 'text-[#686d68] hover:text-[#2e3230]'
+                    }`}
+                  >
+                    日线
+                  </button>
+                  <button
+                    onClick={() => setPeriod('week')}
+                    className={`px-2 py-0.5 rounded transition ${
+                      period === 'week' ? 'bg-[#4a7c59] text-white shadow-xs' : 'text-[#686d68] hover:text-[#2e3230]'
+                    }`}
+                  >
+                    周线
+                  </button>
+                </div>
               </div>
             ) : (
               <span className="font-bold text-[#2e3230] flex items-center gap-1.5">
