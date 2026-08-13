@@ -77,21 +77,17 @@ const DEFAULT_MA_ITEMS = [
   { day: 60, color: '#8b5cf6' },
 ];
 
-// 根据状态获取颜色
+// 根据状态获取颜色与标签
 function getStateColor(state: string): { bg: string; text: string; label: string } {
   switch (state) {
-    case 'EARLY_TURN_STRICT':
-      return { bg: '#d97706', text: '#ffffff', label: '🔥 严格精选转强' };
     case 'EARLY_TURN':
-      return { bg: '#16a34a', text: '#ffffff', label: '🔥 转强信号' };
-    case 'PRE_READY_STRICT':
-      return { bg: '#705c30', text: '#ffffff', label: '⭐ 严格重点观察' };
+      return { bg: '#d97706', text: '#ffffff', label: '🔥 转强信号 (>=75分)' };
     case 'PRE_READY':
-      return { bg: '#92400e', text: '#ffffff', label: '⭐ 重点观察' };
+      return { bg: '#705c30', text: '#ffffff', label: '⭐ 重点观察 (65~74分)' };
     case 'WATCH':
-      return { bg: '#334155', text: '#ffffff', label: '👀 初步观察' };
+      return { bg: '#334155', text: '#ffffff', label: '👀 初步观察 (50~64分)' };
     case 'TOO_LATE':
-      return { bg: '#be123c', text: '#ffffff', label: '⚠️ 偏离过大' };
+      return { bg: '#be123c', text: '#ffffff', label: '⚠️ 过度延伸 (ATR>=2.0)' };
     default:
       return { bg: '#94a3b8', text: '#ffffff', label: '无信号' };
   }
@@ -122,6 +118,24 @@ export default function SingleStockTestView() {
 
   const chartRef = useRef<HTMLDivElement>(null);
   const chartInstanceRef = useRef<Chart | null>(null);
+
+  // 用于在 klinecharts 的 template 回调中同步更新当前 Hover 数据的 Ref
+  const historyMapRef = useRef<Map<string, SingleStockHistoryItem>>(new Map());
+  const lastHoverDateRef = useRef<string>('');
+
+  const handleHoverDate = useCallback((tradeDate: string) => {
+    if (lastHoverDateRef.current === tradeDate) return;
+    lastHoverDateRef.current = tradeDate;
+    const item = historyMapRef.current.get(tradeDate);
+    if (item) {
+      setHoveredHistoryItem(item);
+    }
+  }, []);
+
+  const onHoverDateRef = useRef(handleHoverDate);
+  useEffect(() => {
+    onHoverDateRef.current = handleHoverDate;
+  }, [handleHoverDate]);
 
   // 处理拖拽
   const handleMouseDownDrag = (e: React.MouseEvent) => {
@@ -201,6 +215,11 @@ export default function SingleStockTestView() {
   useEffect(() => {
     if (!result || !result.klines || result.klines.length === 0 || !chartRef.current) return;
 
+    // 建立历史得分索引 Map
+    const hMap = new Map<string, SingleStockHistoryItem>();
+    result.history.forEach((h) => hMap.set(h.trade_date, h));
+    historyMapRef.current = hMap;
+
     if (chartInstanceRef.current) {
       dispose(chartRef.current);
       chartInstanceRef.current = null;
@@ -236,6 +255,12 @@ export default function SingleStockTestView() {
                 const current = neighborData.current;
                 if (!current) return [];
 
+                // 官方触发机制: 当鼠标十字光标移动时，template 必定会被 klinecharts 实时调用
+                const rawDate = String(current.trade_date || '');
+                if (rawDate && onHoverDateRef.current) {
+                  onHoverDateRef.current(rawDate);
+                }
+
                 const prev = neighborData.prev;
                 const currentClose = typeof current.close === 'number' ? current.close : 0;
                 const prevClose = prev && typeof prev.close === 'number' ? prev.close : (typeof current.open === 'number' ? current.open : currentClose);
@@ -248,7 +273,6 @@ export default function SingleStockTestView() {
                 const changePctStr = `${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%`;
                 const changeColor = changePct > 0 ? '#ef4444' : changePct < 0 ? '#10b981' : '#6b7280';
 
-                const rawDate = String(current.trade_date || '');
                 const dateStr = rawDate.length === 8 ? `${rawDate.slice(0, 4)}-${rawDate.slice(4, 6)}-${rawDate.slice(6)}` : rawDate;
                 const volVal = typeof current.volume === 'number' ? current.volume : 0;
                 const volStr = volVal >= 10000 ? `${(volVal / 10000).toFixed(1)}万` : `${(volVal / 1000).toFixed(1)}千`;
@@ -342,13 +366,9 @@ export default function SingleStockTestView() {
         }
       });
 
-      // 4. 建立交易日历史得分索引 map
-      const historyMap = new Map<string, SingleStockHistoryItem>();
-      result.history.forEach((h) => historyMap.set(h.trade_date, h));
-
-      // 5. 在 K 线上标注具体得分数值
+      // 4. 在 K 线上标注具体得分数值
       dataList.forEach((d) => {
-        const h = historyMap.get(d.trade_date);
+        const h = hMap.get(d.trade_date);
         if (h && h.total_score > 0) {
           const scoreText = `${h.total_score.toFixed(1)}`;
           const colorInfo = getStateColor(h.state);
@@ -369,21 +389,6 @@ export default function SingleStockTestView() {
               },
             },
           });
-        }
-      });
-
-      // 6. 监听鼠标十字光标移动，划过某天 K 线时实时刷新特征诊断 Card
-      chart.subscribeAction('onCrosshairChange', (param: any) => {
-        if (param && param.kLineData && param.kLineData.trade_date) {
-          const tDate = String(param.kLineData.trade_date);
-          const item = historyMap.get(tDate);
-          if (item) {
-            setHoveredHistoryItem(item);
-          } else {
-            setHoveredHistoryItem(null);
-          }
-        } else {
-          setHoveredHistoryItem(null);
         }
       });
     }
@@ -412,7 +417,7 @@ export default function SingleStockTestView() {
 
   return (
     <div className="space-y-3">
-      {/* 单行紧凑型顶栏控制区: 策略选择 + 股票输入 + 区间选择 (去除预设按钮，节省空间) */}
+      {/* 单行紧凑型顶栏控制区: 策略选择 + 股票输入 + 区间选择 */}
       <div className="bg-white/90 px-3.5 py-2.5 rounded-xl border border-[#c4c8bc]/60 shadow-xs flex flex-wrap items-center justify-between gap-3 text-xs">
         <div className="flex flex-wrap items-center gap-3">
           {/* 策略选择 */}
@@ -475,12 +480,12 @@ export default function SingleStockTestView() {
         </button>
       </div>
 
-      {/* K 线图主卡片区域 (股票信息移入图表 Header，无多余大 Banner) */}
+      {/* K 线图主卡片区域 */}
       <div
         onDoubleClick={() => setShowDiagnosticCard(true)}
         className="bg-white p-4 rounded-xl border border-[#c4c8bc]/60 shadow-xs space-y-3 relative select-none"
       >
-        {/* K 线 Header: 股票代码名称 + 均线图例 + 状态图例 */}
+        {/* K 线 Header: 股票代码名称 + 均线图例 + 4大状态图例 */}
         <div className="flex flex-wrap items-center justify-between border-b border-[#c4c8bc]/40 pb-2.5 text-xs gap-2">
           <div className="flex items-center gap-3">
             {result ? (
@@ -493,13 +498,13 @@ export default function SingleStockTestView() {
                   {result.industry}
                 </span>
                 <span className="text-[11px] text-[#686d68] font-mono">
-                  (数据截止至: <span className="font-bold text-[#d97706]">{endDate}</span>)
+                  (截止: <span className="font-bold text-[#d97706]">{endDate}</span>)
                 </span>
               </div>
             ) : (
               <span className="font-bold text-[#2e3230] flex items-center gap-1.5">
                 <BarChart2 className="h-4 w-4 text-[#4a7c59]" />
-                单股历史 K 线图 (无未来数据)
+                单股历史 K 线图
               </span>
             )}
           </div>
@@ -516,10 +521,10 @@ export default function SingleStockTestView() {
 
             <div className="flex items-center gap-1.5 text-[11px]">
               <span className="text-[#686d68] font-bold">图例:</span>
-              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold text-white bg-[#d97706]">精选(75+)</span>
-              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold text-white bg-[#16a34a]">转强</span>
-              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold text-white bg-[#705c30]">重点</span>
-              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold text-white bg-[#be123c]">偏离</span>
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold text-white bg-[#d97706]">转强(&gt;=75)</span>
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold text-white bg-[#705c30]">重点(65~74)</span>
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold text-white bg-[#334155]">观察(50~64)</span>
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold text-white bg-[#be123c]">过度延伸</span>
             </div>
           </div>
         </div>
@@ -590,7 +595,7 @@ export default function SingleStockTestView() {
           </div>
         )}
 
-        {/* 高度 520px 的 K 线图表容器（可通过拖拽/关闭浮窗实现 100% 无遮挡） */}
+        {/* 高度 520px 的 K 线图表容器 */}
         <div ref={chartRef} className="w-full h-[520px] bg-white" />
       </div>
 
@@ -706,7 +711,7 @@ export default function SingleStockTestView() {
                             <span className="px-1.5 py-0.2 rounded bg-amber-50 text-amber-700">
                               Fresh: {s.freshness || 0}
                             </span>
-                            <span className="px-1.5 py-0.2 rounded bg-[#faf6f0] text-indigo-700">
+                            <span className="px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-700">
                               Vol: {s.vol || 0}
                             </span>
                             <span className="px-1.5 py-0.2 rounded bg-rose-50 text-rose-700">
@@ -725,7 +730,7 @@ export default function SingleStockTestView() {
                                 </div>
                               ))
                             ) : (
-                              <span className="text-[#686d68] text-[11px]">形态平淡，处于整理蓄势期</span>
+                              <span className="text-[#686d68] text-[11px]">形态处于整理蓄势期</span>
                             )}
                           </div>
                         </td>
