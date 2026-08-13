@@ -203,12 +203,8 @@ class EarlyTurnEngine:
         # 状态确定
         if is_overextended:
             state = "TOO_LATE"
-        elif total_score >= 75.0 and min_3ma_spread_atr <= 0.8 and cross_pairs >= 2:
-            state = "EARLY_TURN_STRICT"
         elif total_score >= 75.0:
             state = "EARLY_TURN"
-        elif total_score >= 65.0 and min_3ma_spread_atr <= 1.0 and cross_pairs >= 1:
-            state = "PRE_READY_STRICT"
         elif total_score >= 65.0:
             state = "PRE_READY"
         elif total_score >= 50.0:
@@ -278,7 +274,7 @@ class EarlyTurnEngine:
             "total_score": total_score,
             "state": state,
             "background_type": bg_type,
-            "selected": state in ("EARLY_TURN", "PRE_READY", "EARLY_TURN_STRICT", "PRE_READY_STRICT"),
+            "selected": state in ("EARLY_TURN", "PRE_READY"),
             "is_overextended": is_overextended,
             "features_json": features,
             "score_detail_json": score_detail,

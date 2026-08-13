@@ -345,7 +345,7 @@ export default function EarlyTurnFunnel({
             </div>
           </div>
 
-          {singleStockResult.reasons_json && singleStockResult.reasons_json.length > 0 && (
+        {singleStockResult.reasons_json && singleStockResult.reasons_json.length > 0 && (
             <div className="bg-white p-3 rounded-lg border border-[#c4c8bc]/40 space-y-1 text-xs">
               <span className="font-bold text-[#2e3230]">得分与诊断特征说明:</span>
               {singleStockResult.reasons_json.map((r: any, idx: number) => (
@@ -359,33 +359,8 @@ export default function EarlyTurnFunnel({
         </div>
       )}
 
-
-      {/* 顶栏 2: 5 级状态卡片 (Regime Transition Machine - 含独立严格精选) */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-2.5">
-        {/* Card 0: EARLY_TURN_STRICT (独立严格精选) */}
-        <div
-          onClick={() => {
-            setActiveState(activeState === 'EARLY_TURN_STRICT' ? 'ALL' : 'EARLY_TURN_STRICT');
-            setPage(1);
-          }}
-          className={`cursor-pointer rounded-xl p-3 border transition shadow-xs space-y-1.5 ${
-            activeState === 'EARLY_TURN_STRICT'
-              ? 'bg-amber-600 text-white border-amber-600 ring-2 ring-amber-600/30'
-              : 'bg-gradient-to-br from-amber-50 to-amber-100/60 border-amber-300 hover:border-amber-600'
-          }`}
-        >
-          <div className="flex items-center justify-between text-xs">
-            <span className="font-bold flex items-center gap-1 text-[#2e3230] group-hover:text-amber-700">
-              <Sparkles className="h-3.5 w-3.5 text-amber-600" /> 🔥 严格精选转强
-            </span>
-            <span className="font-mono text-[9px] px-1 py-0.5 rounded bg-amber-200/80 text-amber-900 font-bold">压缩+结扎</span>
-          </div>
-          <p className="text-xl font-bold font-mono text-amber-900">{counts.EARLY_TURN_STRICT || 0} 只</p>
-          <p className="text-[10px] text-amber-800">
-            高分 + 均线高度压缩 + 均线结扎 (黄金红箭头)
-          </p>
-        </div>
-
+      {/* 状态分类顶栏卡片 (4大核心状态) */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {/* Card 1: EARLY_TURN */}
         <div
           onClick={() => {

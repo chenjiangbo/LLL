@@ -256,7 +256,7 @@ class EarlyTurnService:
                 "trade_date": trade_date,
                 "total_evaluated": len(eval_results),
                 "counts": counts,
-                "selected_count": counts.get("EARLY_TURN_STRICT", 0) + counts.get("EARLY_TURN", 0) + counts.get("PRE_READY_STRICT", 0) + counts.get("PRE_READY", 0),
+                "selected_count": counts.get("EARLY_TURN", 0) + counts.get("PRE_READY", 0),
                 "items": eval_results if ts_code else None,
             }
             self.store.finish_early_turn_run(run_id, status="DONE", summary=summary)
