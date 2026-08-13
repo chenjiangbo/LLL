@@ -1040,6 +1040,16 @@ def create_app() -> FastAPI:
                 result = _sync_screening_trade_date(store, None)
                 target_date = result.get("trade_date") or ""
 
+                # 双重完备跳过：若该交易日全量日线与 30m K线均已完备，0.01秒瞬间结束
+                if target_date and store.has_daily_data(target_date) and store.has_30m_data(target_date):
+                    _MARKET_QUOTES_CACHE["timestamp"] = 0.0
+                    with _screening_task_lock:
+                        _screening_task_status["status"] = "success"
+                        _screening_task_status["progress"] = 100
+                        _screening_task_status["step_message"] = f"行情数据已是最新 ({target_date})，无需重复同步！"
+                        _screening_task_status["completed_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+                    return
+
                 # 增加 30 分钟 K 线增量同步
                 sync = _screening_sync(store)
                 with _screening_task_lock:
@@ -1086,11 +1096,11 @@ def create_app() -> FastAPI:
     @app.post("/api/screening/data-sync/cancel")
     def cancel_data_sync() -> dict[str, Any]:
         with _screening_task_lock:
-            _screening_task_status["status"] = "cancelled"
+            _screening_task_status["status"] = "idle"
             _screening_task_status["progress"] = 0
-            _screening_task_status["step_message"] = "用户已手动取消数据补全任务"
+            _screening_task_status["step_message"] = "数据补全任务已重置归零"
             _screening_task_status["completed_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-        return {"status": "cancelled", "message": "已取消数据补全任务"}
+        return {"status": "cancelled", "message": "已取消并重置数据补全任务"}
 
     @app.post("/api/screening/runs/run")
     def trigger_screening_run(req: RunScreeningTaskRequest, background_tasks: BackgroundTasks) -> dict[str, Any]:

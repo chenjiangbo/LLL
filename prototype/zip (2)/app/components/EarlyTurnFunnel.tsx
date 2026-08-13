@@ -82,9 +82,6 @@ export default function EarlyTurnFunnel({
 
   // Selected Stock for Sidebar/KLine
   const [selectedStockIndex, setSelectedStockIndex] = useState<number | null>(null);
-  const [targetStockCode, setTargetStockCode] = useState<string>('');
-  const [singleStockResult, setSingleStockResult] = useState<any | null>(null);
-  const [evaluatingSingle, setEvaluatingSingle] = useState(false);
   const [showDetailSidebar, setShowDetailSidebar] = useState(false);
 
   // 1. Fetch latest run info
@@ -144,28 +141,6 @@ export default function EarlyTurnFunnel({
   }, [loadStocks]);
 
   // 3. Trigger new calculation
-    const handleSingleStockEval = async () => {
-    if (!targetStockCode.trim()) return;
-    setEvaluatingSingle(true);
-    try {
-      const res = await fetch(`${API_BASE}/api/early-turn/run`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ trade_date: tradeDate, ts_code: targetStockCode.trim() }),
-      });
-      if (res.ok) {
-        const json = await res.json();
-        if (json.summary?.items && json.summary.items.length > 0) {
-          setSingleStockResult(json.summary.items[0]);
-        }
-      }
-    } catch (e) {
-      console.error('Single stock eval failed:', e);
-    } finally {
-      setEvaluatingSingle(false);
-    }
-  };
-
   const handleTriggerRun = async () => {
     setRunningTask(true);
     try {
@@ -236,25 +211,6 @@ export default function EarlyTurnFunnel({
             />
           </div>
 
-          <div className="flex items-center gap-1.5 bg-[#faf6f0] px-3 py-1.5 rounded-lg border border-[#c4c8bc]/50 text-xs">
-            <Target className="h-4 w-4 text-[#705c30]" />
-            <span className="font-bold text-[#2e3230]">单股测试:</span>
-            <input
-              type="text"
-              value={targetStockCode}
-              onChange={(e) => setTargetStockCode(e.target.value)}
-              placeholder="如 600683"
-              className="w-24 bg-white border border-[#c4c8bc]/60 px-2 py-0.5 rounded font-mono font-bold outline-none text-[#2e3230]"
-            />
-            <button
-              onClick={handleSingleStockEval}
-              disabled={evaluatingSingle || !targetStockCode.trim()}
-              className="px-2.5 py-0.5 bg-[#705c30] hover:bg-[#5a4a27] text-white font-bold rounded shadow-xs transition disabled:opacity-40"
-            >
-              {evaluatingSingle ? '计算中...' : '测试单股'}
-            </button>
-          </div>
-
           <button
             onClick={handleTriggerRun}
             disabled={runningTask}
@@ -284,78 +240,38 @@ export default function EarlyTurnFunnel({
         </div>
       </div>
 
-      
-      {/* 单股评估结果卡片 (如果用户触发了单股定向测试) */}
-      {singleStockResult && (
-        <div className="bg-[#faf6f0] border-2 border-[#705c30] p-4 rounded-xl shadow-md space-y-3">
-          <div className="flex items-center justify-between border-b border-[#c4c8bc]/40 pb-2">
-            <div className="flex items-center gap-2">
-              <Sparkles className="h-5 w-5 text-[#705c30]" />
-              <span className="font-bold text-base text-[#2e3230]">
-                【单股评估结果】{singleStockResult.name || singleStockResult.ts_code} ({singleStockResult.ts_code}) @ {singleStockResult.trade_date}
-              </span>
-            </div>
-            <button
-              onClick={() => setSingleStockResult(null)}
-              className="px-2.5 py-1 text-xs font-bold text-gray-500 hover:text-gray-800 bg-white border border-gray-300 rounded"
-            >
-              关闭卡片
-            </button>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-4 text-xs">
-            <div className="bg-white p-3 rounded-lg border border-[#c4c8bc]/50 space-y-1">
-              <span className="text-[#686d68] font-bold block">评级总分 & 状态</span>
-              <div className="flex items-center gap-2">
-                <span className="font-mono font-bold text-xl text-[#2e3230]">
-                  {singleStockResult.total_score.toFixed(1)} 分
-                </span>
-                <span className={`px-2 py-0.5 rounded text-xs font-bold text-white ${
-                  singleStockResult.state === 'EARLY_TURN' ? 'bg-[#4a7c59]' :
-                  singleStockResult.state === 'PRE_READY' ? 'bg-[#705c30]' :
-                  singleStockResult.state === 'WATCH' ? 'bg-[#2e3230]' : 'bg-rose-700'
-                }`}>
-                  {singleStockResult.state}
-                </span>
+      {/* 页面级 Mask 蒙层 + 算法计算进度 Modal */}
+      {runningTask && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 select-none">
+          <div className="w-full max-w-md bg-white rounded-2xl p-6 shadow-2xl border border-[#c4c8bc]/60 space-y-4 text-center">
+            <div className="flex justify-center">
+              <div className="relative">
+                <div className="w-16 h-16 rounded-full border-4 border-[#4a7c59]/20 border-t-[#4a7c59] animate-spin" />
+                <Sparkles className="w-6 h-6 text-[#4a7c59] absolute inset-0 m-auto" />
               </div>
             </div>
 
-            <div className="flex-1 bg-white p-3 rounded-lg border border-[#c4c8bc]/50 space-y-1.5">
-              <span className="text-[#686d68] font-bold block">8 大算子拆解明细</span>
-              <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                <span className="px-2 py-0.5 rounded bg-blue-50 text-blue-700 font-bold">
-                  均线压缩: {singleStockResult.score_detail_json?.compression || 0}分 (ATR:{singleStockResult.score_detail_json?.min_3ma_spread_atr})
-                </span>
-                <span className="px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 font-bold">
-                  均线结: {singleStockResult.score_detail_json?.knot || 0}分 ({singleStockResult.score_detail_json?.cross_pair_count_10d}组)
-                </span>
-                <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 font-bold">
-                  方向重排: {singleStockResult.score_detail_json?.direction || 0}分 (改善:{singleStockResult.score_detail_json?.order_improvement})
-                </span>
-                <span className="px-2 py-0.5 rounded bg-amber-50 text-amber-700 font-bold">
-                  斜率转向: {singleStockResult.score_detail_json?.slope || 0}分 ({singleStockResult.score_detail_json?.up_slope_count}根)
-                </span>
-                <span className="px-2 py-0.5 rounded bg-purple-50 text-purple-700 font-bold">
-                  夺回成本区: {singleStockResult.score_detail_json?.retake || 0}分
-                </span>
-                <span className="px-2 py-0.5 rounded bg-rose-50 text-rose-700 font-bold">
-                  偏离延伸: {singleStockResult.score_detail_json?.extension || 0}分 ({singleStockResult.score_detail_json?.extension_atr}ATR)
-                </span>
+            <div className="space-y-1">
+              <h3 className="font-bold text-base text-[#2e3230]">正在全量执行 A-Pre V2 选股评估</h3>
+              <p className="text-xs text-[#686d68]">
+                评估交易日: <span className="font-mono font-bold text-[#4a7c59]">{tradeDate}</span>
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs text-[#686d68] font-bold">
+                <span>全量 5000+ 股票算子计算扫描中...</span>
+                <span className="font-mono text-[#4a7c59]">实时计算中</span>
+              </div>
+              <div className="w-full h-2.5 bg-gray-100 rounded-full overflow-hidden border border-gray-200">
+                <div className="h-full bg-gradient-to-r from-[#4a7c59] to-[#705c30] rounded-full animate-pulse w-full" />
               </div>
             </div>
-          </div>
 
-        {singleStockResult.reasons_json && singleStockResult.reasons_json.length > 0 && (
-            <div className="bg-white p-3 rounded-lg border border-[#c4c8bc]/40 space-y-1 text-xs">
-              <span className="font-bold text-[#2e3230]">得分与诊断特征说明:</span>
-              {singleStockResult.reasons_json.map((r: any, idx: number) => (
-                <div key={idx} className="flex items-center gap-2 text-[11px]">
-                  <span className="px-1.5 py-0.2 rounded bg-[#4a7c59]/10 text-[#4a7c59] font-bold">{r.type}</span>
-                  <span className="text-[#2e3230]">{r.msg}</span>
-                </div>
-              ))}
-            </div>
-          )}
+            <p className="text-[11px] text-[#686d68] italic">
+              请稍候，计算完成后页面将自动解除遮罩并刷新最新选股结果
+            </p>
+          </div>
         </div>
       )}
 

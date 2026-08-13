@@ -670,13 +670,21 @@ class PostgresScreeningStore:
                 select
                     (select count(*) from screening_daily_bar where trade_date = %s and asset_type = 'stock') as stock_daily,
                     (select count(*) from screening_adj_factor where trade_date = %s and asset_type = 'stock') as stock_adj,
-                    (select count(*) from screening_daily_basic where trade_date = %s) as daily_basic,
-                    (select count(*) from screening_daily_bar where trade_date = %s and asset_type = 'etf') as etf_daily,
-                    (select count(*) from screening_adj_factor where trade_date = %s and asset_type = 'etf') as etf_adj
+                    (select count(*) from screening_daily_basic where trade_date = %s) as daily_basic
                 """,
-                (trade_date, trade_date, trade_date, trade_date, trade_date),
+                (trade_date, trade_date, trade_date),
             ).fetchone()
-        return all(int(row[key] or 0) > 0 for key in ["stock_daily", "stock_adj", "daily_basic", "etf_daily", "etf_adj"])
+        # 必须至少有 4000 只全量股票日线完备，才认可该日为完整成功数据
+        return int(row["stock_daily"] or 0) >= 4000 and int(row["stock_adj"] or 0) >= 4000 and int(row["daily_basic"] or 0) >= 4000
+
+    def has_30m_data(self, trade_date: str) -> bool:
+        with self.connect() as conn:
+            formatted_date = f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]}" if len(trade_date) == 8 else trade_date
+            row = conn.execute(
+                "select count(*) as cnt from screening_min_bar where trade_time >= %s and freq in ('30m', '30min')",
+                (formatted_date,),
+            ).fetchone()
+        return int(row["cnt"] or 0) >= 4000
 
     def has_weekly_data(self, trade_date: str, source: str = "tushare.weekly") -> bool:
         with self.connect() as conn:
@@ -1490,7 +1498,20 @@ class PostgresScreeningStore:
 
     def get_data_freshness_info(self) -> dict[str, Any]:
         with self.connect() as conn:
-            max_daily = conn.execute("select max(trade_date) as md from screening_daily_bar").fetchone()["md"]
+            # 只有全量数据 >= 4000 条的完整交易日才认作合格有效的新鲜度日期
+            row_daily = conn.execute(
+                """
+                select trade_date
+                from screening_daily_bar
+                where asset_type = 'stock'
+                group by trade_date
+                having count(*) >= 4000
+                order by trade_date desc
+                limit 1
+                """
+            ).fetchone()
+            max_daily = row_daily["trade_date"] if row_daily else None
+
             max_min = conn.execute("select max(trade_time) as mt from screening_min_bar").fetchone()["mt"]
             max_candidate = conn.execute("select max(trade_date) as mc from screening_candidate_snapshot").fetchone()["mc"]
         return {

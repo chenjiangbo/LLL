@@ -156,6 +156,9 @@ class ScreeningDataSync:
                 else:
                     print(f"[{idx}/{total}] [EMPTY] {asset_code} ({name}) no 30m bars returned", flush=True)
             except Exception as exc:
+                if "TUSHARE_RATE_LIMIT" in str(exc) or "1次/小时" in str(exc) or "频率超限" in str(exc):
+                    print(f"[{idx}/{total}] [TUSHARE_LIMIT] {asset_code} ({name}) Tushare 限频，立刻自动切换为 AkShare 备用源继续拉取 30m 数据...", flush=True)
+                    return self.sync_30m_bars_akshare(start_date=start_date, end_date=end_date, progress_callback=progress_callback)
                 print(f"[{idx}/{total}] [FAILED] {asset_code} ({name}): {exc}", flush=True)
                 self.store.log_sync(end_date, f"min_30m_{asset_code}", "FAIL", str(exc))
 
@@ -238,17 +241,9 @@ def _with_retry(func: Callable[[], T], label: str, trade_date: str, attempts: in
             if "returned empty data" in err_msg or "empty data" in err_msg:
                 print(f"[EMPTY_DATA] {label}({trade_date}) returned empty data (likely market not closed or data not generated yet). Skipping retry.", flush=True)
                 raise ScreeningError(f"EMPTY_DATA:{label}({trade_date})") from exc
-            elif "2次/天" in err_msg:
-                print(f"[DAILY_QUOTA_EXCEEDED] {label}: Tushare 2000积分账号 30分钟分钟线接口(stk_mins) 每日额度上限已达(2次/天)。", flush=True)
-                raise ScreeningError(f"Tushare 30分钟线 API 触发每日额度限制(2次/天)。需要5000+积分或使用AkShare/开源数据源补给: {exc}")
-            elif "1次/小时" in err_msg:
-                print(f"[COOL_DOWN] {label} hit 1-hour cooldown block ({exc}). Sleeping 1800s (30m) for reset...", flush=True)
-                time.sleep(1800)
-                continue
-            elif "频率超限" in err_msg or "1次/" in err_msg or "rate limit" in err_msg.lower():
-                print(f"[RATE_LIMIT] {label} hit limit: {exc}. Sleeping 65s (attempt {attempt}/{attempts})...", flush=True)
-                time.sleep(65)
-                continue
+            elif "1次/小时" in err_msg or "2次/天" in err_msg or "频率超限" in err_msg or "1次/" in err_msg or "rate limit" in err_msg.lower():
+                print(f"[RATE_LIMIT_FAILOVER] {label}({trade_date}) hit Tushare rate limit ({exc}). Fast failover to AkShare...", flush=True)
+                raise ScreeningError(f"TUSHARE_RATE_LIMIT:{exc}")
             
             print(f"[RETRY_ERR] {label} error: {exc}. Waiting {5 * attempt}s (attempt {attempt}/{attempts})...", flush=True)
             if attempt == attempts:
