@@ -16,6 +16,8 @@ import {
   ChevronRight,
   Filter,
   Info,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { init, dispose, Chart } from 'klinecharts';
 
@@ -112,6 +114,7 @@ export default function SingleStockTestView() {
   const [result, setResult] = useState<SingleStockEvalResult | null>(null);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [hoveredHistoryItem, setHoveredHistoryItem] = useState<SingleStockHistoryItem | null>(null);
+  const [showBreakdownTable, setShowBreakdownTable] = useState<boolean>(false);
 
   const chartRef = useRef<HTMLDivElement>(null);
   const chartInstanceRef = useRef<Chart | null>(null);
@@ -580,130 +583,148 @@ export default function SingleStockTestView() {
         <div ref={chartRef} className="w-full h-[520px] bg-white" />
       </div>
 
-      {/* 逐日得分与 7 大算子明细表格 */}
+      {/* 逐日得分与 7 大算子明细表格（默认隐藏，点击展开） */}
       {result && result.history && (
         <div className="bg-white rounded-xl border border-[#c4c8bc]/60 shadow-xs overflow-hidden">
-          <div className="p-3 bg-[#f0ece4] border-b border-[#c4c8bc]/40 flex items-center justify-between text-xs">
-            <span className="font-bold text-[#2e3230] flex items-center gap-1.5">
+          <div
+            onClick={() => setShowBreakdownTable(!showBreakdownTable)}
+            className="p-3.5 bg-[#f0ece4] hover:bg-[#e8e4dc] transition cursor-pointer flex items-center justify-between text-xs select-none"
+          >
+            <div className="flex items-center gap-2">
               <TrendingUp className="h-4 w-4 text-[#4a7c59]" />
-              区间内交易日逐日得分与 7 大算子拆解表 ({result.history.length} 个交易日)
-            </span>
-            {activeDisplayItem && (
-              <span className="font-mono text-xs font-bold text-[#705c30]">
-                当前高亮日期: {activeDisplayItem.trade_date} ({activeDisplayItem.total_score.toFixed(1)}分)
+              <span className="font-bold text-[#2e3230]">
+                区间内交易日逐日得分与 7 大算子拆解表 ({result.history.length} 个交易日)
               </span>
-            )}
+              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-white text-[#4a7c59] border border-[#c4c8bc]/40">
+                {showBreakdownTable ? '点击收起明细表' : '点击展开明细表'}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-3">
+              {activeDisplayItem && (
+                <span className="font-mono text-xs font-bold text-[#705c30]">
+                  当前高亮日期: {activeDisplayItem.trade_date} ({activeDisplayItem.total_score.toFixed(1)}分)
+                </span>
+              )}
+              {showBreakdownTable ? (
+                <ChevronUp className="h-4 w-4 text-[#686d68]" />
+              ) : (
+                <ChevronDown className="h-4 w-4 text-[#686d68]" />
+              )}
+            </div>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="bg-[#faf6f0] border-b border-[#c4c8bc]/40 text-[#686d68]">
-                  <th className="py-2.5 px-3 font-bold w-24">交易日期</th>
-                  <th className="py-2.5 px-3 font-bold w-20">收盘价</th>
-                  <th className="py-2.5 px-3 font-bold w-24">总得分</th>
-                  <th className="py-2.5 px-3 font-bold w-36">评级状态</th>
-                  <th className="py-2.5 px-3 font-bold w-28">背景类型</th>
-                  <th className="py-2.5 px-3 font-bold">7 大算子得分明细 (Base/Trans/Retake/Dir/Fresh/Vol/Space)</th>
-                  <th className="py-2.5 px-3 font-bold w-64">主要特征诊断与说明</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#c4c8bc]/20">
-                {result.history.map((item) => {
-                  const s = item.score_detail_json?.v2_details || {};
-                  const isSelected = activeDisplayItem?.trade_date === item.trade_date;
+          {showBreakdownTable && (
+            <div className="overflow-x-auto border-t border-[#c4c8bc]/40">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="bg-[#faf6f0] border-b border-[#c4c8bc]/40 text-[#686d68]">
+                    <th className="py-2.5 px-3 font-bold w-24">交易日期</th>
+                    <th className="py-2.5 px-3 font-bold w-20">收盘价</th>
+                    <th className="py-2.5 px-3 font-bold w-24">总得分</th>
+                    <th className="py-2.5 px-3 font-bold w-36">评级状态</th>
+                    <th className="py-2.5 px-3 font-bold w-28">背景类型</th>
+                    <th className="py-2.5 px-3 font-bold">7 大算子得分明细 (Base/Trans/Retake/Dir/Fresh/Vol/Space)</th>
+                    <th className="py-2.5 px-3 font-bold w-64">主要特征诊断与说明</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#c4c8bc]/20">
+                  {result.history.map((item) => {
+                    const s = item.score_detail_json?.v2_details || {};
+                    const isSelected = activeDisplayItem?.trade_date === item.trade_date;
 
-                  return (
-                    <tr
-                      key={item.trade_date}
-                      onClick={() => setSelectedDate(item.trade_date)}
-                      className={`hover:bg-[#f7f5f0]/80 transition cursor-pointer ${
-                        isSelected ? 'bg-[#4a7c59]/10 font-bold' : ''
-                      }`}
-                    >
-                      {/* 交易日期 */}
-                      <td className="py-2.5 px-3 font-mono font-bold text-[#2e3230]">
-                        {item.trade_date.slice(0, 4)}-{item.trade_date.slice(4, 6)}-{item.trade_date.slice(6, 8)}
-                      </td>
+                    return (
+                      <tr
+                        key={item.trade_date}
+                        onClick={() => setSelectedDate(item.trade_date)}
+                        className={`hover:bg-[#f7f5f0]/80 transition cursor-pointer ${
+                          isSelected ? 'bg-[#4a7c59]/10 font-bold' : ''
+                        }`}
+                      >
+                        {/* 交易日期 */}
+                        <td className="py-2.5 px-3 font-mono font-bold text-[#2e3230]">
+                          {item.trade_date.slice(0, 4)}-{item.trade_date.slice(4, 6)}-{item.trade_date.slice(6, 8)}
+                        </td>
 
-                      {/* 收盘价 */}
-                      <td className="py-2.5 px-3 font-mono font-bold text-[#2e3230]">
-                        {item.close.toFixed(2)}
-                      </td>
+                        {/* 收盘价 */}
+                        <td className="py-2.5 px-3 font-mono font-bold text-[#2e3230]">
+                          {item.close.toFixed(2)}
+                        </td>
 
-                      {/* 总得分 */}
-                      <td className="py-2.5 px-3 font-mono font-bold text-sm text-[#2e3230]">
-                        {item.total_score.toFixed(1)}分
-                      </td>
+                        {/* 总得分 */}
+                        <td className="py-2.5 px-3 font-mono font-bold text-sm text-[#2e3230]">
+                          {item.total_score.toFixed(1)}分
+                        </td>
 
-                      {/* 评级状态 */}
-                      <td className="py-2.5 px-3">
-                        <span
-                          className="px-2 py-0.5 rounded text-[10px] font-bold text-white"
-                          style={{ backgroundColor: getStateColor(item.state).bg }}
-                        >
-                          {getStateColor(item.state).label}
-                        </span>
-                      </td>
+                        {/* 评级状态 */}
+                        <td className="py-2.5 px-3">
+                          <span
+                            className="px-2 py-0.5 rounded text-[10px] font-bold text-white"
+                            style={{ backgroundColor: getStateColor(item.state).bg }}
+                          >
+                            {getStateColor(item.state).label}
+                          </span>
+                        </td>
 
-                      {/* 背景类型 */}
-                      <td className="py-2.5 px-3 text-[#686d68] font-bold">
-                        {item.background_type === 'FIRST_TURN'
-                          ? '首次底部转向'
-                          : item.background_type === 'SECONDARY_TURN'
-                          ? '二次转强突破'
-                          : item.background_type === 'CONSOLIDATION_RESTART'
-                          ? '整理后再启动'
-                          : item.background_type}
-                      </td>
+                        {/* 背景类型 */}
+                        <td className="py-2.5 px-3 text-[#686d68] font-bold">
+                          {item.background_type === 'FIRST_TURN'
+                            ? '首次底部转向'
+                            : item.background_type === 'SECONDARY_TURN'
+                            ? '二次转强突破'
+                            : item.background_type === 'CONSOLIDATION_RESTART'
+                            ? '整理后再启动'
+                            : item.background_type}
+                        </td>
 
-                      {/* 7 大算子得分明细 */}
-                      <td className="py-2.5 px-3">
-                        <div className="flex flex-wrap items-center gap-1 text-[11px] font-mono">
-                          <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-700">
-                            Base: {item.score_detail_json?.background || 0}
-                          </span>
-                          <span className="px-1.5 py-0.2 rounded bg-blue-50 text-blue-700">
-                            Trans: {s.transition || 0} (扣 penalty:-{s.chop_penalty || 0})
-                          </span>
-                          <span className="px-1.5 py-0.2 rounded bg-purple-50 text-purple-700">
-                            Retake: {s.retake || 0}
-                          </span>
-                          <span className="px-1.5 py-0.2 rounded bg-emerald-50 text-emerald-700">
-                            Dir: {s.direction || 0}
-                          </span>
-                          <span className="px-1.5 py-0.2 rounded bg-amber-50 text-amber-700">
-                            Fresh: {s.freshness || 0}
-                          </span>
-                          <span className="px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-700">
-                            Vol: {s.vol || 0}
-                          </span>
-                          <span className="px-1.5 py-0.2 rounded bg-rose-50 text-rose-700">
-                            Space: {s.space || 0}
-                          </span>
-                        </div>
-                      </td>
+                        {/* 7 大算子得分明细 */}
+                        <td className="py-2.5 px-3">
+                          <div className="flex flex-wrap items-center gap-1 text-[11px] font-mono">
+                            <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-700">
+                              Base: {item.score_detail_json?.background || 0}
+                            </span>
+                            <span className="px-1.5 py-0.2 rounded bg-blue-50 text-blue-700">
+                              Trans: {s.transition || 0} (扣 penalty:-{s.chop_penalty || 0})
+                            </span>
+                            <span className="px-1.5 py-0.2 rounded bg-purple-50 text-purple-700">
+                              Retake: {s.retake || 0}
+                            </span>
+                            <span className="px-1.5 py-0.2 rounded bg-emerald-50 text-emerald-700">
+                              Dir: {s.direction || 0}
+                            </span>
+                            <span className="px-1.5 py-0.2 rounded bg-amber-50 text-amber-700">
+                              Fresh: {s.freshness || 0}
+                            </span>
+                            <span className="px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-700">
+                              Vol: {s.vol || 0}
+                            </span>
+                            <span className="px-1.5 py-0.2 rounded bg-rose-50 text-rose-700">
+                              Space: {s.space || 0}
+                            </span>
+                          </div>
+                        </td>
 
-                      {/* 核心诊断原因说明 */}
-                      <td className="py-2.5 px-3 text-[#2e3230]">
-                        <div className="space-y-0.5 max-w-xs">
-                          {item.reasons_json && item.reasons_json.length > 0 ? (
-                            item.reasons_json.map((r, idx) => (
-                              <div key={idx} className="text-[11px] truncate" title={r.msg}>
-                                • {r.msg}
-                              </div>
-                            ))
-                          ) : (
-                            <span className="text-[#686d68] text-[11px]">形态平淡，处于整理蓄势期</span>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                        {/* 核心诊断原因说明 */}
+                        <td className="py-2.5 px-3 text-[#2e3230]">
+                          <div className="space-y-0.5 max-w-xs">
+                            {item.reasons_json && item.reasons_json.length > 0 ? (
+                              item.reasons_json.map((r, idx) => (
+                                <div key={idx} className="text-[11px] truncate" title={r.msg}>
+                                  • {r.msg}
+                                </div>
+                              ))
+                            ) : (
+                              <span className="text-[#686d68] text-[11px]">形态平淡，处于整理蓄势期</span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
     </div>
