@@ -55,7 +55,7 @@ class EarlyTurnEngine:
                 "reasons_json": [{"code": "DATA_MISSING", "msg": "基础特征数据缺失"}],
             }
 
-        close = _f(features, "close") or _f(features, "adj_close")
+        close = _f(features, "close")
         ma5 = _f(features, "ma5")
         ma10 = _f(features, "ma10")
         ma20 = _f(features, "ma20")
@@ -63,25 +63,22 @@ class EarlyTurnEngine:
         ma60 = _f(features, "ma60")
         atr20 = _f(features, "atr20") or (close * 0.03)
 
-        # ── 1. 背景分类 (Background Classifier) ────────────────────────────────
-        bg_type = "UNKNOWN"
+        # ── A. Background & Base (背景与底分, Max 15) ───────────────────────
+        tt = features.get("turn_type", "FIRST_TURN")
+        bg_type = tt
         bg_score = 5.0
-        ma20_slope_10 = _f(features, "ma20_slope_10")
-        close_vs_ma60 = (close - ma60) / ma60 if ma60 > 0 else 0.0
-
-        if ma20_slope_10 < 0 and close_vs_ma60 < -0.05:
-            bg_type = "REVERSAL_BASE"
-            bg_score = 10.0
-        elif close_vs_ma60 > 0.05 or _f(features, "ma60_slope_20") > 0:
-            bg_type = "CONSOLIDATION_RESTART"
+        if tt == "FIRST_TURN":
+            bg_score = 15.0
+        elif tt == "SECONDARY_TURN":
+            bg_score = 12.0
+        elif tt == "CONSOLIDATION_RESTART":
             bg_score = 10.0
 
-        # ── 2. 特征组 A：均线压缩 (Compression, 满分 20) ────────────────────────
+        # ── B. MA Regime Transition (均线状态转换, Max 25) ───────────────────
+        # 3-MA spread
         ma_vals = [ma5, ma10, ma20, ma30]
         valid_mas = [m for m in ma_vals if m > 0]
-        
         if len(valid_mas) >= 3:
-            # 最小三根均线的离散度
             sorted_mas = sorted(valid_mas)
             min_3_spread = min(
                 sorted_mas[2] - sorted_mas[0],
@@ -89,140 +86,128 @@ class EarlyTurnEngine:
             )
         else:
             min_3_spread = 999.0
-
         min_3ma_spread_atr = min_3_spread / atr20 if atr20 > 0 else 9.9
+
         spread_5d = _f(features, "ma_spread_5d_ago", default=min_3_spread * 1.2)
-        spread_change_5d = min_3_spread / spread_5d if spread_5d > 0 else 1.0
+        comp_ratio = min_3_spread / spread_5d if spread_5d > 0 else 1.0
+        cross_pairs = int(_f(features, "cross_pair_count_10d"))
 
-        score_compression = 0.0
-        if min_3ma_spread_atr <= 0.5:
-            score_compression += 14.0
+        score_transition = 0.0
+        if min_3ma_spread_atr <= 0.51:
+            score_transition += 15.0
         elif min_3ma_spread_atr <= 0.8:
-            score_compression += 8.0
+            score_transition += 10.0
         elif min_3ma_spread_atr <= 1.2:
-            score_compression += 4.0
+            score_transition += 5.0
 
-        if spread_change_5d < 0.8:
-            score_compression += 6.0
-        elif spread_change_5d < 0.95:
-            score_compression += 3.0
+        if comp_ratio < 0.8:
+            score_transition += 5.0
+        elif comp_ratio < 0.95:
+            score_transition += 3.0
 
-        score_compression = min(20.0, score_compression)
+        if cross_pairs >= 3:
+            score_transition += 5.0
+        elif cross_pairs >= 2:
+            score_transition += 3.0
 
-        # ── 3. 特征组 B：交叉网络 (MA Knot, 满分 15) ─────────────────────────────
-        cross_pair_count_10d = int(_f(features, "cross_pair_count_10d"))
-        cross_event_count_10d = int(_f(features, "cross_event_count_10d"))
+        # chop penalty: if price crossed back and forth many times (using cross_event_count_10d)
+        cross_events = int(_f(features, "cross_event_count_10d"))
+        chop_penalty = 0.0
+        if cross_events >= 8:
+            chop_penalty = 6.0
+        elif cross_events >= 4:
+            chop_penalty = 3.0
+        score_transition = max(0.0, score_transition - chop_penalty)
+        score_transition = min(25.0, score_transition)
 
-        score_knot = 0.0
-        if cross_pair_count_10d >= 4:
-            score_knot = 15.0
-        elif cross_pair_count_10d == 3:
-            score_knot = 10.0
-        elif cross_pair_count_10d == 2:
-            score_knot = 5.0
+        # ── C. Price Retake (价格夺回成本区, Max 15) ───────────────────────────
+        retake_cnt = int(_f(features, "retake_count"))
+        score_retake = 0.0
+        if retake_cnt == 4:
+            score_retake = 15.0
+        elif retake_cnt == 3:
+            score_retake = 10.0
+        elif retake_cnt == 2:
+            score_retake = 5.0
 
-        # ── 4. 特征组 C：方向性重排 (Direction & Reordering, 满分 20) ────────────
-        order_score = (
-            (1.0 if ma5 > ma10 else 0.0) +
-            (1.0 if ma5 > ma20 else 0.0) +
-            (1.0 if ma10 > ma20 else 0.0) +
-            (0.5 if ma20 > ma30 else 0.0)
-        )
-        order_score_5d = _f(features, "order_score_5d_ago", default=1.0)
-        order_improvement = order_score - order_score_5d
+        days_retake_3ma = int(_f(features, "days_retake_3ma"))
+        if days_retake_3ma > 3:
+            score_retake = max(0.0, score_retake - 5.0)
 
+        # ── D. Directional Turn (方向性转向, Max 15) ──────────────────────────
+        order_score = _f(features, "order_score")
+        order_improvement = _f(features, "order_improvement")
         score_direction = 0.0
         if order_score >= 3.0:
-            score_direction += 12.0
+            score_direction += 10.0
         elif order_score >= 2.0:
-            score_direction += 6.0
-
+            score_direction += 5.0
         if order_improvement > 0:
-            score_direction += 8.0
-        elif order_improvement == 0 and order_score >= 2.5:
-            score_direction += 4.0
+            score_direction += 5.0
+        score_direction = min(15.0, score_direction)
 
-        score_direction = min(20.0, score_direction)
+        # ── E. Freshness (新鲜度, Max 10) ──────────────────────────────────
+        score_freshness = 1.0
+        if days_retake_3ma <= 2:
+            score_freshness = 10.0
+        elif days_retake_3ma <= 5:
+            score_freshness = 7.0
+        elif days_retake_3ma <= 10:
+            score_freshness = 4.0
 
-        # ── 5. 特征组 D：均线斜率转向 (Slope Turn, 满分 15) ──────────────────────
-        slope5 = _f(features, "slope5_3d") or (ma5 / _f(features, "ma5_3d_ago", ma5) - 1.0 if _f(features, "ma5_3d_ago") > 0 else 0.0)
-        slope10 = _f(features, "slope10_5d") or (ma10 / _f(features, "ma10_5d_ago", ma10) - 1.0 if _f(features, "ma10_5d_ago") > 0 else 0.0)
-        slope20 = _f(features, "slope20_5d") or (ma20 / _f(features, "ma20_5d_ago", ma20) - 1.0 if _f(features, "ma20_5d_ago") > 0 else 0.0)
-        slope30 = _f(features, "slope30_5d") or (ma30 / _f(features, "ma30_5d_ago", ma30) - 1.0 if _f(features, "ma30_5d_ago") > 0 else 0.0)
+        # ── F. Volume Confirmation (成交确认, Max 10) ─────────────────────────
+        vol_ratio = _f(features, "volume_ratio", default=1.0)
+        score_vol = 2.0
+        if vol_ratio >= 1.5:
+            score_vol = 10.0
+        elif vol_ratio >= 1.1:
+            score_vol = 6.0
+        elif vol_ratio >= 0.8:
+            score_vol = 4.0
 
-        up_slope_count = sum([1 for s in (slope5, slope10, slope20, slope30) if s > 0])
-
-        score_slope = 0.0
-        if up_slope_count >= 3:
-            score_slope = 15.0
-        elif up_slope_count == 2:
-            score_slope = 10.0
-        elif up_slope_count == 1:
-            score_slope = 5.0
-
-        # ── 6. 特征组 E：夺回成本区 (Price Retake, 满分 10) ───────────────────────
-        retake_count = sum([
-            1 for m in (ma5, ma10, ma20, ma30) if m > 0 and close > m
-        ])
-        retake_3d_ago = int(_f(features, "retake_count_3d_ago", default=2))
-        fresh_retake = retake_count >= 3 and retake_3d_ago <= 2
-
-        score_retake = 0.0
-        if retake_count >= 3:
-            score_retake += 6.0
-            if fresh_retake:
-                score_retake += 4.0
-        elif retake_count == 2:
-            score_retake += 3.0
-
-        score_retake = min(10.0, score_retake)
-
-        # ── 7. 特征组 F：位置不过度延伸 (Extension ATR, 满分 5) ────────────────────
-        center_ma = ma20 if ma20 > 0 else (ma10 if ma10 > 0 else close)
-        extension_atr = (close - center_ma) / atr20 if atr20 > 0 else 0.0
+        # ── G. Space & Extension (空间与过度延伸, Max 10) ──────────────────────
+        extension_atr = (close - ma20) / atr20 if ma20 > 0 and atr20 > 0 else 0.0
         is_overextended = extension_atr > 2.0 or (close - ma20) / ma20 > 0.18 if ma20 > 0 else False
+        dist_high_60 = _f(features, "dist_high_60")
+        overhead_res = bool(features.get("overhead_resistance_flag"))
 
-        score_extension = 0.0
-        if 0 <= extension_atr <= 1.0:
-            score_extension = 5.0
-        elif 1.0 < extension_atr <= 1.5:
-            score_extension = 3.0
-        elif 1.5 < extension_atr <= 2.0:
-            score_extension = 1.0
+        score_space = 0.0
+        if extension_atr <= 1.0:
+            score_space += 5.0
+        elif extension_atr <= 1.5:
+            score_space += 3.0
+        elif extension_atr <= 2.0:
+            score_space += 1.0
 
-        # ── 8. 特征组 G：辅助/量能 Bonus (Bonus, 满分 5) ────────────────────────
-        score_bonus = 0.0
-        higher_low = _b(features, "higher_low")
-        if higher_low:
-            score_bonus += 3.0
+        if dist_high_60 >= 0.08:
+            score_space += 5.0
+        elif dist_high_60 >= 0.04:
+            score_space += 3.0
+        elif not overhead_res:
+            score_space += 2.0
 
-        amount_preheat = _f(features, "amount_preheat", default=1.0)
-        if 1.1 <= amount_preheat <= 1.6:
-            score_bonus += 2.0
+        score_space = min(10.0, score_space)
 
-        score_bonus = min(5.0, score_bonus)
-
-        # ── 9. 总分加总与状态决定 ──────────────────────────────────────────────
+        # ── 总分计算 (Total Score) ──────────────────────────────────────────
         total_score = (
             bg_score +
-            score_compression +
-            score_knot +
-            score_direction +
-            score_slope +
+            score_transition +
             score_retake +
-            score_extension +
-            score_bonus
+            score_direction +
+            score_freshness +
+            score_vol +
+            score_space
         )
         total_score = round(min(100.0, total_score), 1)
 
-        # 状态确定 (新增独立精准分类 EARLY_TURN_STRICT 和 PRE_READY_STRICT)
+        # 状态确定
         if is_overextended:
             state = "TOO_LATE"
-        elif total_score >= 75.0 and min_3ma_spread_atr <= 0.8 and cross_pair_count_10d >= 2:
+        elif total_score >= 75.0 and min_3ma_spread_atr <= 0.8 and cross_pairs >= 2:
             state = "EARLY_TURN_STRICT"
         elif total_score >= 75.0:
             state = "EARLY_TURN"
-        elif total_score >= 65.0 and min_3ma_spread_atr <= 1.0 and cross_pair_count_10d >= 1:
+        elif total_score >= 65.0 and min_3ma_spread_atr <= 1.0 and cross_pairs >= 1:
             state = "PRE_READY_STRICT"
         elif total_score >= 65.0:
             state = "PRE_READY"
@@ -233,36 +218,58 @@ class EarlyTurnEngine:
 
         # 原因分析列表 (Reasons)
         reasons = []
-        if score_compression >= 14:
-            reasons.append({"type": "BONUS", "msg": f"均线高度压缩 (离散/ATR: {min_3ma_spread_atr:.2f})"})
-        if cross_pair_count_10d >= 3:
-            reasons.append({"type": "BONUS", "msg": f"发生 {cross_pair_count_10d} 组均线结扎交叉 (MA Knot)"})
-        if order_improvement > 0:
-            reasons.append({"type": "BONUS", "msg": f"交叉后形成了明显的向上次序重排 (order +{order_improvement:.1f})"})
-        if fresh_retake:
-            reasons.append({"type": "BONUS", "msg": "股价刚刚重新夺回 3 根以上短中均线 (Fresh Retake)"})
+        if tt == "FIRST_TURN":
+            reasons.append({"type": "INFO", "msg": "识别为首次底部转向 (FIRST_TURN)"})
+        elif tt == "SECONDARY_TURN":
+            reasons.append({"type": "INFO", "msg": "识别为二次转强突破 (SECONDARY_TURN)"})
+        elif tt == "CONSOLIDATION_RESTART":
+            reasons.append({"type": "INFO", "msg": "识别为整理后再启动 (CONSOLIDATION_RESTART)"})
+
+        if min_3ma_spread_atr <= 0.51:
+            reasons.append({"type": "BONUS", "msg": f"均线系统高度压缩 (离散度/ATR: {min_3ma_spread_atr:.2f})"})
+        if cross_pairs >= 3:
+            reasons.append({"type": "BONUS", "msg": f"发生 {cross_pairs} 组均线交叉结扎 (MA Knot)"})
+        if chop_penalty > 0:
+            reasons.append({"type": "WARN", "msg": f"检测到近期均线反复交叉缠绕，存在震荡杂噪 (扣分 {chop_penalty:.1f})"})
+        if days_retake_3ma <= 2:
+            reasons.append({"type": "BONUS", "msg": f"突破新鲜度极佳 (站上 3MA 第 {days_retake_3ma} 天)"})
+        if overhead_res:
+            reasons.append({"type": "WARN", "msg": f"当前价格上方 6% 内存在较强历史局部阻力位 (距离: {dist_high_60:.2%})"})
         if is_overextended:
             reasons.append({"type": "WARN", "msg": f"股价偏离均线团 {extension_atr:.1f} ATR，属于追高过度延伸"})
-        if up_slope_count >= 3:
-            reasons.append({"type": "BONUS", "msg": f"已有 {up_slope_count} 根均线斜率向上拐头"})
 
+        # UI 兼容性映射 (将 V2 七大模块得分映射回原 V1 八大指标中，不破坏 UI 显示)
         score_detail = {
             "background": bg_score,
-            "compression": score_compression,
-            "knot": score_knot,
-            "direction": score_direction,
-            "slope": score_slope,
+            "compression": round(score_transition * 0.6, 1),
+            "knot": round(score_transition * 0.4, 1),
+            "direction": round(score_direction * 0.6, 1),
+            "slope": round(score_direction * 0.4, 1),
             "retake": score_retake,
-            "extension": score_extension,
-            "bonus": score_bonus,
+            "extension": score_space,
+            "bonus": round(score_freshness + score_vol, 1),
+            # 原始技术指标字段
             "min_3ma_spread_atr": round(min_3ma_spread_atr, 2),
-            "cross_pair_count_10d": cross_pair_count_10d,
+            "cross_pair_count_10d": cross_pairs,
             "order_score": order_score,
             "order_improvement": order_improvement,
-            "up_slope_count": up_slope_count,
-            "retake_count": retake_count,
-            "fresh_retake": fresh_retake,
+            "up_slope_count": int(_f(features, "days_ma5_slope_pos")),  # 借用字段展示斜率转强天数
+            "retake_count": retake_cnt,
+            "fresh_retake": days_retake_3ma <= 2,
             "extension_atr": round(extension_atr, 2),
+            # 新增 V2 调试细节
+            "v2_details": {
+                "turn_type": tt,
+                "transition": score_transition,
+                "retake": score_retake,
+                "direction": score_direction,
+                "freshness": score_freshness,
+                "vol": score_vol,
+                "space": score_space,
+                "chop_penalty": chop_penalty,
+                "overhead_resistance": overhead_res,
+                "dist_high_60": dist_high_60
+            }
         }
 
         return {

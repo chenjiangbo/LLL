@@ -32,14 +32,14 @@ class EarlyTurnService:
     engine: EarlyTurnEngine = EarlyTurnEngine()
 
     def calculate_features_from_bars(self, ts_code: str, target_date: str) -> dict[str, Any]:
-        """基于 screening_daily_bar 表向上追溯 90 日 K 线现场实时计算特征"""
+        """基于 screening_daily_bar 表向上追溯 150 日 K 线现场实时计算特征"""
         with self.store.connect() as conn:
             rows = conn.execute(
                 """
                 select trade_date, open, high, low, close, vol, amount
                 from screening_daily_bar
                 where asset_code = %s and trade_date <= %s
-                order by trade_date desc limit 90
+                order by trade_date desc limit 150
                 """,
                 (ts_code, target_date),
             ).fetchall()
@@ -85,10 +85,6 @@ class EarlyTurnService:
                         cross_pairs.add((p1, p2))
                         cross_events += 1
 
-        curr = df.iloc[-1]
-        prev_3 = df.iloc[-4] if len(df) >= 4 else curr
-        prev_5 = df.iloc[-6] if len(df) >= 6 else curr
-
         def calc_order_score(row):
             m5, m10, m20, m30 = row['ma5'], row['ma10'], row['ma20'], row['ma30']
             if pd.isna(m5) or pd.isna(m10) or pd.isna(m20) or pd.isna(m30):
@@ -102,29 +98,110 @@ class EarlyTurnService:
                 if pd.notna(row[f'ma{p}']) and close_val > row[f'ma{p}']
             ])
 
+        # Add retake_count column to df for consecutive days calculation
+        df['retake_count'] = df.apply(calc_retake_count, axis=1)
+
+        # MA Slopes
+        df['ma5_slope'] = df['ma5'].pct_change(3)
+        df['ma10_slope'] = df['ma10'].pct_change(5)
+        df['ma20_slope'] = df['ma20'].pct_change(5)
+        df['ma30_slope'] = df['ma30'].pct_change(5)
+
+        curr = df.iloc[-1]
+        prev_5 = df.iloc[-6] if len(df) >= 6 else curr
+        idx = len(df) - 1
+
+        def count_consecutive(series_bool, end_idx):
+            count = 0
+            for k in range(end_idx, -1, -1):
+                if series_bool.iloc[k]:
+                    count += 1
+                else:
+                    break
+            return count
+
+        days_retake_3ma = count_consecutive(df['retake_count'] >= 3, idx)
+        days_retake_4ma = count_consecutive(df['retake_count'] >= 4, idx)
+        days_ma5_slope_pos = count_consecutive(df['ma5_slope'] > 0, idx)
+        days_ma10_slope_pos = count_consecutive(df['ma10_slope'] > 0, idx)
+
+        # Resistance high
+        lookback_60 = df.tail(60)
+        recent_high_60 = float(lookback_60['high'].max())
+        close_curr = float(curr['close'])
+        dist_high_60 = (recent_high_60 - close_curr) / close_curr
+
+        lookback_120 = df.tail(120)
+        recent_high_120 = float(lookback_120['high'].max())
+        dist_high_120 = (recent_high_120 - close_curr) / close_curr
+
+        # Overhead peaks detection
+        peaks = []
+        for i in range(max(0, idx - 60), idx):
+            if i < 2 or i > len(df) - 3:
+                continue
+            val = df.iloc[i]['high']
+            if val == df.iloc[i-2:i+3]['high'].max():
+                peaks.append(float(val))
+        resistance_peaks = [p for p in peaks if close_curr <= p <= close_curr * 1.06]
+        overhead_resistance_flag = len(resistance_peaks) >= 2
+
+        # Turn type
+        prior_window = df.iloc[max(0, idx-60):max(0, idx-5)]
+        has_prior_strong_turn = False
+        consec = 0
+        for val in prior_window['retake_count']:
+            if val >= 3:
+                consec += 1
+                if consec >= 3:
+                    has_prior_strong_turn = True
+            else:
+                consec = 0
+
+        days_above_ma20_prior = sum([1 for i, r in prior_window.iterrows() if r['close'] > r['ma20']])
+        ratio_above_ma20 = days_above_ma20_prior / len(prior_window) if len(prior_window) > 0 else 0.0
+
+        if ratio_above_ma20 > 0.6:
+            turn_type = "CONSOLIDATION_RESTART"
+        elif has_prior_strong_turn:
+            turn_type = "SECONDARY_TURN"
+        else:
+            turn_type = "FIRST_TURN"
+
+        vol_ratio = float(curr['amount'] / lookback_60['amount'].median()) if len(lookback_60) > 0 and lookback_60['amount'].median() > 0 else 1.0
+
         order_score_curr = calc_order_score(curr)
         order_score_5d = calc_order_score(prev_5)
 
-        retake_curr = calc_retake_count(curr)
-        retake_prev3 = calc_retake_count(prev_3)
-
         features = {
-            'close': float(curr['close']),
+            'close': close_curr,
             'ma5': float(curr['ma5']) if pd.notna(curr['ma5']) else 0.0,
             'ma10': float(curr['ma10']) if pd.notna(curr['ma10']) else 0.0,
             'ma20': float(curr['ma20']) if pd.notna(curr['ma20']) else 0.0,
             'ma30': float(curr['ma30']) if pd.notna(curr['ma30']) else 0.0,
             'ma60': float(curr['ma60']) if pd.notna(curr['ma60']) else 0.0,
-            'atr20': float(curr['atr20']) if pd.notna(curr['atr20']) else float(curr['close']) * 0.03,
-            'ma20_slope_10': float(curr['ma20'] / df.iloc[-10]['ma20'] - 1.0) if len(df) >= 10 and pd.notna(df.iloc[-10]['ma20']) else 0.0,
+            'atr20': float(curr['atr20']) if pd.notna(curr['atr20']) else close_curr * 0.03,
             'cross_pair_count_10d': len(cross_pairs),
             'cross_event_count_10d': cross_events,
+            'order_score': order_score_curr,
             'order_score_5d_ago': order_score_5d,
+            'order_improvement': order_score_curr - order_score_5d,
+            'retake_count': int(curr['retake_count']),
+            'days_retake_3ma': days_retake_3ma,
+            'days_retake_4ma': days_retake_4ma,
+            'days_ma5_slope_pos': days_ma5_slope_pos,
+            'days_ma10_slope_pos': days_ma10_slope_pos,
+            'recent_high_60': recent_high_60,
+            'recent_high_120': recent_high_120,
+            'dist_high_60': dist_high_60,
+            'dist_high_120': dist_high_120,
+            'overhead_resistance_flag': overhead_resistance_flag,
+            'turn_type': turn_type,
+            'volume_ratio': vol_ratio,
             'slope5_3d': float(curr['ma5'] / df.iloc[-4]['ma5'] - 1.0) if len(df) >= 4 and pd.notna(df.iloc[-4]['ma5']) else 0.0,
             'slope10_5d': float(curr['ma10'] / prev_5['ma10'] - 1.0) if pd.notna(prev_5['ma10']) else 0.0,
             'slope20_5d': float(curr['ma20'] / prev_5['ma20'] - 1.0) if pd.notna(prev_5['ma20']) else 0.0,
             'slope30_5d': float(curr['ma30'] / prev_5['ma30'] - 1.0) if pd.notna(prev_5['ma30']) else 0.0,
-            'retake_count_3d_ago': retake_prev3,
             'higher_low': float(curr['low']) >= float(df.iloc[-10]['low'].min()) if len(df) >= 10 else True,
             'amount_preheat': float(curr['amount'] / df.tail(20)['amount'].median()) if len(df) >= 20 and df.tail(20)['amount'].median() > 0 else 1.0,
         }
