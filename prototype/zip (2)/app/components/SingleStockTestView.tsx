@@ -251,7 +251,7 @@ export default function SingleStockTestView() {
         true,
       );
 
-      // 2. 副图: VOL 成交量 (只保留成交量，不加其他复杂副图指标)
+      // 2. 副图: VOL 成交量
       chart.createIndicator('VOL', false);
 
       // 3. 转换 K 线数据
@@ -282,6 +282,9 @@ export default function SingleStockTestView() {
         span: 1,
         type: 'day',
       });
+
+      // 增大单根 K 线宽度（默认放大，方便显示得分标记）
+      chart.setBarSpace(16);
 
       chart.setDataLoader({
         getBars: ({ callback }) => {
@@ -325,7 +328,7 @@ export default function SingleStockTestView() {
         }
       });
 
-      // 6. 监听鼠标十字光标移动，划过某天 K 线时实时展示特征诊断 Card
+      // 6. 监听鼠标十字光标移动，划过某天 K 线时实时更新顶部的特征诊断 Banner
       chart.subscribeAction('onCrosshairChange', (param: any) => {
         if (param && param.kLineData && param.kLineData.trade_date) {
           const tDate = String(param.kLineData.trade_date);
@@ -493,13 +496,14 @@ export default function SingleStockTestView() {
         </div>
       )}
 
-      {/* K 线图区域 (标注得分数值，高度 520px) */}
-      <div className="bg-white p-4 rounded-xl border border-[#c4c8bc]/60 shadow-xs space-y-3 relative">
+      {/* K 线图区域 */}
+      <div className="bg-white p-4 rounded-xl border border-[#c4c8bc]/60 shadow-xs space-y-3">
+        {/* 顶部工具栏与图例 */}
         <div className="flex flex-wrap items-center justify-between border-b border-[#c4c8bc]/40 pb-2.5 text-xs gap-2">
           <div className="flex items-center gap-3">
             <span className="font-bold text-[#2e3230] flex items-center gap-1.5">
               <BarChart2 className="h-4 w-4 text-[#4a7c59]" />
-              单股历史 K 线图 (无未来数据，数据截止至: <span className="font-mono text-[#d97706]">{endDate}</span>)
+              单股历史 K 线图 (放大切片，数据截止至: <span className="font-mono text-[#d97706]">{endDate}</span>)
             </span>
             <div className="flex items-center gap-1">
               <span className="text-[11px] text-[#686d68] font-bold">均线:</span>
@@ -520,21 +524,34 @@ export default function SingleStockTestView() {
           </div>
         </div>
 
-        {/* 鼠标划过某天 K 线时在右上角浮现该日期的诊断悬浮窗 Card */}
+        {/* 位于图表顶部、固定独立的特征诊断 Banner（鼠标在 K 线上移动时自动联动刷新，100% 绝不遮挡 K 线） */}
         {activeDisplayItem && (
-          <div className="absolute right-6 top-16 z-20 w-80 p-3 bg-white/95 backdrop-blur-xs rounded-xl border border-[#c4c8bc]/80 shadow-lg space-y-1.5 text-xs pointer-events-none transition-all">
-            <div className="flex items-center justify-between border-b border-[#c4c8bc]/40 pb-1.5">
-              <span className="font-mono font-bold text-[#2e3230] flex items-center gap-1">
-                <Info className="w-3.5 h-3.5 text-[#4a7c59]" />
-                {activeDisplayItem.trade_date.slice(0, 4)}-{activeDisplayItem.trade_date.slice(4, 6)}-{activeDisplayItem.trade_date.slice(6, 8)}
-                {hoveredHistoryItem && <span className="text-[10px] text-[#4a7c59] bg-[#4a7c59]/10 px-1 rounded">划过中</span>}
-              </span>
-              <div className="flex items-center gap-1.5">
-                <span className="font-mono font-bold text-sm text-[#2e3230]">
+          <div className="bg-[#faf6f0] p-3 rounded-xl border border-[#c4c8bc]/60 text-xs space-y-1.5 shadow-2xs">
+            <div className="flex flex-wrap items-center justify-between border-b border-[#c4c8bc]/40 pb-1.5 gap-2">
+              <div className="flex items-center gap-2">
+                <Info className="w-4 h-4 text-[#4a7c59]" />
+                <span className="font-bold text-[#2e3230]">十字光标选中日期:</span>
+                <span className="font-mono font-bold text-[#4a7c59]">
+                  {activeDisplayItem.trade_date.slice(0, 4)}-{activeDisplayItem.trade_date.slice(4, 6)}-{activeDisplayItem.trade_date.slice(6, 8)}
+                </span>
+                {hoveredHistoryItem ? (
+                  <span className="text-[10px] text-[#4a7c59] bg-[#4a7c59]/15 px-1.5 py-0.2 rounded font-bold">
+                    鼠标划过即时联动中
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-[#686d68] bg-white px-1.5 py-0.2 rounded border border-[#c4c8bc]/40">
+                    点击表格选中
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-[#686d68] font-bold">策略得分:</span>
+                <span className="font-mono font-bold text-base text-[#2e3230]">
                   {activeDisplayItem.total_score.toFixed(1)}分
                 </span>
                 <span
-                  className="px-1.5 py-0.5 rounded text-[10px] font-bold text-white"
+                  className="px-2 py-0.5 rounded text-[10px] font-bold text-white"
                   style={{ backgroundColor: getStateColor(activeDisplayItem.state).bg }}
                 >
                   {getStateColor(activeDisplayItem.state).label}
@@ -542,22 +559,24 @@ export default function SingleStockTestView() {
               </div>
             </div>
 
-            <div className="space-y-1 text-[11px] text-[#2e3230]">
-              <div className="text-[#686d68] font-bold">主要特征诊断与说明:</div>
-              {activeDisplayItem.reasons_json && activeDisplayItem.reasons_json.length > 0 ? (
-                activeDisplayItem.reasons_json.map((r, idx) => (
-                  <div key={idx} className="leading-snug text-[#4a4e4a]">
-                    • {r.msg}
-                  </div>
-                ))
-              ) : (
-                <div className="text-gray-400">形态处于整理蓄势期</div>
-              )}
+            <div className="text-[11px] text-[#2e3230] space-y-1">
+              <span className="font-bold text-[#686d68] mr-2">主要特征诊断与说明:</span>
+              <div className="inline-flex flex-wrap items-center gap-x-4 gap-y-1">
+                {activeDisplayItem.reasons_json && activeDisplayItem.reasons_json.length > 0 ? (
+                  activeDisplayItem.reasons_json.map((r, idx) => (
+                    <span key={idx} className="bg-white px-2 py-0.5 rounded border border-[#c4c8bc]/40 font-medium">
+                      • {r.msg}
+                    </span>
+                  ))
+                ) : (
+                  <span className="text-gray-400">形态处于整理蓄势期</span>
+                )}
+              </div>
             </div>
           </div>
         )}
 
-        {/* 高度 520px 的 K 线图表容器 */}
+        {/* 高度 520px 的 K 线图表容器（画布无遮挡） */}
         <div ref={chartRef} className="w-full h-[520px] bg-white" />
       </div>
 
@@ -571,7 +590,7 @@ export default function SingleStockTestView() {
             </span>
             {activeDisplayItem && (
               <span className="font-mono text-xs font-bold text-[#705c30]">
-                当前日期: {activeDisplayItem.trade_date} ({activeDisplayItem.total_score.toFixed(1)}分)
+                当前高亮日期: {activeDisplayItem.trade_date} ({activeDisplayItem.total_score.toFixed(1)}分)
               </span>
             )}
           </div>
