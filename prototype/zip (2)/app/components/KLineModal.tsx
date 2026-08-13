@@ -293,12 +293,27 @@ export default function KLineModal({
               template: (neighborData: any) => {
                 const current = neighborData.current;
                 if (!current) return [];
+
+                const prev = neighborData.prev;
+                const currentClose = typeof current.close === 'number' ? current.close : 0;
+                const prevClose = prev && typeof prev.close === 'number' ? prev.close : (typeof current.open === 'number' ? current.open : currentClose);
+
+                let changePct = 0;
+                if (prevClose > 0) {
+                  changePct = ((currentClose - prevClose) / prevClose) * 100;
+                }
+
+                const changePctStr = `${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%`;
+                const changeColor = changePct > 0 ? '#ef4444' : changePct < 0 ? '#10b981' : '#6b7280';
+
                 const rawDate = String(current.trade_date || '');
                 const dateStr = rawDate.length === 8 ? `${rawDate.slice(0, 4)}-${rawDate.slice(4, 6)}-${rawDate.slice(6)}` : rawDate;
                 const volVal = typeof current.volume === 'number' ? current.volume : 0;
                 const volStr = volVal >= 10000 ? `${(volVal / 10000).toFixed(1)}万` : `${(volVal / 1000).toFixed(1)}千`;
+
                 return [
                   { title: '时间:', value: dateStr },
+                  { title: ' 幅:', value: { text: changePctStr, color: changeColor } },
                   { title: ' O:', value: typeof current.open === 'number' ? current.open.toFixed(2) : '--' },
                   { title: ' H:', value: typeof current.high === 'number' ? current.high.toFixed(2) : '--' },
                   { title: ' L:', value: typeof current.low === 'number' ? current.low.toFixed(2) : '--' },
@@ -608,31 +623,11 @@ export default function KLineModal({
               ))}
             </div>
 
-            {/* 复权 */}
-            <div className="flex bg-slate-200/80 p-0.5 rounded ml-1">
-              <button
-                onClick={() => setAdjust('qfq')}
-                className={`px-2 py-0.5 text-xs font-bold rounded transition ${
-                  adjust === 'qfq' ? 'bg-white text-slate-800 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                前复权
-              </button>
-              <button
-                onClick={() => setAdjust('none')}
-                className={`px-2 py-0.5 text-xs font-bold rounded transition ${
-                  adjust === 'none' ? 'bg-white text-slate-800 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                不复权
-              </button>
-            </div>
-
             {/* 入候选池按钮 */}
             {onToggleSelect && (
               <button
                 onClick={onToggleSelect}
-                className={`ml-2 px-2.5 py-1 text-xs font-bold rounded-md transition flex items-center gap-1.5 shadow-xs ${
+                className={`px-2.5 py-1 text-xs font-bold rounded-md transition flex items-center gap-1 shadow-xs ${
                   isSelected
                     ? 'bg-amber-500 text-white hover:bg-amber-600'
                     : 'bg-white text-slate-700 hover:bg-emerald-50 hover:text-emerald-700 border border-slate-300'
@@ -644,8 +639,8 @@ export default function KLineModal({
               </button>
             )}
 
-            {/* 快捷缩放控制按钮组 (仅图标) */}
-            <div className="flex bg-slate-200/80 p-0.5 rounded ml-1 items-center gap-0.5">
+            {/* 快捷缩放控制按钮组 */}
+            <div className="flex bg-slate-200/80 p-0.5 rounded items-center gap-0.5">
               <button
                 onClick={() => chartRef.current?.zoomAtCoordinate(1.15)}
                 className="p-1 rounded hover:bg-white text-slate-700 hover:text-slate-900 transition"
@@ -661,26 +656,14 @@ export default function KLineModal({
                 <ZoomOut className="w-3.5 h-3.5 text-amber-600" />
               </button>
             </div>
-          </div>
-
-          {/* 右区：主图均线设置与副图指标切换 */}
-          <div className="flex items-center gap-2 shrink-0">
-            {/* 主图均线设置 */}
-            <div ref={maConfigRef} className="relative flex items-center gap-1 bg-white border border-slate-200 px-2 py-0.5 rounded">
-              <span className="font-bold text-slate-700 text-[11px]">主图MA:</span>
-              <div className="flex items-center gap-1">
-                {maItems.map((item) => (
-                  <span key={item.id} className="font-bold text-[11px]" style={{ color: item.color }}>
-                    {item.day}
-                  </span>
-                ))}
-              </div>
+            <div ref={maConfigRef} className="relative">
               <button
                 onClick={() => setShowMaConfig(!showMaConfig)}
-                className="p-0.5 text-slate-400 hover:text-emerald-600 transition ml-0.5"
+                className="inline-flex items-center gap-1 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 font-bold px-2.5 py-0.5 rounded text-xs transition"
                 title="自定义 MA 均线天数与颜色"
               >
-                <Settings className="w-3.5 h-3.5" />
+                <span>均线</span>
+                <Settings className="w-3.5 h-3.5 text-slate-500 hover:text-emerald-600" />
               </button>
 
               {/* 均线设置 Popover */}

@@ -362,7 +362,30 @@ def _sync_screening_trade_date(store: PostgresScreeningStore, trade_date: str | 
         target_date = _latest_open_trade_date(sync)
     if len(target_date) != 8 or not target_date.isdigit():
         raise ScreeningError(f"invalid trade_date: {trade_date}")
-    counts = sync.sync_trade_date(target_date)
+    
+    # 幂等判断：如果数据库已经拥有该主日线数据，0ms 静默跳过，无网络开销
+    if store.has_daily_data(target_date):
+        freshness = store.get_data_freshness_info()
+        return {"trade_date": target_date, "skipped": True, "counts": {}, "freshness": freshness}
+    
+    counts: dict[str, Any] = {}
+    try:
+        counts = sync.sync_trade_date(target_date)
+    except ScreeningError as exc:
+        if "EMPTY_DATA" in str(exc):
+            # 盘后日线尚未生成（如当天盘中），自动向前回溯前一交易日
+            start = (date.today() - timedelta(days=14)).strftime("%Y%m%d")
+            dates = sync.source.trade_dates(start, target_date)
+            prev_date = dates[-2] if len(dates) >= 2 else target_date
+            
+            if store.has_daily_data(prev_date):
+                print(f"[SYNC_SKIP] {target_date} 日线未出盘后总结，而前一交易日 {prev_date} 已在库，静默跳过日线补齐。", flush=True)
+                counts = {"skipped": True, "fallback_date": prev_date}
+            else:
+                counts = sync.sync_trade_date(prev_date)
+        else:
+            raise exc
+
     freshness = store.get_data_freshness_info()
     return {"trade_date": target_date, "counts": counts, "freshness": freshness}
 

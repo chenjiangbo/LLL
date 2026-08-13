@@ -69,7 +69,7 @@ export default function EarlyTurnFunnel({
   const [activeState, setActiveState] = useState<EarlyTurnState>('ALL');
   const [activeBg, setActiveBg] = useState<BackgroundType>('ALL');
   const [selectedIndustry, setSelectedIndustry] = useState<string>('ALL');
-  const [industryShowCount, setIndustryShowCount] = useState<number>(20);
+  const [industryShowCount, setIndustryShowCount] = useState<number>(8);
   const [industrySearchQuery, setIndustrySearchQuery] = useState<string>('');
   const [showIndustryDropdown, setShowIndustryDropdown] = useState<boolean>(false);
   const [minScore, setMinScore] = useState<string>('');
@@ -483,9 +483,9 @@ export default function EarlyTurnFunnel({
         </div>
       </div>
 
-      {/* 行业筛选与统计 Pills 栏 */}
-      <div className="bg-[#f0ece4]/70 p-2.5 rounded-xl border border-[#c4c8bc]/40">
-        <div className="flex flex-wrap items-center gap-1.5 text-xs">
+      {/* 行业筛选与搜索工具条（合并行以节省空间） */}
+      <div className="bg-[#f0ece4]/70 p-2.5 rounded-xl border border-[#c4c8bc]/40 flex flex-wrap items-center justify-between gap-3 text-xs">
+        <div className="flex flex-wrap items-center gap-1.5">
           <span className="font-bold text-[#686d68] mr-1">行业筛选:</span>
           <button
             onClick={() => {
@@ -524,17 +524,42 @@ export default function EarlyTurnFunnel({
               更多 (+{Math.min(20, sortedIndustries.length - industryShowCount)})
             </button>
           )}
-          {industryShowCount > 20 && (
+          {industryShowCount > 8 && (
             <button
-              onClick={() => setIndustryShowCount(20)}
+              onClick={() => setIndustryShowCount(8)}
               className="px-2 py-1 font-bold rounded-md border border-dashed border-[#686d68]/50 text-[#686d68] hover:bg-[#686d68]/10 transition"
             >
               收起
             </button>
           )}
+        </div>
+
+        <div className="flex items-center gap-2 ml-auto">
+          {/* 即时搜索框 */}
+          <div className="flex items-center gap-1 bg-white px-2.5 py-1 rounded-lg border border-[#c4c8bc]/50">
+            <Search className="h-3.5 w-3.5 text-[#686d68]" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="搜索代码、名称..."
+              className="w-32 bg-transparent outline-none text-[#2e3230]"
+            />
+          </div>
+
+          <div className="flex items-center gap-1 bg-white px-2 py-1 rounded-lg border border-[#c4c8bc]/50">
+            <span className="text-[#686d68] font-bold">最低分:</span>
+            <input
+              type="number"
+              value={minScore}
+              onChange={(e) => setMinScore(e.target.value)}
+              placeholder="50"
+              className="w-12 bg-white border border-[#c4c8bc]/50 px-1 py-0.5 text-center outline-none rounded font-mono"
+            />
+          </div>
 
           {/* 搜索行业 Combobox */}
-          <div className="relative ml-auto">
+          <div className="relative">
             <button
               onClick={() => setShowIndustryDropdown(!showIndustryDropdown)}
               className="inline-flex items-center gap-1.5 px-2.5 py-1 font-bold bg-white border border-[#c4c8bc]/60 rounded-md text-[#2e3230] hover:bg-slate-50 transition shadow-xs"
@@ -590,54 +615,6 @@ export default function EarlyTurnFunnel({
                 </div>
               </div>
             )}
-          </div>
-        </div>
-      </div>
-
-      {/* 筛选与搜索工具条 */}
-      <div className="bg-white/80 p-3 rounded-xl border border-[#c4c8bc]/50 flex flex-wrap items-center justify-between gap-3 text-xs">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="font-bold text-[#686d68]">背景入口:</span>
-          {(['ALL', 'REVERSAL_BASE', 'CONSOLIDATION_RESTART'] as BackgroundType[]).map((bg) => (
-            <button
-              key={bg}
-              onClick={() => {
-                setActiveBg(bg);
-                setPage(1);
-              }}
-              className={`px-2.5 py-1 font-bold rounded-lg transition ${
-                activeBg === bg
-                  ? 'bg-[#2e3230] text-white shadow-xs'
-                  : 'bg-[#faf6f0] text-[#4a4e4a] hover:bg-[#e4e0d8] border border-[#c4c8bc]/40'
-              }`}
-            >
-              {bg === 'ALL' ? '全部背景' : bg === 'REVERSAL_BASE' ? '📉 下降后筑底/反转' : '📈 上涨后横盘再启动'}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex items-center gap-2">
-          {/* 即时搜索框 */}
-          <div className="flex items-center gap-1 bg-[#faf6f0] px-2.5 py-1 rounded-lg border border-[#c4c8bc]/50">
-            <Search className="h-3.5 w-3.5 text-[#686d68]" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="搜索代码、名称..."
-              className="w-32 bg-transparent outline-none text-[#2e3230]"
-            />
-          </div>
-
-          <div className="flex items-center gap-1 bg-[#faf6f0] px-2 py-1 rounded-lg border border-[#c4c8bc]/50">
-            <span className="text-[#686d68] font-bold">最低分:</span>
-            <input
-              type="number"
-              value={minScore}
-              onChange={(e) => setMinScore(e.target.value)}
-              placeholder="50"
-              className="w-12 bg-white border border-[#c4c8bc]/50 px-1 py-0.5 text-center outline-none rounded font-mono"
-            />
           </div>
         </div>
       </div>

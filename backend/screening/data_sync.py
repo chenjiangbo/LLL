@@ -235,7 +235,10 @@ def _with_retry(func: Callable[[], T], label: str, trade_date: str, attempts: in
         except Exception as exc:
             last_error = exc
             err_msg = str(exc)
-            if "2次/天" in err_msg:
+            if "returned empty data" in err_msg or "empty data" in err_msg:
+                print(f"[EMPTY_DATA] {label}({trade_date}) returned empty data (likely market not closed or data not generated yet). Skipping retry.", flush=True)
+                raise ScreeningError(f"EMPTY_DATA:{label}({trade_date})") from exc
+            elif "2次/天" in err_msg:
                 print(f"[DAILY_QUOTA_EXCEEDED] {label}: Tushare 2000积分账号 30分钟分钟线接口(stk_mins) 每日额度上限已达(2次/天)。", flush=True)
                 raise ScreeningError(f"Tushare 30分钟线 API 触发每日额度限制(2次/天)。需要5000+积分或使用AkShare/开源数据源补给: {exc}")
             elif "1次/小时" in err_msg:
