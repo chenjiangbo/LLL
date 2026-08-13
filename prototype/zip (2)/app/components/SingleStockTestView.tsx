@@ -20,6 +20,7 @@ import {
   ChevronUp,
   X,
   GripHorizontal,
+  Download,
 } from 'lucide-react';
 import { init, dispose, Chart } from 'klinecharts';
 
@@ -174,6 +175,57 @@ export default function SingleStockTestView() {
       window.removeEventListener('mouseup', handleMouseUp);
     };
   }, [isDragging]);
+
+  // 导出拆解表为 Markdown 文档
+  const handleExportMarkdown = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!result || !result.history || result.history.length === 0) return;
+
+    const lines: string[] = [];
+    lines.push(`# 📊 ${result.ts_code} ${result.name} 区间逐日得分与 7 大算子拆解报告`);
+    lines.push(`\n- **股票代码**: \`${result.ts_code}\``);
+    lines.push(`- **股票名称**: **${result.name}**`);
+    lines.push(`- **所属行业**: \`${result.industry}\``);
+    lines.push(`- **策略模型**: \`${result.strategy_id}\``);
+    lines.push(`- **评估区间**: \`${result.start_date}\` 至 \`${result.end_date}\` (共 ${result.history.length} 个交易日)`);
+    lines.push(`- **导出时间**: \`${new Date().toLocaleString('zh-CN')}\``);
+    lines.push(`\n---`);
+    lines.push(`\n## 📅 交易日逐日得分与 7 大算子拆解明细\n`);
+    lines.push(`| 交易日期 | 收盘价 | 总得分 | 评级状态 | 背景类型 | 7 大算子得分明细 (Base/Trans/Retake/Dir/Fresh/Vol/Space) | 主要特征诊断与说明 |`);
+    lines.push(`| :--- | :--- | :--- | :--- | :--- | :--- | :--- |`);
+
+    result.history.forEach((item) => {
+      const s = item.score_detail_json?.v2_details || {};
+      const formattedDate = `${item.trade_date.slice(0, 4)}-${item.trade_date.slice(4, 6)}-${item.trade_date.slice(6, 8)}`;
+      const stateLabel = getStateColor(item.state).label;
+      const bgLabel = item.background_type === 'FIRST_TURN'
+        ? '首次底部转向'
+        : item.background_type === 'SECONDARY_TURN'
+        ? '二次转强突破'
+        : item.background_type === 'CONSOLIDATION_RESTART'
+        ? '整理后再启动'
+        : item.background_type;
+
+      const opsDetail = `Base:${item.score_detail_json?.background || 0} | Trans:${s.transition || 0}(penalty:-${s.chop_penalty || 0}) | Retake:${s.retake || 0} | Dir:${s.direction || 0} | Fresh:${s.freshness || 0} | Vol:${s.vol || 0} | Space:${s.space || 0}`;
+
+      const reasons = item.reasons_json && item.reasons_json.length > 0
+        ? item.reasons_json.map((r) => r.msg).join('； ')
+        : '形态处于整理蓄势期';
+
+      lines.push(`| \`${formattedDate}\` | \`${item.close.toFixed(2)}\` | **${item.total_score.toFixed(1)}分** | ${stateLabel} | ${bgLabel} | \`${opsDetail}\` | ${reasons} |`);
+    });
+
+    const markdownContent = lines.join('\n');
+    const blob = new Blob([markdownContent], { type: 'text/markdown;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${result.ts_code}_${result.name}_逐日打分拆解报告_${result.start_date}_${result.end_date}.md`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }, [result]);
 
   // 执行单股多日策略测试
   const handleRunEval = useCallback(async (codeOverride?: string) => {
@@ -637,9 +689,17 @@ export default function SingleStockTestView() {
             <div className="flex items-center gap-3">
               {activeDisplayItem && (
                 <span className="font-mono text-xs font-bold text-[#705c30]">
-                  当前高亮日期: {activeDisplayItem.trade_date} ({activeDisplayItem.total_score.toFixed(1)}分)
+                  当前高亮: {activeDisplayItem.trade_date} ({activeDisplayItem.total_score.toFixed(1)}分)
                 </span>
               )}
+              <button
+                onClick={handleExportMarkdown}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-bold bg-[#4a7c59] hover:bg-[#3b6447] text-white transition shadow-xs"
+                title="将表格数据导出为 Markdown (.md) 文件"
+              >
+                <Download className="h-3.5 w-3.5" />
+                <span>导出 MD 文档</span>
+              </button>
               {showBreakdownTable ? (
                 <ChevronUp className="h-4 w-4 text-[#686d68]" />
               ) : (
