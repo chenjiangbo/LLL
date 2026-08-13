@@ -9,10 +9,21 @@ node_modules/
 .next/
 out/
 build/
+tsconfig.tsbuildinfo
 
-# Logs & temp
+# Environment variables & secrets
+.env
+.env.bak
+.env.local
+.env.*.local
+
+# Databases & backups
+data/
+*.sqlite
+*.sql.gz
+
+# Logs & temp files
 *.log
 .DS_Store
 .gemini/
 scratch/
-PYEOF

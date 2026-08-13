@@ -267,7 +267,7 @@ class EarlyTurnEngine:
             "total_score": total_score,
             "state": state,
             "background_type": bg_type,
-            "selected": state in ("EARLY_TURN", "PRE_READY"),
+            "selected": state in ("EARLY_TURN", "PRE_READY", "EARLY_TURN_STRICT", "PRE_READY_STRICT"),
             "is_overextended": is_overextended,
             "features_json": features,
             "score_detail_json": score_detail,
