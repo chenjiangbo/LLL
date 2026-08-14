@@ -359,3 +359,5 @@ export const SecondaryStockDetailDrawer: React.FC<SecondaryStockDetailDrawerProp
     </div>
   );
 };
+
+export default SecondaryStockDetailDrawer;

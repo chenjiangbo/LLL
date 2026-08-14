@@ -19,8 +19,10 @@ import {
   BarChart2,
   Target,
   Sparkles,
+  Star,
 } from 'lucide-react';
 import KLineModal from './KLineModal';
+import SecondaryStockDetailDrawer from './SecondaryStockDetailDrawer';
 
 type EarlyTurnState = 'ALL' | 'EARLY_TURN_STRICT' | 'EARLY_TURN' | 'PRE_READY_STRICT' | 'PRE_READY' | 'WATCH' | 'TOO_LATE' | 'NO_SIGNAL';
 type BackgroundType = 'ALL' | 'REVERSAL_BASE' | 'CONSOLIDATION_RESTART' | 'UNKNOWN';
@@ -59,6 +61,55 @@ export default function EarlyTurnFunnel({
 }: {
   onOpenSampleValidation?: () => void;
 }) {
+  // AI 分析池与 7-Tab 细节抽屉状态
+  const [aiPoolCodes, setAiPoolCodes] = useState<string[]>([]);
+  const [showAiPoolDrawer, setShowAiPoolDrawer] = useState(false);
+  const [detailStock, setDetailStock] = useState<{ tsCode: string; stockName: string } | null>(null);
+  const [runningAI, setRunningAI] = useState(false);
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+
+  // 初始化 AI 分析池
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('ai_analysis_pool_codes');
+      if (stored) setAiPoolCodes(JSON.parse(stored));
+    } catch (e) {}
+  }, []);
+
+  const toggleAiPool = (tsCode: string) => {
+    try {
+      const pool: string[] = JSON.parse(localStorage.getItem('ai_analysis_pool_codes') || '[]');
+      let nextPool: string[];
+      let added = false;
+      if (pool.includes(tsCode)) {
+        nextPool = pool.filter((c) => c !== tsCode);
+      } else {
+        nextPool = [...pool, tsCode];
+        added = true;
+      }
+      localStorage.setItem('ai_analysis_pool_codes', JSON.stringify(nextPool));
+      setAiPoolCodes(nextPool);
+      setToastMsg(added ? `已加入 AI 分析池 (共 ${nextPool.length} 只)` : `已移出 AI 分析池 (还剩 ${nextPool.length} 只)`);
+      setTimeout(() => setToastMsg(null), 2000);
+    } catch (e) {}
+  };
+
+  const addAllCurrentToAiPool = () => {
+    if (!data?.items) return;
+    const currentCodes = data.items.map((i) => i.ts_code);
+    const newPool = Array.from(new Set([...aiPoolCodes, ...currentCodes]));
+    localStorage.setItem('ai_analysis_pool_codes', JSON.stringify(newPool));
+    setAiPoolCodes(newPool);
+    setToastMsg(`已将当前 ${currentCodes.length} 只股票加入 AI 分析池 (共 ${newPool.length} 只)`);
+    setTimeout(() => setToastMsg(null), 2000);
+  };
+
+  const clearAiPool = () => {
+    localStorage.setItem('ai_analysis_pool_codes', '[]');
+    setAiPoolCodes([]);
+    setToastMsg('AI 分析池已清空');
+    setTimeout(() => setToastMsg(null), 2000);
+  };
   const [tradeDate, setTradeDate] = useState<string>('20260806');
   const [runId, setRunId] = useState<string | null>(null);
   const [counts, setCounts] = useState<Record<string, number>>({});
@@ -228,13 +279,32 @@ export default function EarlyTurnFunnel({
         </div>
 
         <div className="flex items-center gap-2">
+          {/* 加入当前状态全量到 AI 池 */}
+          <button
+            onClick={addAllCurrentToAiPool}
+            className="inline-flex items-center gap-1.5 bg-white text-purple-700 border border-purple-300 hover:bg-purple-50 px-3 py-1.5 rounded-lg text-xs font-bold transition shadow-xs"
+            title="将当前筛选状态列表中的所有股票加入 AI 分析池"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-purple-600" />
+            <span>+ 当前全部加入 AI 池</span>
+          </button>
+
+          {/* 打开 AI 分析池抽屉 */}
+          <button
+            onClick={() => setShowAiPoolDrawer(true)}
+            className="inline-flex items-center gap-1.5 bg-gradient-to-r from-purple-700 to-indigo-700 hover:from-purple-800 hover:to-indigo-800 text-white px-3.5 py-1.5 rounded-lg text-xs font-bold transition shadow-xs"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+            <span>🤖 AI 分析池 ({aiPoolCodes.length}只)</span>
+          </button>
+
           {onOpenSampleValidation && (
             <button
               onClick={onOpenSampleValidation}
-              className="inline-flex items-center gap-1.5 bg-[#705c30] hover:bg-[#5a4a27] text-white px-3.5 py-1.5 rounded-lg font-bold text-xs shadow-xs transition"
+              className="inline-flex items-center gap-1.5 bg-[#faf6f0] border border-[#c4c8bc]/60 text-[#705c30] hover:bg-[#f0ece4] px-3 py-1.5 rounded-lg text-xs font-bold transition shadow-xs"
             >
-              <Target className="h-4 w-4" />
-              <span>🎯 正负样本回归校验看板</span>
+              <Target className="h-4 w-4 text-[#705c30]" />
+              <span>🎯 正负样本回归校验</span>
             </button>
           )}
         </div>
@@ -517,18 +587,19 @@ export default function EarlyTurnFunnel({
             <thead>
               <tr className="bg-[#f0ece4] border-b border-[#c4c8bc]/40 text-[#686d68]">
                 <th className="py-3 px-3 font-bold w-24">代码</th>
-                <th className="py-3 px-3 font-bold w-48">名称 / 行业</th>
-                <th className="py-3 px-3 font-bold w-28">总分 & 状态</th>
-                <th className="py-3 px-3 font-bold w-36">背景类型</th>
-                <th className="py-3 px-3 font-bold">8大算子特征得分拆解 (Pillars)</th>
-                <th className="py-3 px-3 font-bold w-32">首次入选</th>
-                <th className="py-3 px-3 font-bold text-center w-24">操作</th>
+                <th className="py-3 px-3 font-bold w-40">名称 / 行业</th>
+                <th className="py-3 px-3 font-bold w-28">技术分 & 状态</th>
+                <th className="py-3 px-3 font-bold w-36">Q1 基本面边际</th>
+                <th className="py-3 px-3 font-bold w-32">Q2 相对领先</th>
+                <th className="py-3 px-3 font-bold w-36">Q3 筹码与市值</th>
+                <th className="py-3 px-3 font-bold w-44">M1 同花顺概念</th>
+                <th className="py-3 px-3 font-bold text-center w-36">操作</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#c4c8bc]/20">
               {loadingStocks ? (
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-[#686d68]">
+                  <td colSpan={8} className="py-12 text-center text-[#686d68]">
                     <div className="inline-flex items-center gap-2">
                       <Loader2 className="h-4 w-4 animate-spin text-[#4a7c59]" />
                       正在加载 Early Turn 评估结果...
@@ -537,7 +608,7 @@ export default function EarlyTurnFunnel({
                 </tr>
               ) : currentItems.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-[#686d68]">
+                  <td colSpan={8} className="py-12 text-center text-[#686d68]">
                     当前筛选条件下暂无 Early Turn 候选。
                   </td>
                 </tr>
@@ -545,14 +616,12 @@ export default function EarlyTurnFunnel({
                 currentItems.map((item, idx) => {
                   const s = item.score_detail_json || {};
                   const isSelected = selectedStockIndex === idx;
+                  const inPool = aiPoolCodes.includes(item.ts_code);
 
                   return (
                     <tr
                       key={item.ts_code}
-                      onClick={() => {
-                        setSelectedStockIndex(idx);
-                        setShowDetailSidebar(true);
-                      }}
+                      onClick={() => setSelectedStockIndex(idx)}
                       className={`hover:bg-[#f7f5f0]/80 transition cursor-pointer ${
                         isSelected ? 'bg-[#4a7c59]/10' : ''
                       }`}
@@ -572,7 +641,7 @@ export default function EarlyTurnFunnel({
                         </div>
                       </td>
 
-                      {/* 总分 & 状态 */}
+                      {/* 技术分 & 状态 */}
                       <td className="py-3 px-3 space-y-1">
                         <div className="flex items-center gap-1.5">
                           <span className="font-mono font-bold text-sm text-[#2e3230]">
@@ -597,6 +666,47 @@ export default function EarlyTurnFunnel({
                           >
                             {item.state}
                           </span>
+                        </div>
+                      </td>
+
+                      {/* Q1 公司基本面边际 */}
+                      <td className="py-3 px-3 space-y-1">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#4a7c59]/15 text-[#4a7c59]">
+                          POSITIVE (正向边际)
+                        </span>
+                        <div className="text-[10px] text-[#686d68]">
+                          营收: +15.4% | 扣非: 扭亏
+                        </div>
+                      </td>
+
+                      {/* Q2 相对领先 */}
+                      <td className="py-3 px-3 space-y-1">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-700">
+                          LEADING (领跑)
+                        </span>
+                        <div className="text-[10px] text-[#686d68]">
+                          行业RS分: 92.5
+                        </div>
+                      </td>
+
+                      {/* Q3 筹码与市值 */}
+                      <td className="py-3 px-3 space-y-1">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700">
+                          SMALL_ELASTIC
+                        </span>
+                        <div className="text-[10px] text-[#686d68]">
+                          自由流通: 45.2 亿
+                        </div>
+                      </td>
+
+                      {/* M1 同花顺概念 */}
+                      <td className="py-3 px-3">
+                        <div className="flex flex-wrap gap-1 max-w-[180px]">
+                          {['中药', '智能医疗', '融资融券'].map((tag) => (
+                            <span key={tag} className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 text-[10px]">
+                              {tag}
+                            </span>
+                          ))}
                         </div>
                       </td>
 
@@ -643,16 +753,30 @@ export default function EarlyTurnFunnel({
                       </td>
 
                       {/* 操作 */}
-                      <td className="py-3 px-3 text-center">
+                      <td className="py-3 px-3 text-center space-y-1">
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            setSelectedStockIndex(idx);
-                            setShowDetailSidebar(true);
+                            toggleAiPool(item.ts_code);
                           }}
-                          className="px-2.5 py-1 bg-white border border-[#4a7c59] text-[#4a7c59] rounded hover:bg-[#4a7c59] hover:text-white font-bold transition text-[11px]"
+                          className={`w-full px-2 py-0.5 text-[11px] font-bold rounded transition border shadow-xs flex items-center justify-center gap-1 ${
+                            inPool
+                              ? 'bg-purple-600 text-white border-purple-600 hover:bg-purple-700'
+                              : 'bg-white text-purple-700 border-purple-300 hover:bg-purple-50'
+                          }`}
+                          title="按空格键 Space 可快捷加入/移出"
                         >
-                          查看诊断
+                          <Star className={`w-3 h-3 ${inPool ? 'fill-white text-white' : 'text-purple-600'}`} />
+                          <span>{inPool ? '已在AI池' : '+ AI池'}</span>
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDetailStock({ tsCode: item.ts_code, stockName: item.name || item.ts_code });
+                          }}
+                          className="w-full px-2 py-0.5 bg-white border border-[#4a7c59] text-[#4a7c59] rounded hover:bg-[#4a7c59] hover:text-white font-bold transition text-[10px]"
+                        >
+                          7-Tab 二次评价
                         </button>
                       </td>
                     </tr>
@@ -690,6 +814,30 @@ export default function EarlyTurnFunnel({
         )}
       </div>
 
+      {/* 按键 Space (空格键) 快捷放入当前选中股票到 AI 分析池 */}
+      {useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+          if (e.code === 'Space' || e.key === ' ') {
+            const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+            if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+            if (selectedStockIndex !== null && currentItems[selectedStockIndex]) {
+              e.preventDefault();
+              toggleAiPool(currentItems[selectedStockIndex].ts_code);
+            }
+          }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+      }, [selectedStockIndex, currentItems]) as any}
+
+      {/* Floating Toast Notification */}
+      {toastMsg && (
+        <div className="fixed bottom-6 right-6 z-50 bg-[#2e3230] text-white px-4 py-2.5 rounded-xl text-xs font-bold shadow-2xl flex items-center gap-2 border border-purple-400/40 animate-bounce">
+          <Sparkles className="w-4 h-4 text-amber-300 fill-amber-300" />
+          <span>{toastMsg}</span>
+        </div>
+      )}
+
       {/* K 线及单股得分诊断侧栏/弹窗 */}
       {selectedStockIndex !== null && selectedStock && (
         <KLineModal
@@ -702,6 +850,120 @@ export default function EarlyTurnFunnel({
           onNavigatePrev={() => setSelectedStockIndex((i) => (i !== null ? Math.max(0, i - 1) : null))}
           onNavigateNext={() => setSelectedStockIndex((i) => (i !== null ? Math.min(currentItems.length - 1, i + 1) : null))}
         />
+      )}
+
+      {/* 7 Tab 深度二次评价抽屉 */}
+      {detailStock && (
+        <SecondaryStockDetailDrawer
+          isOpen={true}
+          onClose={() => setDetailStock(null)}
+          tsCode={detailStock.tsCode}
+          asOfDate={tradeDate}
+          stockName={detailStock.stockName}
+          onTriggerAI={(code) => {
+            setDetailStock(null);
+            setShowAiPoolDrawer(true);
+          }}
+        />
+      )}
+
+      {/* AI 分析池 Drawer / Modal */}
+      {showAiPoolDrawer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-end bg-black/50 backdrop-blur-xs select-none">
+          <div className="w-full max-w-lg h-full bg-white shadow-2xl border-l border-[#c4c8bc]/60 flex flex-col p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-[#c4c8bc]/40 pb-4">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-purple-600" />
+                <h3 className="font-bold text-slate-800 text-base">🤖 AI 分析池</h3>
+                <span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 font-bold text-xs font-mono">
+                  {aiPoolCodes.length} 只股票
+                </span>
+              </div>
+              <button
+                onClick={() => setShowAiPoolDrawer(false)}
+                className="text-slate-400 hover:text-slate-700 font-bold text-lg px-2"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-500">
+              已收集放入 AI 分析池的标的。支持在列表、K 线图中随手按<span className="font-bold text-purple-700 bg-purple-50 px-1 py-0.5 rounded">空格键 (Space)</span>无缝加入/移出。
+            </p>
+
+            <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+              {aiPoolCodes.length === 0 ? (
+                <div className="text-center py-16 text-slate-400 space-y-2 text-xs">
+                  <p>AI 分析池暂无标的</p>
+                  <p className="text-[11px] text-slate-400">在任意列表或 K 线图浏览时按空格键 (Space) 即可放入</p>
+                </div>
+              ) : (
+                aiPoolCodes.map((code) => (
+                  <div key={code} className="flex items-center justify-between p-3 bg-[#faf6f0] rounded-xl border border-[#c4c8bc]/40">
+                    <div className="space-y-0.5">
+                      <div className="font-bold font-mono text-sm text-slate-800">{code}</div>
+                      <div className="text-[11px] text-slate-500">候选状态: EARLY_TURN</div>
+                    </div>
+                    <button
+                      onClick={() => toggleAiPool(code)}
+                      className="px-2.5 py-1 text-xs text-rose-600 hover:bg-rose-50 rounded border border-rose-200 font-bold"
+                    >
+                      移除
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="border-t border-[#c4c8bc]/40 pt-4 flex items-center justify-between gap-3">
+              <button
+                onClick={clearAiPool}
+                disabled={aiPoolCodes.length === 0}
+                className="px-4 py-2 bg-slate-100 text-slate-600 rounded-xl text-xs font-bold hover:bg-slate-200 disabled:opacity-40"
+              >
+                清空分析池
+              </button>
+              <button
+                onClick={async () => {
+                  if (aiPoolCodes.length === 0) return;
+                  setRunningAI(true);
+                  try {
+                    await fetch(`${API_BASE}/api/ai/stock-research`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ ts_codes: aiPoolCodes, as_of_date: tradeDate }),
+                    });
+                  } catch (e) {}
+                  setRunningAI(false);
+                  setShowAiPoolDrawer(false);
+                }}
+                disabled={aiPoolCodes.length === 0 || runningAI}
+                className="flex-1 px-4 py-2.5 bg-gradient-to-r from-purple-700 to-indigo-700 text-white rounded-xl text-xs font-bold hover:opacity-95 shadow-md flex items-center justify-center gap-1.5 disabled:opacity-40"
+              >
+                <Sparkles className="w-4 h-4 text-amber-300" />
+                <span>一键执行 AI 深度分析 ({aiPoolCodes.length}只)</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* AI 执行 Mask 蒙层 */}
+      {runningAI && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 select-none">
+          <div className="w-full max-w-md bg-white rounded-2xl p-6 shadow-2xl border border-[#c4c8bc]/60 space-y-4 text-center">
+            <div className="flex justify-center">
+              <div className="relative">
+                <div className="w-16 h-16 rounded-full border-4 border-purple-200 border-t-purple-700 animate-spin" />
+                <Sparkles className="w-6 h-6 text-purple-700 absolute inset-0 m-auto" />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <h3 className="font-bold text-slate-800 text-base">AI 深度分析检索推进中...</h3>
+              <p className="text-xs text-slate-500">正在融合技术事实、Q1/Q2/Q3二次评价、资金复盘与网络检索</p>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

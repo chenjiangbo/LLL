@@ -147,6 +147,56 @@ export default function KLineModal({
   const [showStylePanel, setShowStylePanel] = useState<boolean>(false);
   const stylePanelRef = useRef<HTMLDivElement>(null);
 
+  // AI 分析池快捷操作
+  const [inAiPool, setInAiPool] = useState<boolean>(false);
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+
+  const checkInAiPool = () => {
+    try {
+      const pool: string[] = JSON.parse(localStorage.getItem('ai_analysis_pool_codes') || '[]');
+      setInAiPool(pool.includes(assetCode));
+    } catch (e) {}
+  };
+
+  useEffect(() => {
+    if (isOpen && assetCode) {
+      checkInAiPool();
+    }
+  }, [isOpen, assetCode]);
+
+  const toggleAiPool = () => {
+    try {
+      const pool: string[] = JSON.parse(localStorage.getItem('ai_analysis_pool_codes') || '[]');
+      let nextPool: string[];
+      let added = false;
+      if (pool.includes(assetCode)) {
+        nextPool = pool.filter((c) => c !== assetCode);
+      } else {
+        nextPool = [...pool, assetCode];
+        added = true;
+      }
+      localStorage.setItem('ai_analysis_pool_codes', JSON.stringify(nextPool));
+      setInAiPool(added);
+      setToastMsg(added ? `已加入 AI 分析池 (共 ${nextPool.length} 只)` : `已移出 AI 分析池 (还剩 ${nextPool.length} 只)`);
+      setTimeout(() => setToastMsg(null), 2000);
+    } catch (e) {}
+  };
+
+  // 按 Space (空格键) 快捷加入/移出 AI 分析池
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Space' || e.key === ' ') {
+        const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+        if (tag === 'input' || tag === 'textarea') return;
+        e.preventDefault();
+        toggleAiPool();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, assetCode]);
+
   // Click Outside 闭合均线及划线样式面板
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -571,6 +621,13 @@ export default function KLineModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-xs p-3">
+      {/* Toast 提示 */}
+      {toastMsg && (
+        <div className="absolute top-6 left-1/2 -translate-x-1/2 z-50 bg-[#2e3230] text-white px-4 py-2 rounded-xl text-xs font-bold shadow-2xl flex items-center gap-2 border border-purple-400/40 animate-bounce">
+          <Star className="w-4 h-4 text-purple-400 fill-purple-400" />
+          <span>{toastMsg}</span>
+        </div>
+      )}
       <div className="flex flex-col w-[96vw] max-w-[1500px] h-[94vh] bg-white rounded-xl shadow-2xl overflow-hidden border border-slate-200">
         {/* 全局单行工具栏 (Single Header Bar, 严格单行不换行 flex-nowrap) */}
         <div className="flex flex-nowrap items-center justify-between px-3 py-1.5 border-b border-slate-200 bg-slate-50 shrink-0 gap-1.5 h-12 text-xs overflow-x-auto no-scrollbar">
@@ -623,6 +680,20 @@ export default function KLineModal({
               ))}
             </div>
 
+            {/* AI 分析池按钮 */}
+            <button
+              onClick={toggleAiPool}
+              className={`px-2.5 py-1 text-xs font-bold rounded-md transition flex items-center gap-1 shadow-xs ${
+                inAiPool
+                  ? 'bg-purple-600 text-white hover:bg-purple-700'
+                  : 'bg-white text-purple-700 hover:bg-purple-50 border border-purple-300'
+              }`}
+              title="加入/移出 AI 分析池 (快捷键: 空格 Space)"
+            >
+              <Star className={`w-3.5 h-3.5 ${inAiPool ? 'fill-white text-white' : 'text-purple-600'}`} />
+              <span>{inAiPool ? '已在 AI 分析池' : '+ AI 分析池'}</span>
+            </button>
+
             {/* 入候选池按钮 */}
             {onToggleSelect && (
               <button
@@ -632,7 +703,7 @@ export default function KLineModal({
                     ? 'bg-amber-500 text-white hover:bg-amber-600'
                     : 'bg-white text-slate-700 hover:bg-emerald-50 hover:text-emerald-700 border border-slate-300'
                 }`}
-                title="入候选池 / 取消入池 (快捷键: 空格 Space)"
+                title="入候选池 / 取消入池"
               >
                 <Star className={`w-3.5 h-3.5 ${isSelected ? 'fill-white text-white' : 'text-amber-500'}`} />
                 <span>{isSelected ? '已入池' : '入候选池'}</span>
