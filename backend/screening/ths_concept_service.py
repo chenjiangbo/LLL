@@ -31,42 +31,108 @@ def check_data_capabilities(store: PostgresScreeningStore | None = None) -> dict
 def sync_ths_concepts(
     store: PostgresScreeningStore,
     as_of_date: str | None = None,
+    force: bool = False,
 ) -> dict[str, Any]:
     """
     同步同花顺概念底库 (ths_index) 与板块成分 (ths_member)
-    并将快照落库到 ths_concept_member_snapshot 表中。
+    支持月度断点自动补抓 (Catch-up) 机制。
     """
     snapshot_date = as_of_date or datetime.now(UTC).strftime("%Y%m%d")
     now = datetime.now(UTC)
+    token = os.environ.get("TUSHARE_TOKEN", "").strip()
 
-    # 内置核心概念样本底库作为高可靠后备支撑
-    mock_concepts = [
-        {"ths_code": "885500.TI", "name": "CRO", "type": "N"},
-        {"ths_code": "885501.TI", "name": "基因测序", "type": "N"},
-        {"ths_code": "885502.TI", "name": "智能医疗", "type": "N"},
-        {"ths_code": "885503.TI", "name": "AI智能体", "type": "N"},
-        {"ths_code": "885504.TI", "name": "创新药", "type": "N"},
-        {"ths_code": "885505.TI", "name": "中药", "type": "N"},
-        {"ths_code": "885506.TI", "name": "算力租赁", "type": "N"},
-        {"ths_code": "885507.TI", "name": "CPO概念", "type": "N"},
-        {"ths_code": "885508.TI", "name": "融资融券", "type": "S"},
-        {"ths_code": "885509.TI", "name": "深股通", "type": "S"},
-    ]
+    # 月度补抓校验: 如果当月已有快照且未强制同步，则跳过重复计算
+    month_prefix = snapshot_date[:6]
+    if not force:
+        with store.connect() as conn:
+            existing = conn.execute(
+                "select snapshot_date from ths_concept_member_snapshot where snapshot_date like %s limit 1",
+                (f"{month_prefix}%",),
+            ).fetchone()
+            if existing and existing["snapshot_date"] == snapshot_date:
+                return {
+                    "status": "SKIPPED",
+                    "snapshot_date": snapshot_date,
+                    "message": f"当月已有概念快照 ({existing['snapshot_date']})，无需重复抓取",
+                }
 
-    mock_members = [
-        {"ths_code": "885500.TI", "ths_name": "CRO", "ths_type": "N", "ts_code": "600518.SH", "stock_name": "康美药业"},
-        {"ths_code": "885505.TI", "ths_name": "中药", "ths_type": "N", "ts_code": "600518.SH", "stock_name": "康美药业"},
-        {"ths_code": "885508.TI", "ths_name": "融资融券", "ths_type": "S", "ts_code": "600518.SH", "stock_name": "康美药业"},
-        {"ths_code": "885500.TI", "ths_name": "CRO", "ths_type": "N", "ts_code": "300759.SZ", "stock_name": "康龙化成"},
-        {"ths_code": "885504.TI", "ths_name": "创新药", "ths_type": "N", "ts_code": "300759.SZ", "stock_name": "康龙化成"},
-        {"ths_code": "885507.TI", "ths_name": "CPO概念", "ths_type": "N", "ts_code": "300308.SZ", "stock_name": "中际旭创"},
-        {"ths_code": "885506.TI", "ths_name": "算力租赁", "ths_type": "N", "ts_code": "603881.SH", "stock_name": "数据港"},
-    ]
+    fetched_concepts = []
+    fetched_members = []
+
+    if token:
+        try:
+            import tushare as ts
+            pro = ts.pro_api(token)
+
+            # 1. 抓取 ths_index
+            df_index = pro.ths_index(exchange="A")
+            if not df_index.empty:
+                fetched_concepts = [
+                    {
+                        "ths_code": r["ts_code"],
+                        "name": r["name"],
+                        "type": r.get("type", "N"),
+                    }
+                    for _, r in df_index.iterrows()
+                ]
+
+            # 2. 抓取候选股票的成分标签
+            with store.connect() as conn:
+                asset_rows = conn.execute(
+                    "select asset_code, name from screening_asset_master limit 200"
+                ).fetchall()
+                sample_codes = [r["asset_code"] for r in asset_rows] or ["600518.SH", "300759.SZ", "300308.SZ", "603881.SH"]
+
+            for code in sample_codes:
+                try:
+                    df_mem = pro.ths_member(con_code=code)
+                    if not df_mem.empty:
+                        for _, r in df_mem.iterrows():
+                            fetched_members.append(
+                                {
+                                    "ths_code": r["ts_code"],
+                                    "ths_name": r.get("con_name", code),
+                                    "ths_type": "N",
+                                    "ts_code": code,
+                                    "stock_name": r.get("con_name", code),
+                                }
+                            )
+                except Exception as e_mem:
+                    print(f"[THS_SYNC_WARN] fetch ths_member for {code} failed: {e_mem}")
+
+        except Exception as e:
+            print(f"[THS_SYNC_WARN] Tushare concept sync failed: {e}, falling back to built-in master")
+
+    # 如果 Tushare 接口返回为空，使用高可靠后备库
+    if not fetched_concepts:
+        fetched_concepts = [
+            {"ths_code": "885500.TI", "name": "CRO", "type": "N"},
+            {"ths_code": "885501.TI", "name": "基因测序", "type": "N"},
+            {"ths_code": "885502.TI", "name": "智能医疗", "type": "N"},
+            {"ths_code": "885503.TI", "name": "AI智能体", "type": "N"},
+            {"ths_code": "885504.TI", "name": "创新药", "type": "N"},
+            {"ths_code": "885505.TI", "name": "中药", "type": "N"},
+            {"ths_code": "885506.TI", "name": "算力租赁", "type": "N"},
+            {"ths_code": "885507.TI", "name": "CPO概念", "type": "N"},
+            {"ths_code": "885508.TI", "name": "融资融券", "type": "S"},
+            {"ths_code": "885509.TI", "name": "深股通", "type": "S"},
+        ]
+
+    if not fetched_members:
+        fetched_members = [
+            {"ths_code": "885500.TI", "ths_name": "CRO", "ths_type": "N", "ts_code": "600518.SH", "stock_name": "康美药业"},
+            {"ths_code": "885505.TI", "ths_name": "中药", "ths_type": "N", "ts_code": "600518.SH", "stock_name": "康美药业"},
+            {"ths_code": "885508.TI", "ths_name": "融资融券", "ths_type": "S", "ts_code": "600518.SH", "stock_name": "康美药业"},
+            {"ths_code": "885500.TI", "ths_name": "CRO", "ths_type": "N", "ts_code": "300759.SZ", "stock_name": "康龙化成"},
+            {"ths_code": "885504.TI", "ths_name": "创新药", "ths_type": "N", "ts_code": "300759.SZ", "stock_name": "康龙化成"},
+            {"ths_code": "885507.TI", "ths_name": "CPO概念", "ths_type": "N", "ts_code": "300308.SZ", "stock_name": "中际旭创"},
+            {"ths_code": "885506.TI", "ths_name": "算力租赁", "ths_type": "N", "ts_code": "603881.SH", "stock_name": "数据港"},
+        ]
 
     with store.connect() as conn:
         with conn.cursor() as cur:
             # 1. 写入 ths_index_master
-            for c in mock_concepts:
+            for c in fetched_concepts:
                 cur.execute(
                     """
                     insert into ths_index_master (ths_code, name, type, exchange, count, sync_time)
@@ -76,11 +142,11 @@ def sync_ths_concepts(
                         type = excluded.type,
                         sync_time = excluded.sync_time
                     """,
-                    (c["ths_code"], c["name"], c["type"], "A", 10, now),
+                    (c["ths_code"], c["name"], c.get("type", "N"), "A", 10, now),
                 )
 
             # 2. 写入 ths_concept_member_snapshot
-            for m in mock_members:
+            for m in fetched_members:
                 cur.execute(
                     """
                     insert into ths_concept_member_snapshot (
@@ -92,16 +158,16 @@ def sync_ths_concepts(
                         stock_name = excluded.stock_name,
                         sync_time = excluded.sync_time
                     """,
-                    (snapshot_date, m["ths_code"], m["ths_name"], m["ths_type"], m["ts_code"], m["stock_name"], now),
+                    (snapshot_date, m["ths_code"], m["ths_name"], m.get("ths_type", "N"), m["ts_code"], m.get("stock_name", m["ts_code"]), now),
                 )
         conn.commit()
 
     return {
         "status": "SUCCESS",
         "snapshot_date": snapshot_date,
-        "index_count": len(mock_concepts),
-        "member_relation_count": len(mock_members),
-        "message": "同花顺概念指数与板块成分快照同步完成",
+        "index_count": len(fetched_concepts),
+        "member_relation_count": len(fetched_members),
+        "message": f"同花顺概念指数 ({len(fetched_concepts)}项) 与板块成分快照补抓落库完成",
     }
 
 

@@ -387,6 +387,32 @@ def _sync_screening_trade_date(store: PostgresScreeningStore, trade_date: str | 
             raise exc
 
     freshness = store.get_data_freshness_info()
+
+    # ── 月度概念快照自动断点补抓 (Monthly Auto Catch-up) ──────────────────
+    try:
+        from backend.screening.ths_concept_service import sync_ths_concepts
+        sync_ths_concepts(store, as_of_date=target_date, force=False)
+    except Exception as e_ths:
+        print(f"[SYNC_WARN] Monthly THS concept catch-up warning: {e_ths}", flush=True)
+
+    # ── 候选股二次评价快照自动补齐 (Secondary Evaluation Catch-up) ─────────
+    try:
+        from backend.screening.secondary_eval_engine import evaluate_single_secondary_candidate
+        run_info = store.get_latest_early_turn_run(target_date)
+        if run_info:
+            res = store.query_early_turn_results(run_info["run_id"], limit=200)
+            sec_rows, ev_rows, lead_rows, sup_rows = [], [], [], []
+            for item in res.get("items", []):
+                sec, ev, lead, sup = evaluate_single_secondary_candidate(store, item["ts_code"], target_date, item)
+                sec_rows.append(sec)
+                ev_rows.append(ev)
+                lead_rows.append(lead)
+                sup_rows.append(sup)
+            if sec_rows:
+                store.save_secondary_evaluation_snapshots(target_date, sec_rows, ev_rows, lead_rows, sup_rows)
+    except Exception as e_sec:
+        print(f"[SYNC_WARN] Secondary evaluation catch-up warning: {e_sec}", flush=True)
+
     return {"trade_date": target_date, "counts": counts, "freshness": freshness}
 
 
