@@ -778,17 +778,6 @@ export default function MarketReviewApp() {
               </button>
 
               <button
-                onClick={() => setScreeningSubTab('SECONDARY_EVAL')}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
-                  screeningSubTab === 'SECONDARY_EVAL'
-                    ? 'bg-gradient-to-r from-[#4a7c59] to-[#705c30] text-white shadow-xs'
-                    : 'bg-white text-[#4a4e4a] hover:bg-[#e4e0d8] border border-[#c4c8bc]/50'
-                }`}
-              >
-                <span>🤖 A-PreV2 二次评价与 AI 深度研究 V1.0</span>
-              </button>
-
-              <button
                 onClick={() => setScreeningSubTab('SAMPLES')}
                 className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
                   screeningSubTab === 'SAMPLES'
@@ -810,24 +799,6 @@ export default function MarketReviewApp() {
                 <span>🔬 单股策略测试</span>
               </button>
             </div>
-          </div>
-        )}
-
-        {activeView === 'screening' && screeningSubTab === 'EARLY_TURN' && (
-          <div className="px-4 pb-6 sm:px-6 lg:px-8">
-            <EarlyTurnFunnel onOpenSampleValidation={() => setScreeningSubTab('SAMPLES')} />
-          </div>
-        )}
-
-        {activeView === 'screening' && screeningSubTab === 'SECONDARY_EVAL' && (
-          <div className="px-4 pb-6 sm:px-6 lg:px-8">
-            <SecondaryEvalView />
-          </div>
-        )}
-
-        {activeView === 'screening' && screeningSubTab === 'SAMPLES' && (
-          <div className="px-4 pb-6 sm:px-6 lg:px-8">
-            <SampleValidationView onClose={() => setScreeningSubTab('EARLY_TURN')} />
           </div>
         )}
 
