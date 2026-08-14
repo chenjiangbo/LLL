@@ -1246,6 +1246,115 @@ def create_app() -> FastAPI:
         store = PostgresScreeningStore(_database_url())
         return _screening_payload(store, trade_date, pool, page, page_size, min_score, max_score, q, industry, only_selected)
 
+    # ── Secondary Evaluation & AI Deep Research System V1.0 Endpoints ────
+    @app.get("/api/data/capabilities")
+    def data_capabilities() -> dict[str, Any]:
+        from backend.screening.ths_concept_service import check_data_capabilities
+        store = PostgresScreeningStore(_database_url())
+        return check_data_capabilities(store)
+
+    @app.post("/api/data/ths-concepts/sync")
+    def sync_ths_concepts_endpoint(trade_date: str | None = Query(default=None)) -> dict[str, Any]:
+        from backend.screening.ths_concept_service import sync_ths_concepts
+        store = PostgresScreeningStore(_database_url())
+        return sync_ths_concepts(store, as_of_date=trade_date)
+
+    @app.get("/api/candidate-secondary")
+    def get_candidate_secondary_list_endpoint(date: str | None = Query(default=None)) -> dict[str, Any]:
+        from backend.screening.secondary_eval_engine import evaluate_single_secondary_candidate
+        store = PostgresScreeningStore(_database_url())
+        as_of_date = date or store.latest_candidate_date(RULESET_VERSION) or datetime.now(UTC).strftime("%Y%m%d")
+        items = store.get_candidate_secondary_list(as_of_date)
+        if not items:
+            run_info = store.get_latest_early_turn_run(as_of_date)
+            if run_info:
+                res = store.query_early_turn_results(run_info["run_id"], limit=100)
+                sec_rows, ev_rows, lead_rows, sup_rows = [], [], [], []
+                for item in res.get("items", []):
+                    sec, ev, lead, sup = evaluate_single_secondary_candidate(store, item["ts_code"], as_of_date, item)
+                    sec_rows.append(sec)
+                    ev_rows.append(ev)
+                    lead_rows.append(lead)
+                    sup_rows.append(sup)
+                if sec_rows:
+                    store.save_secondary_evaluation_snapshots(as_of_date, sec_rows, ev_rows, lead_rows, sup_rows)
+                    items = store.get_candidate_secondary_list(as_of_date)
+        return {"as_of_date": as_of_date, "items": items, "count": len(items)}
+
+    @app.get("/api/candidate-secondary/{ts_code}")
+    def get_candidate_secondary_detail_endpoint(ts_code: str, date: str = Query(...)) -> dict[str, Any]:
+        from backend.screening.ai_deep_research_service import get_ai_stock_research_result
+        from backend.screening.secondary_eval_engine import evaluate_single_secondary_candidate
+        from backend.screening.ths_concept_service import get_stock_ths_concepts
+
+        store = PostgresScreeningStore(_database_url())
+        detail = store.get_candidate_secondary_detail(date, ts_code)
+        if not detail:
+            sec, ev, lead, sup = evaluate_single_secondary_candidate(store, ts_code, date)
+            store.save_secondary_evaluation_snapshots(date, [sec], [ev], [lead], [sup])
+            detail = store.get_candidate_secondary_detail(date, ts_code)
+
+        concepts = get_stock_ths_concepts(store, ts_code, date)
+        ai_research = get_ai_stock_research_result(store, ts_code, date)
+
+        return {
+            "as_of_date": date,
+            "ts_code": ts_code,
+            "detail": detail,
+            "concepts_info": concepts,
+            "ai_research": ai_research,
+        }
+
+    @app.post("/api/candidate-secondary/run")
+    def run_candidate_secondary_endpoint(body: dict[str, Any]) -> dict[str, Any]:
+        from backend.screening.secondary_eval_engine import evaluate_single_secondary_candidate
+        as_of_date = body.get("date") or datetime.now(UTC).strftime("%Y%m%d")
+        store = PostgresScreeningStore(_database_url())
+        run_info = store.get_latest_early_turn_run(as_of_date)
+        ts_codes = []
+        if run_info:
+            res = store.query_early_turn_results(run_info["run_id"], limit=500)
+            ts_codes = [r["ts_code"] for r in res.get("items", [])]
+        if not ts_codes:
+            ts_codes = ["600518.SH", "300759.SZ", "300308.SZ", "603881.SH"]
+
+        sec_rows, ev_rows, lead_rows, sup_rows = [], [], [], []
+        for code in ts_codes:
+            sec, ev, lead, sup = evaluate_single_secondary_candidate(store, code, as_of_date)
+            sec_rows.append(sec)
+            ev_rows.append(ev)
+            lead_rows.append(lead)
+            sup_rows.append(sup)
+
+        store.save_secondary_evaluation_snapshots(as_of_date, sec_rows, ev_rows, lead_rows, sup_rows)
+        return {"status": "SUCCESS", "as_of_date": as_of_date, "evaluated_count": len(sec_rows)}
+
+    @app.post("/api/ai/stock-research")
+    def run_ai_stock_research_endpoint(body: dict[str, Any]) -> dict[str, Any]:
+        from backend.screening.ai_deep_research_service import run_ai_stock_research
+        as_of_date = body.get("date") or datetime.now(UTC).strftime("%Y%m%d")
+        ts_codes = body.get("ts_codes") or []
+        lookback = body.get("review_lookback", 20)
+        use_search = body.get("use_web_search", True)
+
+        if not ts_codes:
+            raise HTTPException(status_code=400, detail="ts_codes is required")
+
+        store = PostgresScreeningStore(_database_url())
+        results = []
+        for code in ts_codes[:20]:
+            res = run_ai_stock_research(store, code, as_of_date, review_lookback=lookback, use_web_search=use_search)
+            results.append(res)
+
+        return {"status": "SUCCESS", "as_of_date": as_of_date, "items": results}
+
+    @app.get("/api/ai/stock-research/{ts_code}")
+    def get_ai_stock_research_endpoint(ts_code: str, date: str = Query(...)) -> dict[str, Any]:
+        from backend.screening.ai_deep_research_service import get_ai_stock_research_result
+        store = PostgresScreeningStore(_database_url())
+        res = get_ai_stock_research_result(store, ts_code, date)
+        return {"ts_code": ts_code, "as_of_date": date, "result": res}
+
     return app
 
 

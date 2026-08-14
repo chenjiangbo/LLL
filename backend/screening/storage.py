@@ -429,6 +429,210 @@ class PostgresScreeningStore:
                 )
                 """
             )
+            # ── Secondary Evaluation & AI Deep Research System V1.0 ──────────────
+            conn.execute(
+                """
+                create table if not exists candidate_secondary_snapshot (
+                    as_of_date text not null,
+                    ts_code text not null,
+                    aprev2_score numeric,
+                    aprev2_status text,
+                    turn_type text,
+                    company_evidence_state text,
+                    leadership_state text,
+                    leadership_rank_value numeric,
+                    supply_profile_label text,
+                    calc_version text not null default 'v1.0',
+                    created_at timestamptz not null,
+                    primary key (as_of_date, ts_code)
+                )
+                """
+            )
+            conn.execute(
+                """
+                create table if not exists company_evidence_snapshot (
+                    as_of_date text not null,
+                    ts_code text not null,
+                    latest_report_period text,
+                    latest_report_ann_date text,
+                    revenue numeric,
+                    revenue_yoy numeric,
+                    parent_net_profit numeric,
+                    parent_net_profit_yoy numeric,
+                    parent_profit_state text,
+                    deducted_net_profit numeric,
+                    deducted_net_profit_yoy numeric,
+                    deducted_profit_state text,
+                    operating_cashflow numeric,
+                    operating_cashflow_yoy numeric,
+                    gross_margin numeric,
+                    gross_margin_yoy_delta numeric,
+                    forecast_ann_date text,
+                    forecast_type text,
+                    forecast_p_change_min numeric,
+                    forecast_p_change_max numeric,
+                    forecast_net_profit_min numeric,
+                    forecast_net_profit_max numeric,
+                    evidence_state text not null,
+                    reason_json jsonb not null,
+                    risk_flags_json jsonb not null,
+                    data_version text not null default 'v1.0',
+                    created_at timestamptz not null,
+                    primary key (as_of_date, ts_code)
+                )
+                """
+            )
+            conn.execute(
+                """
+                create table if not exists relative_leadership_snapshot (
+                    as_of_date text not null,
+                    ts_code text not null,
+                    comparison_level text,
+                    comparison_industry_code text,
+                    comparison_industry_name text,
+                    comparison_universe_size integer,
+                    stock_ret_5 numeric,
+                    stock_ret_10 numeric,
+                    stock_ret_20 numeric,
+                    industry_rs_5_pct numeric,
+                    industry_rs_10_pct numeric,
+                    industry_rs_20_pct numeric,
+                    up_event_count integer,
+                    up_capture_excess numeric,
+                    up_capture_pct numeric,
+                    down_event_count integer,
+                    down_defense_excess numeric,
+                    down_defense_pct numeric,
+                    amount_ratio_5_20 numeric,
+                    amount_ratio_10_40 numeric,
+                    participation_pct numeric,
+                    participation_change numeric,
+                    participation_change_pct numeric,
+                    valid_component_count integer,
+                    leadership_rank_value numeric,
+                    leadership_state text not null,
+                    reason_json jsonb not null,
+                    calc_version text not null default 'v1.0',
+                    created_at timestamptz not null,
+                    primary key (as_of_date, ts_code)
+                )
+                """
+            )
+            conn.execute(
+                """
+                create table if not exists supply_profile_snapshot (
+                    as_of_date text not null,
+                    ts_code text not null,
+                    close numeric,
+                    total_mv numeric,
+                    circ_mv numeric,
+                    free_share numeric,
+                    free_float_mv numeric,
+                    amount numeric,
+                    amount_median_20 numeric,
+                    turnover_rate numeric,
+                    turnover_rate_f numeric,
+                    volume_ratio numeric,
+                    unlock_30d numeric,
+                    unlock_60d numeric,
+                    unlock_90d numeric,
+                    recent_reduction_flag boolean default false,
+                    supply_profile_label text not null,
+                    data_version text not null default 'v1.0',
+                    created_at timestamptz not null,
+                    primary key (as_of_date, ts_code)
+                )
+                """
+            )
+            conn.execute(
+                """
+                create table if not exists ths_index_master (
+                    ths_code text primary key,
+                    name text not null,
+                    type text not null,
+                    exchange text,
+                    count integer,
+                    list_date text,
+                    sync_time timestamptz not null
+                )
+                """
+            )
+            conn.execute(
+                """
+                create table if not exists ths_concept_member_snapshot (
+                    snapshot_date text not null,
+                    ths_code text not null,
+                    ths_name text not null,
+                    ths_type text not null,
+                    ts_code text not null,
+                    stock_name text,
+                    is_new text,
+                    sync_time timestamptz not null,
+                    primary key (snapshot_date, ths_code, ts_code)
+                )
+                """
+            )
+            conn.execute(
+                """
+                create table if not exists stock_business_segment (
+                    ts_code text not null,
+                    period text not null,
+                    ann_date_or_available_date text not null,
+                    bz_code text,
+                    bz_item text not null,
+                    bz_sales numeric,
+                    bz_profit numeric,
+                    bz_cost numeric,
+                    source text not null default 'tushare.fina_mainbz_vip',
+                    sync_time timestamptz not null,
+                    primary key (ts_code, period, bz_item)
+                )
+                """
+            )
+            conn.execute(
+                """
+                create table if not exists ai_stock_research (
+                    analysis_id text primary key,
+                    ts_code text not null,
+                    as_of_date text not null,
+                    created_at timestamptz not null,
+                    priority text not null,
+                    result_markdown text not null,
+                    model text not null,
+                    prompt_version text not null default 'v1.0',
+                    review_lookback_days integer not null default 20,
+                    aprev2_snapshot_id text,
+                    company_snapshot_id text,
+                    leadership_snapshot_id text,
+                    supply_snapshot_id text,
+                    concept_snapshot_date text,
+                    concept_temporal_status text not null default 'PIT_SAFE',
+                    web_search_used boolean not null default false,
+                    source_manifest_json jsonb not null,
+                    uncertainty_json jsonb not null,
+                    status text not null default 'READY',
+                    stale_reason text
+                )
+                """
+            )
+            conn.execute(
+                """
+                create table if not exists user_research_watchlist (
+                    ts_code text not null,
+                    as_of_date text not null,
+                    added_date text not null,
+                    user_note text,
+                    research_status text not null default '待AI分析',
+                    updated_at timestamptz not null,
+                    primary key (as_of_date, ts_code)
+                )
+                """
+            )
+
+            conn.execute("create index if not exists idx_cand_sec_date on candidate_secondary_snapshot(as_of_date)")
+            conn.execute("create index if not exists idx_ths_member_snap_stock on ths_concept_member_snapshot(snapshot_date, ts_code)")
+            conn.execute("create index if not exists idx_ai_research_stock on ai_stock_research(ts_code, as_of_date)")
+
             conn.execute("create index if not exists idx_screening_run_date on screening_run(trade_date)")
             conn.execute("create index if not exists idx_pool_candidate_v2_run on pool_candidate_snapshot_v2(run_id)")
             conn.execute("create index if not exists idx_stage_snapshot_run_ts on stage_snapshot(run_id, ts_code)")
@@ -2238,6 +2442,291 @@ class PostgresScreeningStore:
                 (ts_code, target_date, sample_name, note, _now()),
             )
             conn.commit()
+
+    # ── Secondary Evaluation & AI Deep Research Methods ─────────────────
+    def save_secondary_evaluation_snapshots(
+        self,
+        as_of_date: str,
+        sec_rows: list[dict[str, Any]],
+        evidence_rows: list[dict[str, Any]],
+        leadership_rows: list[dict[str, Any]],
+        supply_rows: list[dict[str, Any]],
+    ) -> None:
+        now = _now()
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                # 1. candidate_secondary_snapshot
+                for r in sec_rows:
+                    cur.execute(
+                        """
+                        insert into candidate_secondary_snapshot (
+                            as_of_date, ts_code, aprev2_score, aprev2_status, turn_type,
+                            company_evidence_state, leadership_state, leadership_rank_value,
+                            supply_profile_label, calc_version, created_at
+                        ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        on conflict (as_of_date, ts_code) do update set
+                            aprev2_score = excluded.aprev2_score,
+                            aprev2_status = excluded.aprev2_status,
+                            turn_type = excluded.turn_type,
+                            company_evidence_state = excluded.company_evidence_state,
+                            leadership_state = excluded.leadership_state,
+                            leadership_rank_value = excluded.leadership_rank_value,
+                            supply_profile_label = excluded.supply_profile_label
+                        """,
+                        (
+                            as_of_date,
+                            r["ts_code"],
+                            r.get("aprev2_score"),
+                            r.get("aprev2_status"),
+                            r.get("turn_type"),
+                            r.get("company_evidence_state"),
+                            r.get("leadership_state"),
+                            r.get("leadership_rank_value"),
+                            r.get("supply_profile_label"),
+                            r.get("calc_version", "v1.0"),
+                            now,
+                        ),
+                    )
+
+                # 2. company_evidence_snapshot
+                for r in evidence_rows:
+                    cur.execute(
+                        """
+                        insert into company_evidence_snapshot (
+                            as_of_date, ts_code, latest_report_period, latest_report_ann_date,
+                            revenue, revenue_yoy, parent_net_profit, parent_net_profit_yoy, parent_profit_state,
+                            deducted_net_profit, deducted_net_profit_yoy, deducted_profit_state,
+                            operating_cashflow, operating_cashflow_yoy, gross_margin, gross_margin_yoy_delta,
+                            forecast_ann_date, forecast_type, forecast_p_change_min, forecast_p_change_max,
+                            forecast_net_profit_min, forecast_net_profit_max, evidence_state, reason_json,
+                            risk_flags_json, data_version, created_at
+                        ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s)
+                        on conflict (as_of_date, ts_code) do update set
+                            latest_report_period = excluded.latest_report_period,
+                            latest_report_ann_date = excluded.latest_report_ann_date,
+                            revenue = excluded.revenue,
+                            revenue_yoy = excluded.revenue_yoy,
+                            parent_net_profit = excluded.parent_net_profit,
+                            parent_net_profit_yoy = excluded.parent_net_profit_yoy,
+                            parent_profit_state = excluded.parent_profit_state,
+                            deducted_net_profit = excluded.deducted_net_profit,
+                            deducted_net_profit_yoy = excluded.deducted_net_profit_yoy,
+                            deducted_profit_state = excluded.deducted_profit_state,
+                            operating_cashflow = excluded.operating_cashflow,
+                            operating_cashflow_yoy = excluded.operating_cashflow_yoy,
+                            gross_margin = excluded.gross_margin,
+                            gross_margin_yoy_delta = excluded.gross_margin_yoy_delta,
+                            forecast_ann_date = excluded.forecast_ann_date,
+                            forecast_type = excluded.forecast_type,
+                            forecast_p_change_min = excluded.forecast_p_change_min,
+                            forecast_p_change_max = excluded.forecast_p_change_max,
+                            forecast_net_profit_min = excluded.forecast_net_profit_min,
+                            forecast_net_profit_max = excluded.forecast_net_profit_max,
+                            evidence_state = excluded.evidence_state,
+                            reason_json = excluded.reason_json,
+                            risk_flags_json = excluded.risk_flags_json
+                        """,
+                        (
+                            as_of_date,
+                            r["ts_code"],
+                            r.get("latest_report_period"),
+                            r.get("latest_report_ann_date"),
+                            r.get("revenue"),
+                            r.get("revenue_yoy"),
+                            r.get("parent_net_profit"),
+                            r.get("parent_net_profit_yoy"),
+                            r.get("parent_profit_state"),
+                            r.get("deducted_net_profit"),
+                            r.get("deducted_net_profit_yoy"),
+                            r.get("deducted_profit_state"),
+                            r.get("operating_cashflow"),
+                            r.get("operating_cashflow_yoy"),
+                            r.get("gross_margin"),
+                            r.get("gross_margin_yoy_delta"),
+                            r.get("forecast_ann_date"),
+                            r.get("forecast_type"),
+                            r.get("forecast_p_change_min"),
+                            r.get("forecast_p_change_max"),
+                            r.get("forecast_net_profit_min"),
+                            r.get("forecast_net_profit_max"),
+                            r.get("evidence_state", "UNKNOWN"),
+                            json_dumps(r.get("reason_json", [])),
+                            json_dumps(r.get("risk_flags_json", [])),
+                            r.get("data_version", "v1.0"),
+                            now,
+                        ),
+                    )
+
+                # 3. relative_leadership_snapshot
+                for r in leadership_rows:
+                    cur.execute(
+                        """
+                        insert into relative_leadership_snapshot (
+                            as_of_date, ts_code, comparison_level, comparison_industry_code,
+                            comparison_industry_name, comparison_universe_size, stock_ret_5, stock_ret_10,
+                            stock_ret_20, industry_rs_5_pct, industry_rs_10_pct, industry_rs_20_pct,
+                            up_event_count, up_capture_excess, up_capture_pct, down_event_count,
+                            down_defense_excess, down_defense_pct, amount_ratio_5_20, amount_ratio_10_40,
+                            participation_pct, participation_change, participation_change_pct,
+                            valid_component_count, leadership_rank_value, leadership_state, reason_json,
+                            calc_version, created_at
+                        ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)
+                        on conflict (as_of_date, ts_code) do update set
+                            comparison_level = excluded.comparison_level,
+                            comparison_industry_code = excluded.comparison_industry_code,
+                            comparison_industry_name = excluded.comparison_industry_name,
+                            comparison_universe_size = excluded.comparison_universe_size,
+                            stock_ret_5 = excluded.stock_ret_5,
+                            stock_ret_10 = excluded.stock_ret_10,
+                            stock_ret_20 = excluded.stock_ret_20,
+                            industry_rs_5_pct = excluded.industry_rs_5_pct,
+                            industry_rs_10_pct = excluded.industry_rs_10_pct,
+                            industry_rs_20_pct = excluded.industry_rs_20_pct,
+                            up_event_count = excluded.up_event_count,
+                            up_capture_excess = excluded.up_capture_excess,
+                            up_capture_pct = excluded.up_capture_pct,
+                            down_event_count = excluded.down_event_count,
+                            down_defense_excess = excluded.down_defense_excess,
+                            down_defense_pct = excluded.down_defense_pct,
+                            amount_ratio_5_20 = excluded.amount_ratio_5_20,
+                            amount_ratio_10_40 = excluded.amount_ratio_10_40,
+                            participation_pct = excluded.participation_pct,
+                            participation_change = excluded.participation_change,
+                            participation_change_pct = excluded.participation_change_pct,
+                            valid_component_count = excluded.valid_component_count,
+                            leadership_rank_value = excluded.leadership_rank_value,
+                            leadership_state = excluded.leadership_state,
+                            reason_json = excluded.reason_json
+                        """,
+                        (
+                            as_of_date,
+                            r["ts_code"],
+                            r.get("comparison_level"),
+                            r.get("comparison_industry_code"),
+                            r.get("comparison_industry_name"),
+                            r.get("comparison_universe_size"),
+                            r.get("stock_ret_5"),
+                            r.get("stock_ret_10"),
+                            r.get("stock_ret_20"),
+                            r.get("industry_rs_5_pct"),
+                            r.get("industry_rs_10_pct"),
+                            r.get("industry_rs_20_pct"),
+                            r.get("up_event_count"),
+                            r.get("up_capture_excess"),
+                            r.get("up_capture_pct"),
+                            r.get("down_event_count"),
+                            r.get("down_defense_excess"),
+                            r.get("down_defense_pct"),
+                            r.get("amount_ratio_5_20"),
+                            r.get("amount_ratio_10_40"),
+                            r.get("participation_pct"),
+                            r.get("participation_change"),
+                            r.get("participation_change_pct"),
+                            r.get("valid_component_count"),
+                            r.get("leadership_rank_value"),
+                            r.get("leadership_state", "INSUFFICIENT_EVIDENCE"),
+                            json_dumps(r.get("reason_json", [])),
+                            r.get("calc_version", "v1.0"),
+                            now,
+                        ),
+                    )
+
+                # 4. supply_profile_snapshot
+                for r in supply_rows:
+                    cur.execute(
+                        """
+                        insert into supply_profile_snapshot (
+                            as_of_date, ts_code, close, total_mv, circ_mv, free_share, free_float_mv,
+                            amount, amount_median_20, turnover_rate, turnover_rate_f, volume_ratio,
+                            unlock_30d, unlock_60d, unlock_90d, recent_reduction_flag, supply_profile_label,
+                            data_version, created_at
+                        ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        on conflict (as_of_date, ts_code) do update set
+                            close = excluded.close,
+                            total_mv = excluded.total_mv,
+                            circ_mv = excluded.circ_mv,
+                            free_share = excluded.free_share,
+                            free_float_mv = excluded.free_float_mv,
+                            amount = excluded.amount,
+                            amount_median_20 = excluded.amount_median_20,
+                            turnover_rate = excluded.turnover_rate,
+                            turnover_rate_f = excluded.turnover_rate_f,
+                            volume_ratio = excluded.volume_ratio,
+                            unlock_30d = excluded.unlock_30d,
+                            unlock_60d = excluded.unlock_60d,
+                            unlock_90d = excluded.unlock_90d,
+                            recent_reduction_flag = excluded.recent_reduction_flag,
+                            supply_profile_label = excluded.supply_profile_label
+                        """,
+                        (
+                            as_of_date,
+                            r["ts_code"],
+                            r.get("close"),
+                            r.get("total_mv"),
+                            r.get("circ_mv"),
+                            r.get("free_share"),
+                            r.get("free_float_mv"),
+                            r.get("amount"),
+                            r.get("amount_median_20"),
+                            r.get("turnover_rate"),
+                            r.get("turnover_rate_f"),
+                            r.get("volume_ratio"),
+                            r.get("unlock_30d"),
+                            r.get("unlock_60d"),
+                            r.get("unlock_90d"),
+                            r.get("recent_reduction_flag", False),
+                            r.get("supply_profile_label", "MID_CAP"),
+                            r.get("data_version", "v1.0"),
+                            now,
+                        ),
+                    )
+            conn.commit()
+
+    def get_candidate_secondary_list(self, as_of_date: str) -> list[dict[str, Any]]:
+        query = """
+            select s.*, e.evidence_state, e.revenue_yoy, e.parent_net_profit_yoy, e.deducted_net_profit_yoy,
+                   e.forecast_type, e.reason_json as evidence_reasons, e.risk_flags_json,
+                   l.leadership_state, l.leadership_rank_value, l.industry_rs_20_pct, l.up_capture_excess,
+                   l.down_defense_excess, l.participation_change, l.comparison_industry_name,
+                   p.free_float_mv, p.amount_median_20, p.turnover_rate_f, p.supply_profile_label,
+                   a.name, a.raw_json->>'industry' as industry,
+                   ar.status as ai_status, ar.priority as ai_priority, ar.created_at as ai_created_at
+            from candidate_secondary_snapshot s
+            left join company_evidence_snapshot e on e.as_of_date = s.as_of_date and e.ts_code = s.ts_code
+            left join relative_leadership_snapshot l on l.as_of_date = s.as_of_date and l.ts_code = s.ts_code
+            left join supply_profile_snapshot p on p.as_of_date = s.as_of_date and p.ts_code = s.ts_code
+            left join screening_asset_master a on a.asset_code = s.ts_code
+            left join ai_stock_research ar on ar.as_of_date = s.as_of_date and ar.ts_code = s.ts_code
+            where s.as_of_date = %s
+            order by s.aprev2_score desc, l.leadership_rank_value desc nulls last, s.ts_code asc
+        """
+        with self.connect() as conn:
+            rows = conn.execute(query, (as_of_date,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_candidate_secondary_detail(self, as_of_date: str, ts_code: str) -> dict[str, Any] | None:
+        query = """
+            select s.*, e.revenue, e.revenue_yoy, e.parent_net_profit, e.parent_net_profit_yoy, e.parent_profit_state,
+                   e.deducted_net_profit, e.deducted_net_profit_yoy, e.deducted_profit_state, e.operating_cashflow,
+                   e.operating_cashflow_yoy, e.gross_margin, e.gross_margin_yoy_delta, e.forecast_type, e.forecast_ann_date,
+                   e.forecast_p_change_min, e.forecast_p_change_max, e.reason_json as evidence_reasons, e.risk_flags_json,
+                   l.comparison_level, l.comparison_industry_name, l.comparison_universe_size, l.stock_ret_5, l.stock_ret_10,
+                   l.stock_ret_20, l.industry_rs_5_pct, l.industry_rs_10_pct, l.industry_rs_20_pct, l.up_event_count,
+                   l.up_capture_excess, l.down_event_count, l.down_defense_excess, l.participation_pct, l.participation_change,
+                   l.valid_component_count, l.leadership_rank_value, l.leadership_state, l.reason_json as leadership_reasons,
+                   p.close, p.total_mv, p.circ_mv, p.free_share, p.free_float_mv, p.amount, p.amount_median_20, p.turnover_rate,
+                   p.turnover_rate_f, p.volume_ratio, p.supply_profile_label,
+                   a.name, a.raw_json->>'industry' as industry, a.raw_json->>'main_business' as main_business
+            from candidate_secondary_snapshot s
+            left join company_evidence_snapshot e on e.as_of_date = s.as_of_date and e.ts_code = s.ts_code
+            left join relative_leadership_snapshot l on l.as_of_date = s.as_of_date and l.ts_code = s.ts_code
+            left join supply_profile_snapshot p on p.as_of_date = s.as_of_date and p.ts_code = s.ts_code
+            left join screening_asset_master a on a.asset_code = s.ts_code
+            where s.as_of_date = %s and s.ts_code = %s
+        """
+        with self.connect() as conn:
+            row = conn.execute(query, (as_of_date, ts_code)).fetchone()
+        return dict(row) if row else None
 
 
 def _now() -> datetime:

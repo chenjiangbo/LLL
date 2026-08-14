@@ -8,6 +8,7 @@ import RunHistoryModal from './components/RunHistoryModal';
 import { History } from 'lucide-react';
 
 const EarlyTurnFunnel = dynamic(() => import('./components/EarlyTurnFunnel'), { ssr: false });
+const SecondaryEvalView = dynamic(() => import('./components/SecondaryEvalView').then(mod => mod.SecondaryEvalView), { ssr: false });
 const SampleValidationView = dynamic(() => import('./components/SampleValidationView'), { ssr: false });
 const SingleStockTestView = dynamic(() => import('./components/SingleStockTestView'), { ssr: false });
 const KLineModal = dynamic(() => import('./components/KLineModal'), { ssr: false });
@@ -393,7 +394,7 @@ export default function MarketReviewApp() {
   const [screeningError, setScreeningError] = useState<string | null>(null);
   const [screeningPool, setScreeningPool] = useState<ScreeningPool>('A');
   const [screeningOnlySelected, setScreeningOnlySelected] = useState(false);
-  const [screeningSubTab, setScreeningSubTab] = useState<'SECONDARY' | 'EARLY_TURN' | 'SAMPLES' | 'SINGLE_STOCK_TEST'>('SECONDARY');
+  const [screeningSubTab, setScreeningSubTab] = useState<'SECONDARY' | 'EARLY_TURN' | 'SECONDARY_EVAL' | 'SAMPLES' | 'SINGLE_STOCK_TEST'>('EARLY_TURN');
   const [screeningRunning, setScreeningRunning] = useState(false);
   const [screeningRequest, setScreeningRequest] = useState<ScreeningRequest>(DEFAULT_SCREENING_REQUEST);
   const [taskStatus, setTaskStatus] = useState<{ status: string; progress: number; step_message: string } | null>(null);
@@ -773,7 +774,18 @@ export default function MarketReviewApp() {
                     : 'bg-white text-[#4a4e4a] hover:bg-[#e4e0d8] border border-[#c4c8bc]/50'
                 }`}
               >
-                <span>🧪 A-Pre V2 早期转强实验 (均线状态迁移)</span>
+                <span>🧪 A-Pre V2 早期转强 (均线状态迁移)</span>
+              </button>
+
+              <button
+                onClick={() => setScreeningSubTab('SECONDARY_EVAL')}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                  screeningSubTab === 'SECONDARY_EVAL'
+                    ? 'bg-gradient-to-r from-[#4a7c59] to-[#705c30] text-white shadow-xs'
+                    : 'bg-white text-[#4a4e4a] hover:bg-[#e4e0d8] border border-[#c4c8bc]/50'
+                }`}
+              >
+                <span>🤖 A-PreV2 二次评价与 AI 深度研究 V1.0</span>
               </button>
 
               <button
@@ -804,6 +816,12 @@ export default function MarketReviewApp() {
         {activeView === 'screening' && screeningSubTab === 'EARLY_TURN' && (
           <div className="px-4 pb-6 sm:px-6 lg:px-8">
             <EarlyTurnFunnel onOpenSampleValidation={() => setScreeningSubTab('SAMPLES')} />
+          </div>
+        )}
+
+        {activeView === 'screening' && screeningSubTab === 'SECONDARY_EVAL' && (
+          <div className="px-4 pb-6 sm:px-6 lg:px-8">
+            <SecondaryEvalView />
           </div>
         )}
 
