@@ -8,7 +8,7 @@ import RunHistoryModal from './components/RunHistoryModal';
 import { History } from 'lucide-react';
 
 const EarlyTurnFunnel = dynamic(() => import('./components/EarlyTurnFunnel'), { ssr: false });
-const SecondaryEvalView = dynamic(() => import('./components/SecondaryEvalView').then(mod => mod.SecondaryEvalView), { ssr: false });
+const SecondaryEvalView = dynamic(() => import('./components/SecondaryEvalView'), { ssr: false });
 const SampleValidationView = dynamic(() => import('./components/SampleValidationView'), { ssr: false });
 const SingleStockTestView = dynamic(() => import('./components/SingleStockTestView'), { ssr: false });
 const KLineModal = dynamic(() => import('./components/KLineModal'), { ssr: false });

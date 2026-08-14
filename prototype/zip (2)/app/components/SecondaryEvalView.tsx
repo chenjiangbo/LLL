@@ -377,3 +377,5 @@ export const SecondaryEvalView: React.FC = () => {
     </div>
   );
 };
+
+export default SecondaryEvalView;
