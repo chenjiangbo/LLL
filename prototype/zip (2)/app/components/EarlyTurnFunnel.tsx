@@ -585,21 +585,22 @@ export default function EarlyTurnFunnel({
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
-              <tr className="bg-[#f0ece4] border-b border-[#c4c8bc]/40 text-[#686d68]">
-                <th className="py-3 px-3 font-bold w-24">代码</th>
-                <th className="py-3 px-3 font-bold w-40">名称 / 行业</th>
-                <th className="py-3 px-3 font-bold w-28">技术分 & 状态</th>
-                <th className="py-3 px-3 font-bold w-36">Q1 基本面边际</th>
-                <th className="py-3 px-3 font-bold w-32">Q2 相对领先</th>
-                <th className="py-3 px-3 font-bold w-36">Q3 筹码与市值</th>
+              <tr className="bg-[#f0ece4] border-b border-[#c4c8bc]/40 text-[#4a4e4a]">
+                <th className="py-3 px-3 font-bold w-44">代码 & 名称</th>
+                <th className="py-3 px-3 font-bold w-24">技术得分</th>
+                <th className="py-3 px-3 font-bold w-44">Q1 基本面边际</th>
+                <th className="py-3 px-3 font-bold w-36">Q2 相对领先</th>
+                <th className="py-3 px-3 font-bold w-36">Q3 筹码容量</th>
                 <th className="py-3 px-3 font-bold w-44">M1 同花顺概念</th>
-                <th className="py-3 px-3 font-bold text-center w-36">操作</th>
+                <th className="py-3 px-3 font-bold">8大算子摘要</th>
+                <th className="py-3 px-3 font-bold w-24">首次入选</th>
+                <th className="py-3 px-3 font-bold text-center w-32">操作</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#c4c8bc]/20">
               {loadingStocks ? (
                 <tr>
-                  <td colSpan={8} className="py-12 text-center text-[#686d68]">
+                  <td colSpan={9} className="py-12 text-center text-[#686d68]">
                     <div className="inline-flex items-center gap-2">
                       <Loader2 className="h-4 w-4 animate-spin text-[#4a7c59]" />
                       正在加载 Early Turn 评估结果...
@@ -608,7 +609,7 @@ export default function EarlyTurnFunnel({
                 </tr>
               ) : currentItems.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-12 text-center text-[#686d68]">
+                  <td colSpan={9} className="py-12 text-center text-[#686d68]">
                     当前筛选条件下暂无 Early Turn 候选。
                   </td>
                 </tr>
@@ -618,6 +619,16 @@ export default function EarlyTurnFunnel({
                   const isSelected = selectedStockIndex === idx;
                   const inPool = aiPoolCodes.includes(item.ts_code);
 
+                  // 对应状态字体颜色
+                  const stateTextColor =
+                    item.state === 'EARLY_TURN_STRICT' || item.state === 'EARLY_TURN'
+                      ? 'text-emerald-800 font-black'
+                      : item.state === 'PRE_READY_STRICT' || item.state === 'PRE_READY'
+                      ? 'text-amber-800 font-black'
+                      : item.state === 'TOO_LATE'
+                      ? 'text-rose-800 font-black'
+                      : 'text-slate-800 font-bold';
+
                   return (
                     <tr
                       key={item.ts_code}
@@ -626,76 +637,64 @@ export default function EarlyTurnFunnel({
                         isSelected ? 'bg-[#4a7c59]/10' : ''
                       }`}
                     >
-                      {/* 代码 */}
-                      <td className="py-3 px-3 font-mono font-bold text-[#2e3230]">{item.ts_code}</td>
-
-                      {/* 名称 / 行业 */}
-                      <td className="py-3 px-3 space-y-1">
+                      {/* 代码 & 名称 (用状态对应颜色表达状态) */}
+                      <td className="py-3 px-3 space-y-0.5">
+                        <div className={`font-mono font-black text-xs ${stateTextColor}`}>
+                          {item.ts_code}
+                        </div>
                         <div className="flex items-center gap-1.5">
-                          <span className="font-bold text-[#2e3230]">{item.name || '未命名'}</span>
+                          <span className={`font-black text-xs ${stateTextColor}`}>
+                            {item.name || '未命名'}
+                          </span>
                           {item.industry && (
-                            <span className="rounded bg-[#4a7c59]/10 px-1.5 py-0.5 text-[10px] font-bold text-[#4a7c59]">
+                            <span className="rounded bg-slate-200/70 text-slate-700 px-1.5 py-0.5 text-[10px] font-bold">
                               {item.industry}
                             </span>
                           )}
                         </div>
                       </td>
 
-                      {/* 技术分 & 状态 */}
+                      {/* 技术得分 */}
                       <td className="py-3 px-3 space-y-1">
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-mono font-bold text-sm text-[#2e3230]">
-                            {item.total_score.toFixed(1)}分
-                          </span>
-                          <span
-                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                              item.state === 'EARLY_TURN_STRICT'
-                                ? 'bg-amber-600 text-white font-black animate-pulse'
-                                : item.state === 'EARLY_TURN'
-                                ? 'bg-[#4a7c59] text-white'
-                                : item.state === 'PRE_READY_STRICT'
-                                ? 'bg-amber-700 text-white font-bold'
-                                : item.state === 'PRE_READY'
-                                ? 'bg-[#705c30] text-white'
-                                : item.state === 'WATCH'
-                                ? 'bg-[#2e3230] text-white'
-                                : item.state === 'TOO_LATE'
-                                ? 'bg-rose-700 text-white'
-                                : 'bg-gray-200 text-gray-700'
-                            }`}
-                          >
-                            {item.state}
-                          </span>
+                        <div className="font-mono font-black text-sm text-slate-900">
+                          {item.total_score.toFixed(1)}分
                         </div>
+                        <span className="inline-block rounded bg-[#faf6f0] border border-[#c4c8bc]/60 px-1.5 py-0.5 text-[10px] font-bold text-[#705c30]">
+                          {item.background_type === 'REVERSAL_BASE'
+                            ? '📉 筑底反转'
+                            : item.background_type === 'CONSOLIDATION_RESTART'
+                            ? '📈 整理再启动'
+                            : '基础型'}
+                        </span>
                       </td>
 
                       {/* Q1 公司基本面边际 */}
                       <td className="py-3 px-3 space-y-1">
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#4a7c59]/15 text-[#4a7c59]">
-                          POSITIVE (正向边际)
+                        <span className="inline-block px-2.5 py-1 rounded-md text-[11px] font-extrabold bg-emerald-700 text-white shadow-xs">
+                          POSITIVE 正向边际
                         </span>
-                        <div className="text-[10px] text-[#686d68]">
+                        <div className="text-[11px] font-bold text-slate-700">
                           营收: +15.4% | 扣非: 扭亏
                         </div>
                       </td>
 
                       {/* Q2 相对领先 */}
                       <td className="py-3 px-3 space-y-1">
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-700">
-                          LEADING (领跑)
+                        <span className="inline-block px-2.5 py-1 rounded-md text-[11px] font-extrabold bg-amber-600 text-white shadow-xs">
+                          LEADING 领跑
                         </span>
-                        <div className="text-[10px] text-[#686d68]">
-                          行业RS分: 92.5
+                        <div className="text-[11px] font-bold text-slate-700">
+                          行业RS排名: 92.5
                         </div>
                       </td>
 
-                      {/* Q3 筹码与市值 */}
+                      {/* Q3 筹码容量 */}
                       <td className="py-3 px-3 space-y-1">
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700">
-                          SMALL_ELASTIC
+                        <span className="inline-block px-2.5 py-1 rounded-md text-[11px] font-extrabold bg-blue-700 text-white shadow-xs">
+                          小盘弹性
                         </span>
-                        <div className="text-[10px] text-[#686d68]">
-                          自由流通: 45.2 亿
+                        <div className="text-[11px] font-bold text-slate-700">
+                          自由流通: 45.2 亿元
                         </div>
                       </td>
 
@@ -703,52 +702,35 @@ export default function EarlyTurnFunnel({
                       <td className="py-3 px-3">
                         <div className="flex flex-wrap gap-1 max-w-[180px]">
                           {['中药', '智能医疗', '融资融券'].map((tag) => (
-                            <span key={tag} className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 text-[10px]">
+                            <span key={tag} className="px-2 py-0.5 rounded-md bg-purple-100 text-purple-900 border border-purple-200 text-[11px] font-bold">
                               {tag}
                             </span>
                           ))}
                         </div>
                       </td>
 
-                      {/* 背景类型 */}
-                      <td className="py-3 px-3">
-                        <span className="inline-block rounded bg-[#faf6f0] border border-[#c4c8bc]/50 px-2 py-0.5 text-[11px] font-bold text-[#705c30]">
-                          {item.background_type === 'REVERSAL_BASE'
-                            ? '📉 下降筑底反转'
-                            : item.background_type === 'CONSOLIDATION_RESTART'
-                            ? '📈 整理再启动'
-                            : '基础型'}
-                        </span>
-                      </td>
-
-                      {/* 8大算子拆解 */}
+                      {/* 8大算子摘要 */}
                       <td className="py-3 px-3">
                         <div className="flex flex-wrap items-center gap-1 text-[10px]">
-                          <span className="rounded bg-blue-50 text-blue-700 px-1.5 py-0.5 font-semibold">
-                            压缩: {s.compression || 0}分 (ATR:{s.min_3ma_spread_atr || '-'})
+                          <span className="rounded bg-slate-100 text-slate-800 px-1.5 py-0.5 font-bold">
+                            压缩: {s.compression || 0}分
                           </span>
-                          <span className="rounded bg-indigo-50 text-indigo-700 px-1.5 py-0.5 font-semibold">
-                            均线结: {s.knot || 0}分 ({s.cross_pair_count_10d || 0}组)
+                          <span className="rounded bg-slate-100 text-slate-800 px-1.5 py-0.5 font-bold">
+                            均线结: {s.knot || 0}分
                           </span>
-                          <span className="rounded bg-emerald-50 text-emerald-700 px-1.5 py-0.5 font-semibold">
-                            方向: {s.direction || 0}分
-                          </span>
-                          <span className="rounded bg-amber-50 text-amber-700 px-1.5 py-0.5 font-semibold">
-                            斜率: {s.slope || 0}分 ({s.up_slope_count || 0}根)
-                          </span>
-                          <span className="rounded bg-purple-50 text-purple-700 px-1.5 py-0.5 font-semibold">
-                            站回: {s.retake || 0}分
+                          <span className="rounded bg-slate-100 text-slate-800 px-1.5 py-0.5 font-bold">
+                            斜率: {s.slope || 0}分
                           </span>
                           {item.is_overextended && (
-                            <span className="rounded bg-rose-100 text-rose-700 px-1.5 py-0.5 font-bold">
-                              ⚠️偏离过大 ({s.extension_atr}ATR)
+                            <span className="rounded bg-rose-600 text-white px-1.5 py-0.5 font-extrabold">
+                              ⚠️偏离过大
                             </span>
                           )}
                         </div>
                       </td>
 
                       {/* 首次入选 */}
-                      <td className="py-3 px-3 font-mono text-[11px] text-[#686d68]">
+                      <td className="py-3 px-3 font-mono text-[11px] font-bold text-slate-700">
                         {item.first_selected_date || '未首次入选'}
                       </td>
 
@@ -759,24 +741,24 @@ export default function EarlyTurnFunnel({
                             e.stopPropagation();
                             toggleAiPool(item.ts_code);
                           }}
-                          className={`w-full px-2 py-0.5 text-[11px] font-bold rounded transition border shadow-xs flex items-center justify-center gap-1 ${
+                          className={`w-full px-2 py-1 text-[11px] font-black rounded-lg transition border shadow-xs flex items-center justify-center gap-1 ${
                             inPool
-                              ? 'bg-purple-600 text-white border-purple-600 hover:bg-purple-700'
+                              ? 'bg-purple-700 text-white border-purple-700 hover:bg-purple-800'
                               : 'bg-white text-purple-700 border-purple-300 hover:bg-purple-50'
                           }`}
                           title="按空格键 Space 可快捷加入/移出"
                         >
-                          <Star className={`w-3 h-3 ${inPool ? 'fill-white text-white' : 'text-purple-600'}`} />
-                          <span>{inPool ? '已在AI池' : '+ AI池'}</span>
+                          <Star className={`w-3.5 h-3.5 ${inPool ? 'fill-white text-white' : 'text-purple-600'}`} />
+                          <span>{inPool ? '已在AI池' : '+ AI分析池'}</span>
                         </button>
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
                             setDetailStock({ tsCode: item.ts_code, stockName: item.name || item.ts_code });
                           }}
-                          className="w-full px-2 py-0.5 bg-white border border-[#4a7c59] text-[#4a7c59] rounded hover:bg-[#4a7c59] hover:text-white font-bold transition text-[10px]"
+                          className="w-full px-2 py-1 bg-white border border-[#4a7c59] text-[#4a7c59] rounded-lg hover:bg-[#4a7c59] hover:text-white font-black transition text-[10px]"
                         >
-                          7-Tab 二次评价
+                          7-Tab 诊断
                         </button>
                       </td>
                     </tr>
