@@ -2,12 +2,12 @@
   "myquant_dev": {
     "repository": "https://github.com/aliwangzai/myquant-dev.git",
     "commit": "d2423963c04f9724d68e19ab1c48cbee2f7c2a0d",
-    "synced_at": "2026-09-04T13:34:43.348694+00:00",
+    "synced_at": "2026-09-04T14:03:14.034005+00:00",
     "references_count": 30
   },
   "myquant_strategy": {
     "repository": "https://github.com/myquant/strategy.git",
     "commit": "17595e6bf4a118e1fa87c90bfb0fd78afa69a60b",
-    "synced_at": "2026-09-04T13:34:43.348858+00:00"
+    "synced_at": "2026-09-04T14:03:14.034145+00:00"
   }
 }
