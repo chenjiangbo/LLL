@@ -16,10 +16,13 @@ tsconfig.tsbuildinfo
 .env.bak
 .env.local
 .env.*.local
+.env.backup*
 
 # Databases & backups
 data/
 *.sqlite
+*.sqlite3
+*.sqlite3-*
 *.sql.gz
 
 # Logs & temp files
@@ -27,3 +30,7 @@ data/
 .DS_Store
 .gemini/
 scratch/
+
+# Local build snapshots and exported archives
+.next*/
+*.zip
