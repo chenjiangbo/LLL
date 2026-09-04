@@ -170,7 +170,7 @@ function businessLabel(value: unknown) {
   return ({
     PLANNED: "计划中", ACTIVE: "进行中", CLOSING: "清仓中", CLOSED: "已结束", CANCELLED: "已取消",
     DRAFT: "草稿", READY: "已确认", ARMED: "已就绪", MONITORING: "监控中", COMPLETED: "已完成", PAUSED: "已暂停",
-    PENDING_SUBMIT: "等待发送", SUBMITTED: "已发送", ACCEPTED: "已接受", PARTIALLY_FILLED: "部分成交", FILLED: "已成交", REJECTED: "已拒单", EXPIRED: "已过期",
+    PENDING_SUBMIT: "等待发送", QUEUED: "排队中", CLAIMED: "已接收", DISPATCHING: "发送中", SUBMITTED: "已发送", ACCEPTED: "已接受", PARTIALLY_FILLED: "部分成交", FILLED: "已成交", REJECTED: "已拒单", EXPIRED: "已过期", CANCEL_REQUESTED: "撤单中", PENDING_CANCEL: "撤单中", UNKNOWN: "待核实", FAILED: "失败",
     TREND: "趋势交易", REBOUND: "反弹 / 波段", FIXED_TARGET: "固定目标", CUSTOM: "自定义", BUY: "买入", SELL: "卖出",
     OPEN: "建仓", ADD: "加仓", REDUCE: "减仓", CLOSE: "清仓", OPEN_LONG: "建仓", LIMIT: "限价委托", PERSISTENT_LIMIT: "持续限价", PRICE_TRIGGER: "到价触发", PRICE_RANGE: "价格区间触发",
   } as Record<string, string>)[String(value)] || String(value || "—");
@@ -713,7 +713,9 @@ function clearUnhydratedNumbers(root: Element) {
   let current: Node | null = walker.nextNode();
   while (current) {
     const value = (current.nodeValue || "").trim();
-    if (/^(?:[+-]?¥[\d,.]+|[+-]?\d[\d,.]*%|\d[\d,.]* 股|\d[\d,.]* 只|\d[\d,.]* 笔)$/.test(value)) nodes.push(current as Text);
+    const parent = (current as Text).parentElement;
+    const interactive = parent?.closest("button, a, input, select, option, [role='button']");
+    if (!interactive && /^(?:[+-]?¥[\d,.]+|[+-]?\d[\d,.]*%|\d[\d,.]* 股|\d[\d,.]* 只|\d[\d,.]* 笔)$/.test(value)) nodes.push(current as Text);
     current = walker.nextNode();
   }
   nodes.forEach((node) => { node.nodeValue = "—"; });
@@ -724,7 +726,9 @@ function clearPrototypeMetricFragments(root: Element) {
   const nodes: Text[] = [];
   let current: Node | null = walker.nextNode();
   while (current) {
-    if (/([+-]?¥[\d,.]+|[+-]?\d[\d,.]*%|\d[\d,.]* 股|\d[\d,.]* 只|\d[\d,.]* 笔)/.test(current.nodeValue || "")) nodes.push(current as Text);
+    const parent = (current as Text).parentElement;
+    const interactive = parent?.closest("button, a, input, select, option, [role='button']");
+    if (!interactive && /([+-]?¥[\d,.]+|[+-]?\d[\d,.]*%|\d[\d,.]* 股|\d[\d,.]* 只|\d[\d,.]* 笔)/.test(current.nodeValue || "")) nodes.push(current as Text);
     current = walker.nextNode();
   }
   nodes.forEach((node) => {
@@ -763,7 +767,9 @@ function clearPrototypeFixtureFragments(root: Element) {
   const secondWalker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   current = secondWalker.nextNode();
   while (current) {
-    if (/^\s*\d+(?:\.\d+)?\s*$/.test(current.nodeValue || "")) numericOnly.push(current as Text);
+    const parent = (current as Text).parentElement;
+    const interactive = parent?.closest("button, a, input, select, option, [role='button']");
+    if (!interactive && /^\s*\d+(?:\.\d+)?\s*$/.test(current.nodeValue || "")) numericOnly.push(current as Text);
     current = secondWalker.nextNode();
   }
   numericOnly.forEach((node) => { node.nodeValue = "—"; });
@@ -967,7 +973,16 @@ function hydrateMarkup(root: Element, data: any, page: PrototypePageKey, detail?
       }
     }
   }
-  removePrototypeEntities(root, detail?.trade ? [String(detail.trade.symbol_name || ""), String(detail.trade.symbol || "")] : []);
+  // Keep every real account symbol/name that was just written into the DOM.
+  // This matters when a real account legitimately contains one of the symbols
+  // used by the visual prototype; fixture cleanup must never erase API data.
+  const protectedEntities = [
+    ...positions.flatMap((item: any) => [item.symbol, item.security_name]),
+    ...trades.flatMap((item: any) => [item.symbol, item.symbol_name]),
+    ...((Array.isArray(data.orders) ? data.orders : []).map((item: any) => item.symbol)),
+    ...(detail?.trade ? [detail.trade.symbol, detail.trade.symbol_name] : []),
+  ].filter((value): value is string => typeof value === "string" && value.length > 0);
+  removePrototypeEntities(root, protectedEntities);
   if (page === "overview") {
     replaceRecentActions(root, Array.isArray(data.orders) ? data.orders : [], Array.isArray(data.fills) ? data.fills : []);
     replacePrototypeSection(root, "账户敞口与技术分级监控快照", "当前账号暂无可展示的风险与技术快照。");
