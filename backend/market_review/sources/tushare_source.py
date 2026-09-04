@@ -10,6 +10,7 @@ import tushare as ts
 
 from backend.market_review.config import CORE_INDICES
 from backend.market_review.errors import MarketReviewError
+from backend.screening.tushare_errors import is_tushare_rate_limit_error
 
 
 def _records(df: pd.DataFrame) -> list[dict[str, Any]]:
@@ -36,6 +37,8 @@ class TushareSource:
         try:
             df = self.pro.daily(trade_date=trade_date, fields=fields)
         except Exception as exc:
+            if is_tushare_rate_limit_error(exc):
+                raise MarketReviewError(f"TUSHARE_RATE_LIMIT:tushare daily({trade_date}): {exc}") from exc
             raise MarketReviewError(f"tushare daily({trade_date}) failed: {exc}") from exc
         required = {"ts_code", "trade_date", "close", "pre_close", "pct_chg", "vol", "amount"}
         if df is None or df.empty or not required.issubset(df.columns):
@@ -58,6 +61,8 @@ class TushareSource:
         try:
             df = self.pro.adj_factor(trade_date=trade_date, fields=fields)
         except Exception as exc:
+            if is_tushare_rate_limit_error(exc):
+                raise MarketReviewError(f"TUSHARE_RATE_LIMIT:tushare adj_factor({trade_date}): {exc}") from exc
             raise MarketReviewError(f"tushare adj_factor({trade_date}) failed: {exc}") from exc
         required = {"ts_code", "trade_date", "adj_factor"}
         if df is None or df.empty or not required.issubset(df.columns):
@@ -86,6 +91,8 @@ class TushareSource:
                 index_code=meta["weight_code"], start_date=start_date, end_date=trade_date
             )
         except Exception as exc:
+            if is_tushare_rate_limit_error(exc):
+                raise MarketReviewError(f"TUSHARE_RATE_LIMIT:tushare index_weight({meta['weight_code']}): {exc}") from exc
             raise MarketReviewError(f"tushare index_weight({meta['weight_code']}) failed: {exc}") from exc
         required = {"con_code", "trade_date", "weight"}
         if df is None or df.empty or not required.issubset(df.columns):

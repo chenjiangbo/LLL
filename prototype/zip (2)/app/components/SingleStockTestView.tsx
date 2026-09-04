@@ -23,6 +23,7 @@ import {
   Download,
 } from 'lucide-react';
 import { init, dispose, Chart } from 'klinecharts';
+import { downloadSingleStockMarkdown } from './singleStockMarkdown';
 
 interface SingleStockHistoryItem {
   trade_date: string;
@@ -33,7 +34,27 @@ interface SingleStockHistoryItem {
   vol: number;
   amount: number;
   total_score: number;
+  score_type?: 'PREP_SCORE' | 'TURN_SCORE' | 'NONE';
+  prep_score?: number;
+  turn_score?: number;
   state: string;
+  selected?: boolean;
+  is_overextended?: boolean;
+  turn_episode_state?: string;
+  signal_status?: string;
+  entry_extension_state?: string;
+  first_trigger_date?: string;
+  first_trigger_close?: number;
+  return_since_first_trigger?: number;
+  structural_damage_flag?: boolean;
+  episode_base_low?: number | null;
+  episode_base_low_date?: string | null;
+  first_wave_high_close?: number | null;
+  first_wave_high_date?: string | null;
+  first_wave_gain?: number | null;
+  first_wave_gain_atr?: number | null;
+  first_wave_formed?: boolean;
+  drawdown_from_first_wave_high?: number | null;
   background_type: string;
   score_detail_json: Record<string, any>;
   reasons_json: Array<{ type: string; msg: string }>;
@@ -65,7 +86,74 @@ interface SingleStockEvalResult {
   klines: SingleStockKLineCandle[];
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_MARKET_REVIEW_API_URL || 'http://127.0.0.1:18080';
+/**
+ * 单股测试接口返回的是日线（评分与导出也必须继续使用日线）。
+ * K 线图切换到周线时，不能只修改 klinecharts 的 period：setPeriod
+ * 不会替我们把通过 dataLoader 注入的日线数组重新聚合。因此在展示层
+ * 明确按交易周聚合，避免周线按钮看起来与日线完全相同。
+ */
+const aggregateWeeklyKlines = (daily: SingleStockKLineCandle[]): SingleStockKLineCandle[] => {
+  const groups = new Map<string, SingleStockKLineCandle[]>();
+  daily.forEach((item) => {
+    const date = String(item.trade_date || '');
+    if (date.length !== 8) return;
+    const d = new Date(Date.UTC(Number(date.slice(0, 4)), Number(date.slice(4, 6)) - 1, Number(date.slice(6, 8))));
+    if (Number.isNaN(d.getTime())) return;
+    // ISO 周一作为分组键；接口数据按交易日升序，组内顺序因此稳定。
+    const day = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() - day + 1);
+    const key = d.toISOString().slice(0, 10);
+    const bucket = groups.get(key);
+    if (bucket) bucket.push(item);
+    else groups.set(key, [item]);
+  });
+
+  return Array.from(groups.values()).map((items) => {
+    const first = items[0];
+    const last = items[items.length - 1];
+    return {
+      trade_date: last.trade_date,
+      open: first.open,
+      high: Math.max(...items.map((item) => item.high)),
+      low: Math.min(...items.map((item) => item.low)),
+      close: last.close,
+      vol: items.reduce((sum, item) => sum + item.vol, 0),
+      amount: items.reduce((sum, item) => sum + item.amount, 0),
+      // 图表会根据周线收盘价重新计算 MA；这里不沿用日线 MA，避免语义混淆。
+      ma5: null,
+      ma10: null,
+      ma20: null,
+      ma30: null,
+      ma60: null,
+    };
+  });
+};
+
+const getApiBase = (): string => {
+  if (process.env.NEXT_PUBLIC_MARKET_REVIEW_API_URL) {
+    return process.env.NEXT_PUBLIC_MARKET_REVIEW_API_URL;
+  }
+  if (typeof window !== 'undefined' && window.location?.hostname) {
+    return `${window.location.protocol}//${window.location.hostname}:18080`;
+  }
+  return 'http://127.0.0.1:18080';
+};
+
+const safeFetch = async (url: string, options?: RequestInit): Promise<Response | null> => {
+  try {
+    const res = await fetch(url, options);
+    return res;
+  } catch (e) {
+    if (url.includes('127.0.0.1:18080')) {
+      const altUrl = url.replace('127.0.0.1:18080', 'localhost:18080');
+      try { return await fetch(altUrl, options); } catch (_) {}
+    } else if (url.includes('localhost:18080')) {
+      const altUrl = url.replace('localhost:18080', '127.0.0.1:18080');
+      try { return await fetch(altUrl, options); } catch (_) {}
+    }
+    return null;
+  }
+};
 
 const STRATEGIES = [
   { id: 'A_PRE_V2', name: '🧪 A-Pre V2 早期转强实验', desc: '基于均线高度压缩、结扎交叉、次序重排与新鲜度的早期爆发转强模型' },
@@ -81,26 +169,42 @@ const DEFAULT_MA_ITEMS = [
 // 根据状态获取颜色与标签
 function getStateColor(state: string): { bg: string; text: string; label: string } {
   switch (state) {
-    case 'EARLY_TURN':
-      return { bg: '#d97706', text: '#ffffff', label: '🔥 转强信号 (>=75分)' };
-    case 'PRE_READY':
-      return { bg: '#705c30', text: '#ffffff', label: '⭐ 重点观察 (65~74分)' };
-    case 'WATCH':
-      return { bg: '#334155', text: '#ffffff', label: '👀 初步观察 (50~64分)' };
-    case 'TOO_LATE':
-      return { bg: '#be123c', text: '#ffffff', label: '⚠️ 过度延伸 (ATR>=2.0)' };
+    case 'FIRST_TURN_WINDOW':
+      return { bg: '#4a7c59', text: '#ffffff', label: '首次转强' };
+    case 'POST_FIRST_WAVE':
+      return { bg: '#475569', text: '#ffffff', label: '第一波已完成' };
+    case 'PRE_FIRST_TURN':
+      return { bg: '#334155', text: '#ffffff', label: '底部准备中' };
     default:
       return { bg: '#94a3b8', text: '#ffffff', label: '无信号' };
   }
 }
 
+const getTodayDateStr = (): string => {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+};
+
+const getOneMonthAgoDateStr = (): string => {
+  const d = new Date();
+  d.setMonth(d.getMonth() - 1);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+};
+
 export default function SingleStockTestView() {
   const [strategyId, setStrategyId] = useState<string>('A_PRE_V2');
-  const [stockInput, setStockInput] = useState<string>('688505.SH');
-  const [startDate, setStartDate] = useState<string>('2026-07-10');
-  const [endDate, setEndDate] = useState<string>('2026-08-12');
+  const [stockInput, setStockInput] = useState<string>('');
+  const [startDate, setStartDate] = useState<string>(getOneMonthAgoDateStr());
+  const [endDate, setEndDate] = useState<string>(getTodayDateStr());
   
   const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SingleStockEvalResult | null>(null);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [hoveredHistoryItem, setHoveredHistoryItem] = useState<SingleStockHistoryItem | null>(null);
@@ -176,55 +280,11 @@ export default function SingleStockTestView() {
     };
   }, [isDragging]);
 
-  // 导出拆解表为 Markdown 文档
+  // 导出拆解表为 Markdown 文档（与选股列表“单股数据”共用同一实现）
   const handleExportMarkdown = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     if (!result || !result.history || result.history.length === 0) return;
-
-    const lines: string[] = [];
-    lines.push(`# 📊 ${result.ts_code} ${result.name} 区间逐日得分与 7 大算子拆解报告`);
-    lines.push(`\n- **股票代码**: \`${result.ts_code}\``);
-    lines.push(`- **股票名称**: **${result.name}**`);
-    lines.push(`- **所属行业**: \`${result.industry}\``);
-    lines.push(`- **策略模型**: \`${result.strategy_id}\``);
-    lines.push(`- **评估区间**: \`${result.start_date}\` 至 \`${result.end_date}\` (共 ${result.history.length} 个交易日)`);
-    lines.push(`- **导出时间**: \`${new Date().toLocaleString('zh-CN')}\``);
-    lines.push(`\n---`);
-    lines.push(`\n## 📅 交易日逐日得分与 7 大算子拆解明细\n`);
-    lines.push(`| 交易日期 | 收盘价 | 总得分 | 评级状态 | 背景类型 | 7 大算子得分明细 (Base/Trans/Retake/Dir/Fresh/Vol/Space) | 主要特征诊断与说明 |`);
-    lines.push(`| :--- | :--- | :--- | :--- | :--- | :--- | :--- |`);
-
-    result.history.forEach((item) => {
-      const s = item.score_detail_json?.v2_details || {};
-      const formattedDate = `${item.trade_date.slice(0, 4)}-${item.trade_date.slice(4, 6)}-${item.trade_date.slice(6, 8)}`;
-      const stateLabel = getStateColor(item.state).label;
-      const bgLabel = item.background_type === 'FIRST_TURN'
-        ? '首次底部转向'
-        : item.background_type === 'SECONDARY_TURN'
-        ? '二次转强突破'
-        : item.background_type === 'CONSOLIDATION_RESTART'
-        ? '整理后再启动'
-        : item.background_type;
-
-      const opsDetail = `Base:${item.score_detail_json?.background || 0} | Trans:${s.transition || 0}(penalty:-${s.chop_penalty || 0}) | Retake:${s.retake || 0} | Dir:${s.direction || 0} | Fresh:${s.freshness || 0} | Vol:${s.vol || 0} | Space:${s.space || 0}`;
-
-      const reasons = item.reasons_json && item.reasons_json.length > 0
-        ? item.reasons_json.map((r) => r.msg).join('； ')
-        : '形态处于整理蓄势期';
-
-      lines.push(`| \`${formattedDate}\` | \`${item.close.toFixed(2)}\` | **${item.total_score.toFixed(1)}分** | ${stateLabel} | ${bgLabel} | \`${opsDetail}\` | ${reasons} |`);
-    });
-
-    const markdownContent = lines.join('\n');
-    const blob = new Blob([markdownContent], { type: 'text/markdown;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${result.ts_code}_${result.name}_逐日打分拆解报告_${result.start_date}_${result.end_date}.md`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    downloadSingleStockMarkdown(result);
   }, [result]);
 
   // 执行单股多日策略测试
@@ -233,6 +293,7 @@ export default function SingleStockTestView() {
     if (!targetCode.trim()) return;
 
     setLoading(true);
+    setError(null);
     try {
       const sDate = startDate.replace(/-/g, '');
       const eDate = endDate.replace(/-/g, '');
@@ -244,25 +305,34 @@ export default function SingleStockTestView() {
         end_date: eDate,
       });
 
-      const res = await fetch(`${API_BASE}/api/strategy/single-stock/eval?${params.toString()}`);
-      if (res.ok) {
-        const json: SingleStockEvalResult = await res.json();
-        setResult(json);
-        if (json.history && json.history.length > 0) {
-          setSelectedDate(json.history[json.history.length - 1].trade_date);
+      const baseUrl = getApiBase();
+      const res = await safeFetch(`${baseUrl}/api/strategy/single-stock/eval?${params.toString()}`);
+      if (!res || !res.ok) {
+        let detail = `单股测试接口异常（HTTP ${res?.status || 'Network Error'}）`;
+        if (res) {
+          try {
+            const body = await res.json();
+            if (typeof body?.detail === 'string') detail = body.detail;
+          } catch (_) {
+            // 保留上面的明确 HTTP 错误，不静默吞掉失败。
+          }
         }
+        throw new Error(detail);
       }
+
+      const json: SingleStockEvalResult = await res.json();
+      if (!json.history || json.history.length === 0) {
+        throw new Error(`${targetCode.trim()} 在 ${startDate} 至 ${endDate} 没有可评估的日线数据`);
+      }
+      setResult(json);
+      setSelectedDate(json.history[json.history.length - 1].trade_date);
     } catch (e) {
-      console.error('Failed to run single stock eval:', e);
+      console.warn('Failed to run single stock eval:', e);
+      setError(e instanceof Error ? e.message : '单股测试失败');
     } finally {
       setLoading(false);
     }
   }, [stockInput, startDate, endDate, strategyId]);
-
-  // 初始加载一次
-  useEffect(() => {
-    handleRunEval('688505.SH');
-  }, []);
 
   // 渲染 K 线图
   useEffect(() => {
@@ -375,8 +445,10 @@ export default function SingleStockTestView() {
       // 2. 副图: VOL 成交量
       chart.createIndicator('VOL', false);
 
-      // 3. 转换 K 线数据
-      const dataList = result.klines.map((k) => {
+      // 3. 转换 K 线数据。接口始终返回日线：周线必须在这里显式聚合，
+      // 否则仅调用 chart.setPeriod 不会改变 dataLoader 注入的蜡烛数量。
+      const displayKlines = period === 'week' ? aggregateWeeklyKlines(result.klines) : result.klines;
+      const dataList = displayKlines.map((k) => {
         const y = parseInt(k.trade_date.slice(0, 4));
         const m = parseInt(k.trade_date.slice(4, 6)) - 1;
         const d = parseInt(k.trade_date.slice(6, 8));
@@ -499,6 +571,7 @@ export default function SingleStockTestView() {
             <input
               type="text"
               value={stockInput}
+              onFocus={(e) => e.currentTarget.select()}
               onChange={(e) => setStockInput(e.target.value)}
               placeholder="688505 或 康美药业"
               className="w-32 bg-white border border-[#c4c8bc]/60 px-2 py-0.5 rounded font-mono font-bold outline-none text-[#2e3230]"
@@ -534,6 +607,12 @@ export default function SingleStockTestView() {
           <span>{loading ? '计算中...' : '开始测试'}</span>
         </button>
       </div>
+
+      {error && (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-800">
+          {error}
+        </div>
+      )}
 
       {/* K 线图主卡片区域 */}
       <div
@@ -679,7 +758,7 @@ export default function SingleStockTestView() {
             <div className="flex items-center gap-2">
               <TrendingUp className="h-4 w-4 text-[#4a7c59]" />
               <span className="font-bold text-[#2e3230]">
-                区间内交易日逐日得分与 7 大算子拆解表 ({result.history.length} 个交易日)
+                区间内交易日逐日评分拆解表 ({result.history.length} 个交易日)
               </span>
               <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-white text-[#4a7c59] border border-[#c4c8bc]/40">
                 {showBreakdownTable ? '点击收起明细表' : '点击展开明细表'}
@@ -715,10 +794,10 @@ export default function SingleStockTestView() {
                   <tr className="bg-[#faf6f0] border-b border-[#c4c8bc]/40 text-[#686d68]">
                     <th className="py-2.5 px-3 font-bold w-24">交易日期</th>
                     <th className="py-2.5 px-3 font-bold w-20">收盘价</th>
-                    <th className="py-2.5 px-3 font-bold w-24">总得分</th>
+                    <th className="py-2.5 px-3 font-bold w-28">评分</th>
                     <th className="py-2.5 px-3 font-bold w-36">评级状态</th>
                     <th className="py-2.5 px-3 font-bold w-28">背景类型</th>
-                    <th className="py-2.5 px-3 font-bold">7 大算子得分明细 (Base/Trans/Retake/Dir/Fresh/Vol/Space)</th>
+                    <th className="py-2.5 px-3 font-bold">评分拆解</th>
                     <th className="py-2.5 px-3 font-bold w-64">主要特征诊断与说明</th>
                   </tr>
                 </thead>
@@ -745,9 +824,12 @@ export default function SingleStockTestView() {
                           {item.close.toFixed(2)}
                         </td>
 
-                        {/* 总得分 */}
+                        {/* 分数与所属评分体系 */}
                         <td className="py-2.5 px-3 font-mono font-bold text-sm text-[#2e3230]">
-                          {item.total_score.toFixed(1)}分
+                          <div>{item.total_score.toFixed(1)}分</div>
+                          <div className="mt-0.5 text-[10px] font-sans text-[#686d68]">
+                            {item.score_type === 'PREP_SCORE' ? '底部准备度' : item.score_type === 'TURN_SCORE' ? '转强确认度' : '仅诊断'}
+                          </div>
                         </td>
 
                         {/* 评级状态 */}
@@ -760,42 +842,53 @@ export default function SingleStockTestView() {
                           </span>
                         </td>
 
-                        {/* 背景类型 */}
-                        <td className="py-2.5 px-3 text-[#686d68] font-bold">
-                          {item.background_type === 'FIRST_TURN'
-                            ? '首次底部转向'
-                            : item.background_type === 'SECONDARY_TURN'
-                            ? '二次转强突破'
-                            : item.background_type === 'CONSOLIDATION_RESTART'
-                            ? '整理后再启动'
-                            : item.background_type}
+                        {/* 3 层属性与生命周期 */}
+                        <td className="py-2.5 px-3 space-y-1">
+                          <div className="flex flex-col gap-1 items-start">
+                            <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-bold border ${
+                              (item.turn_episode_state || s.turn_episode_state) === 'FIRST_TURN_WINDOW'
+                                ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                                : (item.turn_episode_state || s.turn_episode_state) === 'POST_FIRST_WAVE'
+                                ? 'bg-slate-100 text-slate-700 border-slate-300'
+                                : 'bg-zinc-100 text-zinc-600 border-zinc-300'
+                            }`}>
+                              {(item.turn_episode_state || s.turn_episode_state) === 'FIRST_TURN_WINDOW'
+                                ? '首次转强'
+                                : (item.turn_episode_state || s.turn_episode_state) === 'POST_FIRST_WAVE'
+                                ? '第一波已完成 (退出A-Pre)'
+                                : (item.turn_episode_state || s.turn_episode_state) === 'OUTSIDE_A_PRE'
+                                ? '未进入 A-Pre'
+                                : '底部准备中'}
+                            </span>
+
+                            {(item.is_overextended || s.is_overextended) && (
+                              <span className="inline-block rounded px-1.5 py-0.5 text-[10px] font-black border bg-rose-50 text-rose-800 border-rose-300">
+                                偏离过大
+                              </span>
+                            )}
+                          </div>
                         </td>
 
-                        {/* 7 大算子得分明细 */}
+                        {/* 按生命周期显示对应评分拆解 */}
                         <td className="py-2.5 px-3">
-                          <div className="flex flex-wrap items-center gap-1 text-[11px] font-mono">
-                            <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-700">
-                              Base: {item.score_detail_json?.background || 0}
-                            </span>
-                            <span className="px-1.5 py-0.2 rounded bg-blue-50 text-blue-700">
-                              Trans: {s.transition || 0} (扣 penalty:-{s.chop_penalty || 0})
-                            </span>
-                            <span className="px-1.5 py-0.2 rounded bg-purple-50 text-purple-700">
-                              Retake: {s.retake || 0}
-                            </span>
-                            <span className="px-1.5 py-0.2 rounded bg-emerald-50 text-emerald-700">
-                              Dir: {s.direction || 0}
-                            </span>
-                            <span className="px-1.5 py-0.2 rounded bg-amber-50 text-amber-700">
-                              Fresh: {s.freshness || 0}
-                            </span>
-                            <span className="px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-700">
-                              Vol: {s.vol || 0}
-                            </span>
-                            <span className="px-1.5 py-0.2 rounded bg-rose-50 text-rose-700">
-                              Space: {s.space || 0}
-                            </span>
-                          </div>
+                          {item.score_type === 'PREP_SCORE' ? (
+                            <div className="flex flex-wrap items-center gap-1 text-[11px] font-mono">
+                              <span className="px-1.5 py-0.2 rounded bg-emerald-50 text-emerald-700">走平拐头: {s.prep?.slope_turn ?? 0}/40</span>
+                              <span className="px-1.5 py-0.2 rounded bg-blue-50 text-blue-700">靠拢交叉: {s.prep?.compression_cross ?? 0}/25</span>
+                              <span className="px-1.5 py-0.2 rounded bg-purple-50 text-purple-700">夺回均线: {s.prep?.retake ?? 0}/20</span>
+                              <span className="px-1.5 py-0.2 rounded bg-amber-50 text-amber-700">背景位置: {s.prep?.background_position ?? 0}/15</span>
+                            </div>
+                          ) : (
+                            <div className="flex flex-wrap items-center gap-1 text-[11px] font-mono">
+                              <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-700">Base: {item.score_detail_json?.background || 0}</span>
+                              <span className="px-1.5 py-0.2 rounded bg-blue-50 text-blue-700">Trans: {s.transition || 0} (扣 penalty:-{s.chop_penalty || 0})</span>
+                              <span className="px-1.5 py-0.2 rounded bg-purple-50 text-purple-700">Retake: {s.retake || 0}</span>
+                              <span className="px-1.5 py-0.2 rounded bg-emerald-50 text-emerald-700">Dir: {s.direction || 0}</span>
+                              <span className="px-1.5 py-0.2 rounded bg-amber-50 text-amber-700">Fresh: {s.freshness || 0}</span>
+                              <span className="px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-700">Vol: {s.vol || 0}</span>
+                              <span className="px-1.5 py-0.2 rounded bg-rose-50 text-rose-700">Space: {s.space || 0}</span>
+                            </div>
+                          )}
                         </td>
 
                         {/* 核心诊断原因说明 */}

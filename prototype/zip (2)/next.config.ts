@@ -2,6 +2,7 @@ import type {NextConfig} from 'next';
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  devIndicators: false,
   eslint: {
     ignoreDuringBuilds: true,
   },
@@ -20,6 +21,8 @@ const nextConfig: NextConfig = {
     ],
   },
   output: 'standalone',
+  // 开发服务器与生产构建使用不同产物目录，避免 npm run build 覆盖运行中的 .next chunk。
+  distDir: process.env.NODE_ENV === 'development' ? '.next-dev' : '.next',
   transpilePackages: ['motion'],
   webpack: (config, {dev}) => {
     // HMR is disabled in AI Studio via DISABLE_HMR env var.

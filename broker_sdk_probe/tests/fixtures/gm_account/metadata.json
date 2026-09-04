@@ -1,0 +1,10 @@
+{
+  "source": "Windows real gm.api MODE_LIVE readonly probe",
+  "observed_at": "2026-09-02T23:01:19+08:00",
+  "python": "3.9.13",
+  "gm_version": "3.0.186",
+  "c_sdk_version": "3.8.19",
+  "account_mode": "SIM",
+  "redactions": ["account_id", "account_name", "token"]
+}
+

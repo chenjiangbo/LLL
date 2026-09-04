@@ -1,0 +1,135 @@
+<html lang="zh-CN"><head><meta charset="utf-8"/><meta content="width=device-width, initial-scale=1.0" name="viewport"/><style>@layer base{html,body{margin:0;padding:0;}body{overscroll-behavior:none;}main>:first-child{margin-top:0!important;}main>:last-child{margin-bottom:0!important;}}::-webkit-scrollbar{display:none;}</style><script src="https://cdn.tailwindcss.com"></script><script id="tailwind-config">tailwind.config={theme:{extend:{"colors":{"secondary-container":"#a1f4c8","tertiary":"#713638","outline-variant":"#bfc9c1","surface-container":"#edeeef","tertiary-fixed-dim":"#ffb3b3","semantic-negative":"#ae2012","on-background":"#191c1d","inverse-on-surface":"#f0f1f2","tertiary-fixed":"#ffdad9","on-surface-variant":"#404943","surface-container-high":"#e7e8e9","inverse-primary":"#95d4b3","primary-fixed":"#b1f0ce","on-primary-fixed-variant":"#0e5138","background":"#f8f9fa","error":"#ba1a1a","on-primary":"#ffffff","on-tertiary-container":"#ffcfce","surface-container-lowest":"#ffffff","text-slate-muted":"#52616b","semantic-positive":"#2d6a4f","on-tertiary-fixed":"#390b0e","secondary-fixed":"#a1f4c8","primary-fixed-dim":"#95d4b3","on-secondary-fixed-variant":"#005236","outline":"#707973","on-surface":"#191c1d","surface-dim":"#d9dadb","on-tertiary":"#ffffff","real-account-badge":"#9b2226","primary":"#0f5238","tertiary-container":"#8d4d4e","k-line-green":"#26a69a","surface-container-highest":"#e1e3e4","error-container":"#ffdad6","on-secondary-container":"#1b724f","on-tertiary-fixed-variant":"#6f3537","on-secondary-fixed":"#002113","on-secondary":"#ffffff","k-line-red":"#ef5350","secondary":"#116c4a","semantic-warning":"#e67e22","primary-container":"#2d6a4f","background-cream":"#f8f9fa","surface-tint":"#2c694e","secondary-fixed-dim":"#86d7ad","on-primary-fixed":"#002114","surface-variant":"#e1e3e4","on-error-container":"#93000a","surface-bright":"#f8f9fa","surface":"#f8f9fa","text-slate-deep":"#1b262c","inverse-surface":"#2e3132","on-error":"#ffffff","border-subtle":"#dee2e6","on-primary-container":"#a8e7c5","surface-container-low":"#f3f4f5"},"borderRadius":{"DEFAULT":"0.25rem","lg":"0.5rem","xl":"0.75rem","full":"9999px"},"spacing":{"sm":"8px","xs":"4px","container-margin":"24px","lg":"24px","unit":"4px","gutter":"16px","md":"16px","xl":"32px"},"fontFamily":{"mono-data":["JetBrains Mono"],"headline-md":["Inter"],"display-lg":["Inter"],"headline-lg":["Inter"],"body-md":["Inter"],"label-md":["Inter"],"body-lg":["Inter"]},"fontSize":{"mono-data":["14px",{"lineHeight":"20px","fontWeight":"500"}],"headline-md":["20px",{"lineHeight":"28px","fontWeight":"600"}],"display-lg":["36px",{"lineHeight":"44px","letterSpacing":"-0.02em","fontWeight":"700"}],"headline-lg":["24px",{"lineHeight":"32px","fontWeight":"600"}],"body-md":["14px",{"lineHeight":"20px","fontWeight":"400"}],"label-md":["12px",{"lineHeight":"16px","letterSpacing":"0.01em","fontWeight":"500"}],"body-lg":["16px",{"lineHeight":"24px","fontWeight":"400"}]}}}}</script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap" rel="stylesheet"/></head><body class="bg-background-cream font-body-md text-on-surface"><header class="fixed top-0 w-full z-50 bg-surface/90 backdrop-blur-md shadow-[0_1px_8px_rgba(0,0,0,0.04)]"><div class="h-16 w-full px-container-margin flex items-center justify-between"><div class="flex items-center gap-xl"><div class="flex items-center gap-sm"><div class="w-8 h-8 bg-primary rounded-lg flex items-center justify-center"><span class="material-symbols-outlined text-on-primary">analytics</span></div><span class="font-headline-md text-headline-md text-primary tracking-tight whitespace-nowrap">LLL 交易研究</span></div><nav class="hidden xl:flex items-center gap-lg self-stretch" data-active-classes="text-primary font-bold border-b-2 border-primary"><a class="h-full flex items-center px-xs text-body-md text-on-surface-variant hover:text-primary transition-colors" data-path="overview" href="#">交易总览</a><a class="h-full flex items-center px-xs text-body-md text-on-surface-variant hover:text-primary transition-colors" data-path="plan" href="#">交易计划</a><a class="h-full flex items-center px-xs text-body-md text-on-surface-variant hover:text-primary transition-colors" data-path="execution" href="#">交易执行</a><a class="h-full flex items-center px-xs text-body-md text-on-surface-variant hover:text-primary transition-colors" data-path="orders" href="#">订单</a><a class="h-full flex items-center px-xs text-body-md text-on-surface-variant hover:text-primary transition-colors" data-path="positions" href="#">持仓</a><a class="h-full flex items-center px-xs text-body-md text-on-surface-variant hover:text-primary transition-colors" data-path="settings" href="#">交易设置</a></nav></div><div class="flex items-center gap-md"><div class="flex items-center gap-sm px-md py-1.5 bg-surface-container rounded-full border border-outline-variant"><div class="w-2 h-2 rounded-full bg-semantic-positive animate-pulse"></div><span class="text-label-md font-label-md text-on-surface-variant">实盘账户 - 连接正常</span><span class="px-2 py-0.5 bg-real-account-badge text-on-primary rounded text-[10px] font-bold uppercase">Live</span></div><button class="flex items-center gap-xs px-lg py-2 bg-semantic-negative text-on-primary rounded-lg hover:opacity-90 transition-all font-label-md"><span class="material-symbols-outlined text-[18px]">emergency_home</span>PAUSE ALL</button><div class="flex items-center gap-sm ml-sm"><div class="text-right hidden sm:block"><div class="text-label-md font-label-md text-on-surface">Trading Desk 01</div><div class="text-[10px] text-on-surface-variant leading-none">正常执行</div></div><div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center"><span class="material-symbols-outlined text-on-primary text-[18px]">person</span></div></div></div></div></header><main class="w-full pt-16 min-h-screen bg-background-cream"><div class="flex flex-col w-full min-h-full">
+<div class="px-container-margin py-md">
+<div class="flex items-center gap-md mb-lg">
+<div class="relative w-64">
+<span class="material-symbols-outlined absolute left-sm top-1/2 -translate-y-1/2 text-on-surface-variant text-[20px]">search</span>
+<input class="w-full pl-xl pr-sm py-2 bg-surface-container rounded-lg focus:outline-none font-mono-data text-body-md text-on-surface" placeholder="Search stock code / name" type="text"/>
+</div>
+<div class="flex items-center gap-sm overflow-x-auto no-scrollbar">
+<div class="px-sm py-1 bg-primary text-on-primary rounded-full flex items-center gap-xs cursor-pointer shadow-sm">
+<span class="font-headline-md text-label-md">AAPL</span>
+<span class="text-label-md opacity-80">173.50</span>
+</div>
+<div class="px-sm py-1 bg-surface-container text-on-surface rounded-full flex items-center gap-xs cursor-pointer hover:bg-surface-container-high transition-colors">
+<span class="font-headline-md text-label-md">TSLA</span>
+<span class="text-label-md text-on-surface-variant">175.22</span>
+</div>
+<div class="px-sm py-1 bg-surface-container text-on-surface rounded-full flex items-center gap-xs cursor-pointer hover:bg-surface-container-high transition-colors">
+<span class="font-headline-md text-label-md">MSFT</span>
+<span class="text-label-md text-on-surface-variant">420.55</span>
+</div>
+<div class="px-sm py-1 bg-surface-container text-on-surface rounded-full flex items-center gap-xs cursor-pointer hover:bg-surface-container-high transition-colors">
+<span class="font-headline-md text-label-md">NVDA</span>
+<span class="text-label-md text-on-surface-variant">880.08</span>
+</div>
+</div>
+</div>
+<div class="grid grid-cols-12 gap-lg h-[calc(100vh-140px)]">
+<div class="col-span-12 lg:col-span-8 flex flex-col gap-sm bg-surface-container-lowest rounded-xl shadow-md p-md relative overflow-hidden">
+<div class="flex items-center justify-between mb-sm z-10">
+<div class="flex items-center gap-md">
+<h2 class="font-headline-lg text-headline-lg text-on-surface tracking-tight">AAPL <span class="text-body-md text-on-surface-variant font-normal">Apple Inc.</span></h2>
+<div class="flex items-center gap-xs text-semantic-positive font-mono-data text-body-md">
+<span>173.50</span>
+<span class="material-symbols-outlined text-[16px]">arrow_upward</span>
+<span>1.24%</span>
+</div>
+</div>
+<div class="flex items-center gap-sm bg-surface-container rounded-lg p-1">
+<button class="px-3 py-1 rounded bg-surface-container-lowest text-on-surface font-label-md shadow-sm">1D</button>
+<button class="px-3 py-1 rounded text-on-surface-variant font-label-md hover:text-on-surface transition-colors">4H</button>
+<button class="px-3 py-1 rounded text-on-surface-variant font-label-md hover:text-on-surface transition-colors">1H</button>
+<button class="px-3 py-1 rounded text-on-surface-variant font-label-md hover:text-on-surface transition-colors">15M</button>
+</div>
+</div>
+<div class="flex-1 w-full relative group">
+<img alt="K-line Chart" class="absolute inset-0 w-full h-full object-cover rounded-lg" src="https://lh3.googleusercontent.com/aida-public/AB6AXuA1mgjLwriKMeRARTWvbErc6kvER9QK6EqD3YMKErZyOb13-cbmyryBISaHTnS0SDdfJYNri0gp1u7NeExqtwPOMkgJTzbiNc3PI8fYwUb1PkVyBnneDDN7zV4RpNDYkJDtBnOfhnwa6FZ45IDgDnJ0eDXVOd4DT5-6ZJ3miOUuiNPrCIWZbtsGg9H7yHLnelAybdV89ttInxBBuCkeSr5oHa8eCrAajzWR065ehhn5nz6c1a4zp_Kvj0hXWHgme3HnYwA"/>
+<div class="absolute right-sm top-sm flex flex-col gap-xs bg-surface/80 backdrop-blur-sm p-1 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="w-8 h-8 flex items-center justify-center rounded hover:bg-surface-container-high text-primary" title="Pick Entry"><span class="material-symbols-outlined text-[20px]">add_circle</span></button>
+<button class="w-8 h-8 flex items-center justify-center rounded hover:bg-surface-container-high text-semantic-negative" title="Pick Max Accept"><span class="material-symbols-outlined text-[20px]">remove_circle</span></button>
+<button class="w-8 h-8 flex items-center justify-center rounded hover:bg-surface-container-high text-semantic-warning" title="Pick Risk Ref"><span class="material-symbols-outlined text-[20px]">warning</span></button>
+<button class="w-8 h-8 flex items-center justify-center rounded hover:bg-surface-container-high text-semantic-positive" title="Pick Target"><span class="material-symbols-outlined text-[20px]">flag</span></button>
+</div>
+</div>
+</div>
+<div class="col-span-12 lg:col-span-4 flex flex-col gap-md h-full overflow-y-auto no-scrollbar">
+<div class="bg-surface-container-lowest rounded-xl shadow-md p-lg flex flex-col gap-lg relative">
+<div class="flex items-center justify-between border-b border-outline-variant/30 pb-sm">
+<h3 class="font-headline-md text-headline-md text-on-surface">Trade Plan</h3>
+<button class="text-primary font-label-md flex items-center gap-xs hover:opacity-80 transition-opacity"><span class="material-symbols-outlined text-[18px]">clear_all</span> Reset</button>
+</div>
+<div class="grid grid-cols-2 gap-md">
+<div class="col-span-2">
+<label class="block font-label-md text-label-md text-on-surface-variant mb-xs">Entry Price</label>
+<div class="relative">
+<input class="w-full bg-surface-container rounded-lg p-3 font-mono-data text-body-lg text-on-surface focus:outline-none focus:ring-1 focus:ring-primary transition-shadow" type="text" value="173.50"/>
+<button class="absolute right-2 top-1/2 -translate-y-1/2 text-primary hover:bg-primary/10 p-1 rounded transition-colors"><span class="material-symbols-outlined text-[20px]">my_location</span></button>
+</div>
+</div>
+<div>
+<label class="block font-label-md text-label-md text-semantic-negative mb-xs flex items-center gap-xs">Max Accept <span class="material-symbols-outlined text-[14px]">info</span></label>
+<input class="w-full bg-error-container/30 rounded-lg p-3 font-mono-data text-body-md text-on-surface focus:outline-none" type="text" value="170.00"/>
+</div>
+<div>
+<label class="block font-label-md text-label-md text-semantic-warning mb-xs">Risk Ref.</label>
+<input class="w-full bg-surface-container rounded-lg p-3 font-mono-data text-body-md text-on-surface focus:outline-none" type="text" value="168.50"/>
+</div>
+<div class="col-span-2 flex items-center justify-between bg-surface-container p-sm rounded-lg mt-xs">
+<span class="font-label-md text-label-md text-on-surface-variant">Account Risk %</span>
+<div class="flex items-center gap-sm">
+<span class="font-mono-data text-body-md text-on-surface">1.5%</span>
+<input class="w-24 accent-primary" max="5" min="0.5" step="0.5" type="range" value="1.5"/>
+</div>
+</div>
+</div>
+<div class="border-t border-outline-variant/30 pt-md">
+<div class="flex items-center justify-between mb-sm">
+<label class="font-label-md text-label-md text-on-surface-variant">Target Setup</label>
+<div class="flex bg-surface-container rounded-lg p-1">
+<button class="px-2 py-1 bg-surface-container-lowest shadow-sm rounded text-on-surface font-label-md text-[10px]">Fixed</button>
+<button class="px-2 py-1 text-on-surface-variant font-label-md text-[10px] hover:text-on-surface">Trend</button>
+</div>
+</div>
+<div class="relative mb-md">
+<input class="w-full bg-surface-container rounded-lg p-3 font-mono-data text-body-md text-on-surface focus:outline-none" type="text" value="184.00"/>
+<span class="absolute right-3 top-1/2 -translate-y-1/2 font-label-md text-semantic-positive bg-semantic-positive/10 px-2 py-1 rounded">3R</span>
+</div>
+</div>
+</div>
+<div class="bg-surface-container-lowest rounded-xl shadow-md p-lg flex flex-col gap-md relative">
+<h4 class="font-label-md text-label-md text-on-surface-variant uppercase tracking-wider mb-xs">Risk Matrix</h4>
+<div class="grid grid-cols-2 gap-md bg-surface-container p-md rounded-lg">
+<div class="flex flex-col gap-xs">
+<span class="font-label-md text-[10px] text-on-surface-variant">Suggested Qty</span>
+<span class="font-mono-data text-headline-lg text-primary">420</span>
+</div>
+<div class="flex flex-col gap-xs text-right">
+<span class="font-label-md text-[10px] text-on-surface-variant">Est. Investment</span>
+<span class="font-mono-data text-headline-md text-on-surface">$72,870</span>
+</div>
+</div>
+<div class="flex flex-col gap-xs">
+<div class="flex justify-between items-center py-2 border-b border-outline-variant/20">
+<span class="font-label-md text-label-md text-on-surface-variant">Risk Amount</span>
+<span class="font-mono-data text-body-md text-semantic-negative">-$1,470</span>
+</div>
+<div class="flex justify-between items-center py-2 border-b border-outline-variant/20">
+<span class="font-label-md text-label-md text-on-surface-variant">Price Risk</span>
+<span class="font-mono-data text-body-md text-on-surface">-$3.50 (2.0%)</span>
+</div>
+<div class="flex justify-between items-center py-2">
+<span class="font-label-md text-label-md text-on-surface-variant">Reward/Risk</span>
+<span class="font-mono-data text-body-lg text-semantic-positive font-bold">1 : 3.0</span>
+</div>
+</div>
+<button class="w-full py-3 bg-primary text-on-primary font-headline-md text-body-md rounded-lg hover:opacity-90 transition-opacity mt-sm shadow-md shadow-primary/20 flex items-center justify-center gap-sm">
+<span class="material-symbols-outlined text-[20px]">task_alt</span>
+             Save Plan
+           </button>
+</div>
+</div>
+</div>
+</div>
+</div></main><footer class="w-full bg-surface-container-low border-t border-outline-variant/30 py-8"><div class="w-full px-container-margin flex flex-col md:flex-row justify-between items-center gap-md text-on-surface-variant font-label-md text-label-md"><div>© 2024 LLL Trading Research. Institutional Access Only.</div><div class="flex items-center gap-xl"><span class="flex items-center gap-xs"><span class="material-symbols-outlined text-[16px] text-semantic-positive">verified_user</span>Secure Terminal</span><span class="flex items-center gap-xs"><span class="material-symbols-outlined text-[16px]">speed</span>Latency: 2ms</span></div></div></footer></body></html>

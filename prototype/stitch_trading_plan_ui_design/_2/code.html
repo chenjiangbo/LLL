@@ -1,0 +1,181 @@
+<html lang="zh-CN"><head><meta charset="utf-8"/><meta content="width=device-width, initial-scale=1.0" name="viewport"/><style>@layer base{html,body{margin:0;padding:0;}body{overscroll-behavior:none;}main>:first-child{margin-top:0!important;}main>:last-child{margin-bottom:0!important;}}::-webkit-scrollbar{display:none;}</style><script src="https://cdn.tailwindcss.com"></script><script id="tailwind-config">tailwind.config={theme:{extend:{"colors":{"secondary-container":"#a1f4c8","tertiary":"#713638","outline-variant":"#bfc9c1","surface-container":"#edeeef","tertiary-fixed-dim":"#ffb3b3","semantic-negative":"#ae2012","on-background":"#191c1d","inverse-on-surface":"#f0f1f2","tertiary-fixed":"#ffdad9","on-surface-variant":"#404943","surface-container-high":"#e7e8e9","inverse-primary":"#95d4b3","primary-fixed":"#b1f0ce","on-primary-fixed-variant":"#0e5138","background":"#f8f9fa","error":"#ba1a1a","on-primary":"#ffffff","on-tertiary-container":"#ffcfce","surface-container-lowest":"#ffffff","text-slate-muted":"#52616b","semantic-positive":"#2d6a4f","on-tertiary-fixed":"#390b0e","secondary-fixed":"#a1f4c8","primary-fixed-dim":"#95d4b3","on-secondary-fixed-variant":"#005236","outline":"#707973","on-surface":"#191c1d","surface-dim":"#d9dadb","on-tertiary":"#ffffff","real-account-badge":"#9b2226","primary":"#0f5238","tertiary-container":"#8d4d4e","k-line-green":"#26a69a","surface-container-highest":"#e1e3e4","error-container":"#ffdad6","on-secondary-container":"#1b724f","on-tertiary-fixed-variant":"#6f3537","on-secondary-fixed":"#002113","on-secondary":"#ffffff","k-line-red":"#ef5350","secondary":"#116c4a","semantic-warning":"#e67e22","primary-container":"#2d6a4f","background-cream":"#f8f9fa","surface-tint":"#2c694e","secondary-fixed-dim":"#86d7ad","on-primary-fixed":"#002114","surface-variant":"#e1e3e4","on-error-container":"#93000a","surface-bright":"#f8f9fa","surface":"#f8f9fa","text-slate-deep":"#1b262c","inverse-surface":"#2e3132","on-error":"#ffffff","border-subtle":"#dee2e6","on-primary-container":"#a8e7c5","surface-container-low":"#f3f4f5"},"borderRadius":{"DEFAULT":"0.25rem","lg":"0.5rem","xl":"0.75rem","full":"9999px"},"spacing":{"sm":"8px","xs":"4px","container-margin":"24px","lg":"24px","unit":"4px","gutter":"16px","md":"16px","xl":"32px"},"fontFamily":{"mono-data":["JetBrains Mono"],"headline-md":["Inter"],"display-lg":["Inter"],"headline-lg":["Inter"],"body-md":["Inter"],"label-md":["Inter"],"body-lg":["Inter"]},"fontSize":{"mono-data":["14px",{"lineHeight":"20px","fontWeight":"500"}],"headline-md":["20px",{"lineHeight":"28px","fontWeight":"600"}],"display-lg":["36px",{"lineHeight":"44px","letterSpacing":"-0.02em","fontWeight":"700"}],"headline-lg":["24px",{"lineHeight":"32px","fontWeight":"600"}],"body-md":["14px",{"lineHeight":"20px","fontWeight":"400"}],"label-md":["12px",{"lineHeight":"16px","letterSpacing":"0.01em","fontWeight":"500"}],"body-lg":["16px",{"lineHeight":"24px","fontWeight":"400"}]}}}}</script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap" rel="stylesheet"/></head><body class="bg-background-cream font-body-md text-on-surface"><header class="fixed top-0 w-full z-50 bg-surface/90 backdrop-blur-md shadow-[0_1px_8px_rgba(0,0,0,0.04)]"><div class="h-16 w-full px-container-margin flex items-center justify-between"><div class="flex items-center gap-xl"><div class="flex items-center gap-sm"><div class="w-8 h-8 bg-primary rounded-lg flex items-center justify-center"><span class="material-symbols-outlined text-on-primary">analytics</span></div><span class="font-headline-md text-headline-md text-primary tracking-tight whitespace-nowrap">LLL 交易研究</span></div><nav class="hidden xl:flex items-center gap-lg self-stretch" data-active-classes="text-primary font-bold border-b-2 border-primary"><a class="h-full flex items-center px-xs text-body-md text-on-surface-variant hover:text-primary transition-colors" data-path="overview" href="#">交易总览</a><a class="h-full flex items-center px-xs text-body-md text-on-surface-variant hover:text-primary transition-colors" data-path="plan" href="#">交易计划</a><a class="h-full flex items-center px-xs text-body-md text-on-surface-variant hover:text-primary transition-colors" data-path="execution" href="#">交易执行</a><a class="h-full flex items-center px-xs text-body-md text-on-surface-variant hover:text-primary transition-colors" data-path="orders" href="#">订单</a><a class="h-full flex items-center px-xs text-body-md text-on-surface-variant hover:text-primary transition-colors" data-path="positions" href="#">持仓</a><a class="h-full flex items-center px-xs text-body-md text-on-surface-variant hover:text-primary transition-colors" data-path="settings" href="#">交易设置</a></nav></div><div class="flex items-center gap-md"><div class="flex items-center gap-sm px-md py-1.5 bg-surface-container rounded-full border border-outline-variant"><div class="w-2 h-2 rounded-full bg-semantic-positive animate-pulse"></div><span class="text-label-md font-label-md text-on-surface-variant">实盘账户 - 连接正常</span><span class="px-2 py-0.5 bg-real-account-badge text-on-primary rounded text-[10px] font-bold uppercase">Live</span></div><button class="flex items-center gap-xs px-lg py-2 bg-semantic-negative text-on-primary rounded-lg hover:opacity-90 transition-all font-label-md"><span class="material-symbols-outlined text-[18px]">emergency_home</span>PAUSE ALL</button><div class="flex items-center gap-sm ml-sm"><div class="text-right hidden sm:block"><div class="text-label-md font-label-md text-on-surface">Trading Desk 01</div><div class="text-[10px] text-on-surface-variant leading-none">正常执行</div></div><div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center"><span class="material-symbols-outlined text-on-primary text-[18px]">person</span></div></div></div></div></header><main class="w-full pt-16 min-h-screen bg-background-cream"><div class="flex flex-col w-full relative">
+<!-- Ambient Background Decor -->
+<div class="absolute top-0 right-0 w-3/4 h-96 bg-gradient-to-bl from-primary-fixed-dim/20 to-transparent blur-3xl -z-10 pointer-events-none transform translate-x-1/4 -translate-y-1/4"></div>
+<!-- Connection Warning Banner (No borders, high contrast) -->
+<div class="w-full px-container-margin mb-8 relative z-10">
+<div class="bg-error-container shadow-md rounded-xl p-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-md overflow-hidden relative">
+<div class="absolute right-0 top-0 w-64 h-full bg-error/10 blur-2xl transform translate-x-1/2"></div>
+<div class="flex items-center gap-md z-10">
+<div class="w-12 h-12 bg-error rounded-full flex items-center justify-center shadow-sm">
+<span class="material-symbols-outlined text-on-error" style="font-variation-settings: 'FILL' 1;">cloud_off</span>
+</div>
+<div>
+<h2 class="font-headline-md text-headline-md text-on-error-container tracking-tight">券商未连接 (Broker Disconnected)</h2>
+<p class="font-body-md text-body-md text-on-error-container/80 mt-xs">暂不可发送委托，但您可以保存草稿或查看历史记录。</p>
+</div>
+</div>
+<button class="z-10 bg-surface-container-lowest text-error px-md py-sm rounded-lg shadow-sm font-label-md text-label-md hover:shadow-md transition-shadow flex items-center gap-xs">
+<span class="material-symbols-outlined text-[18px]">settings</span>
+        连接设置
+      </button>
+</div>
+</div>
+<!-- Header & High Level Stats -->
+<div class="w-full px-container-margin mb-xl">
+<div class="flex flex-col xl:flex-row gap-lg justify-between items-end">
+<div class="flex-1 relative">
+<div class="font-label-md text-label-md text-primary uppercase tracking-widest mb-xs flex items-center gap-xs">
+<span class="w-2 h-2 rounded-full bg-semantic-positive animate-pulse"></span> Execution Desk
+        </div>
+<h1 class="font-display-lg text-display-lg text-on-surface">
+          交易执行 <span class="text-on-surface-variant font-headline-lg text-headline-lg font-normal">/ Orders & Routing</span>
+</h1>
+</div>
+<div class="flex gap-md">
+<!-- Stat Cards -->
+<div class="bg-surface-container-lowest shadow-sm rounded-xl p-md min-w-[160px] flex flex-col justify-center relative overflow-hidden">
+<div class="absolute bottom-0 right-0 opacity-10">
+<span class="material-symbols-outlined text-[64px]">hourglass_top</span>
+</div>
+<span class="font-label-md text-label-md text-text-slate-muted">活跃委托 (Active)</span>
+<span class="font-mono-data text-headline-lg text-primary mt-xs">12</span>
+</div>
+<div class="bg-surface-container-lowest shadow-sm rounded-xl p-md min-w-[160px] flex flex-col justify-center relative overflow-hidden">
+<div class="absolute bottom-0 right-0 opacity-10">
+<span class="material-symbols-outlined text-[64px]">check_circle</span>
+</div>
+<span class="font-label-md text-label-md text-text-slate-muted">今日成交 (Filled)</span>
+<span class="font-mono-data text-headline-lg text-on-surface mt-xs">1,245.4K</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Filter Bar -->
+<div class="w-full px-container-margin mb-lg sticky top-16 z-30">
+<div class="bg-surface-container-lowest/80 backdrop-blur-xl shadow-sm rounded-full p-xs flex flex-col md:flex-row items-center justify-between gap-md">
+<div class="flex items-center gap-sm flex-1 px-md w-full">
+<span class="material-symbols-outlined text-text-slate-muted">search</span>
+<input class="w-full bg-transparent font-body-md text-body-md text-on-surface placeholder:text-text-slate-muted focus:outline-none" placeholder="搜索股票代码、名称..." type="text"/>
+</div>
+<div class="flex items-center gap-xs pr-xs w-full md:w-auto overflow-x-auto pb-2 md:pb-0 hide-scrollbar">
+<!-- Status Filters -->
+<button class="whitespace-nowrap bg-primary text-on-primary px-lg py-2 rounded-full font-label-md text-label-md shadow-sm">全部 (All)</button>
+<button class="whitespace-nowrap bg-surface hover:bg-surface-container text-on-surface-variant px-lg py-2 rounded-full font-label-md text-label-md transition-colors shadow-sm">运行中 (Active)</button>
+<button class="whitespace-nowrap bg-surface hover:bg-surface-container text-on-surface-variant px-lg py-2 rounded-full font-label-md text-label-md transition-colors shadow-sm">已暂停 (Paused)</button>
+<button class="whitespace-nowrap bg-surface hover:bg-surface-container text-on-surface-variant px-lg py-2 rounded-full font-label-md text-label-md transition-colors shadow-sm">草稿 (Draft)</button>
+<div class="w-px h-6 bg-surface-variant mx-xs"></div>
+<!-- Side Filters -->
+<button class="whitespace-nowrap bg-secondary-container/50 text-on-secondary-container px-md py-2 rounded-full font-label-md text-label-md hover:bg-secondary-container transition-colors shadow-sm flex items-center gap-xs">
+<span class="material-symbols-outlined text-[16px]">arrow_downward</span> 买入
+        </button>
+<button class="whitespace-nowrap bg-error-container/50 text-on-error-container px-md py-2 rounded-full font-label-md text-label-md hover:bg-error-container transition-colors shadow-sm flex items-center gap-xs">
+<span class="material-symbols-outlined text-[16px]">arrow_upward</span> 卖出
+        </button>
+</div>
+</div>
+</div>
+<!-- Execution List Grid -->
+<div class="w-full px-container-margin pb-xl flex flex-col gap-md">
+<!-- Item 1: Active Buy -->
+<div class="bg-surface-container-lowest shadow-sm hover:shadow-md transition-shadow rounded-2xl p-lg flex flex-col xl:flex-row gap-lg items-center relative overflow-hidden group">
+<!-- Decor strip -->
+<div class="absolute left-0 top-0 bottom-0 w-1 bg-semantic-positive"></div>
+<div class="flex items-center gap-lg w-full xl:w-1/4">
+<div class="w-16 h-16 bg-surface-container rounded-xl flex items-center justify-center shadow-inner shrink-0">
+<img class="w-10 h-10 object-contain mix-blend-multiply" data-alt="A stylized minimalist 3D rendering of an Apple logo made of glowing green glass, studio lighting, hyper-realistic, dark background, representing stock symbol AAPL." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDjvdhklI6khDRqfARoBSRKQinLGoWSYW04qn8RV5R_DrfCiooycE-KoW6NdmAOgT1VIaUZ0H1RmJQFuNaB-0TePyf97RP6LIaUo74Nkj3mghDqbB75IrQcHxTPewNpOhiIreNCjilGeq5pxl084G6jGjrPPKfUx2mbFH8Qg2B16y5wK692PCLfzuvU2kmp7OpwOEuvLwxJR1O_oeq3IqBwRFSfq_P7vbrkj2IFGWl_70FOCST5hTxbEw"/>
+</div>
+<div>
+<div class="flex items-center gap-xs">
+<h3 class="font-headline-md text-headline-md text-on-surface">AAPL</h3>
+<span class="px-2 py-0.5 bg-secondary-container text-on-secondary-container rounded font-mono-data text-[10px] font-bold">BUY</span>
+</div>
+<p class="font-label-md text-label-md text-text-slate-muted mt-1">Apple Inc. • 智能算法 (VWAP)</p>
+</div>
+</div>
+<div class="flex-1 w-full flex flex-col gap-xs">
+<div class="flex justify-between font-label-md text-label-md">
+<span class="text-text-slate-muted">进度 (Progress)</span>
+<span class="font-mono-data text-primary">3,500 / 10,000</span>
+</div>
+<div class="w-full h-2 bg-surface-container rounded-full overflow-hidden">
+<div class="h-full bg-semantic-positive rounded-full w-[35%] relative">
+<div class="absolute inset-0 bg-gradient-to-r from-transparent to-white/30"></div>
+</div>
+</div>
+<div class="flex justify-between font-mono-data text-label-md text-text-slate-muted mt-xs">
+<span>剩余: 6,500</span>
+<span>有效至: 当日有效 (DAY)</span>
+</div>
+</div>
+<div class="w-full xl:w-auto flex items-center justify-between gap-xl">
+<div class="flex flex-col items-end gap-1">
+<span class="px-3 py-1 bg-primary-fixed text-on-primary-fixed-variant rounded-full font-label-md text-label-md shadow-sm flex items-center gap-1">
+<span class="w-2 h-2 rounded-full bg-semantic-positive animate-pulse"></span> 运行中 (Active)
+          </span>
+<span class="font-mono-data text-label-md text-text-slate-muted">Avg: $173.42</span>
+</div>
+<div class="flex items-center gap-sm">
+<button class="w-10 h-10 rounded-full bg-surface-container hover:bg-semantic-warning/20 hover:text-semantic-warning text-on-surface-variant flex items-center justify-center transition-colors shadow-sm" title="Pause">
+<span class="material-symbols-outlined text-[20px]">pause</span>
+</button>
+<button class="w-10 h-10 rounded-full bg-surface-container hover:bg-semantic-negative/20 hover:text-semantic-negative text-on-surface-variant flex items-center justify-center transition-colors shadow-sm" title="Cancel">
+<span class="material-symbols-outlined text-[20px]">close</span>
+</button>
+<button class="w-10 h-10 rounded-full bg-primary text-on-primary shadow-sm hover:shadow-md transition-all flex items-center justify-center" title="View Orders">
+<span class="material-symbols-outlined text-[20px]">list_alt</span>
+</button>
+</div>
+</div>
+</div>
+<!-- Item 2: Paused Sell -->
+<div class="bg-surface-container-lowest shadow-sm hover:shadow-md transition-shadow rounded-2xl p-lg flex flex-col xl:flex-row gap-lg items-center relative overflow-hidden group opacity-80 hover:opacity-100">
+<div class="absolute left-0 top-0 bottom-0 w-1 bg-semantic-warning"></div>
+<div class="flex items-center gap-lg w-full xl:w-1/4">
+<div class="w-16 h-16 bg-surface-container rounded-xl flex items-center justify-center shadow-inner shrink-0">
+<img class="w-10 h-10 object-contain mix-blend-multiply" data-alt="A stylized minimalist 3D rendering of a microchip with glowing orange circuits, representing stock symbol NVDA, studio lighting, dark backdrop." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCDR8z5pUf5dBIGDDR1lAsridX_idGU9bpGnPROnrhx8NQhBE-x0IfjFOpO6DA29sjnuoq5mcPvw9kDxQQI5YGedjodGwGQQ4inaYhMiIcJ6V6wHVDMfJI3EdOLdkhHVwr6byXtBhUWubpnI339YjOHhwedZxf716M2TxK8BbqfeCI5bujFH1offSZMX6fBlOHj0WQZbzQdXAqaLdfHkAnXOJERyQw70kj5zhM9b41OwlUHlHoztxLkog"/>
+</div>
+<div>
+<div class="flex items-center gap-xs">
+<h3 class="font-headline-md text-headline-md text-on-surface">NVDA</h3>
+<span class="px-2 py-0.5 bg-error-container text-on-error-container rounded font-mono-data text-[10px] font-bold">SELL</span>
+</div>
+<p class="font-label-md text-label-md text-text-slate-muted mt-1">NVIDIA Corp. • 限价 (Limit)</p>
+</div>
+</div>
+<div class="flex-1 w-full flex flex-col gap-xs">
+<div class="flex justify-between font-label-md text-label-md">
+<span class="text-text-slate-muted">进度 (Progress)</span>
+<span class="font-mono-data text-semantic-warning">1,200 / 2,000</span>
+</div>
+<div class="w-full h-2 bg-surface-container rounded-full overflow-hidden">
+<div class="h-full bg-semantic-warning rounded-full w-[60%] relative"></div>
+</div>
+<div class="flex justify-between font-mono-data text-label-md text-text-slate-muted mt-xs">
+<span>剩余: 800</span>
+<span>有效至: 撤销前有效 (GTC)</span>
+</div>
+</div>
+<div class="w-full xl:w-auto flex items-center justify-between gap-xl">
+<div class="flex flex-col items-end gap-1">
+<span class="px-3 py-1 bg-surface-variant text-semantic-warning rounded-full font-label-md text-label-md shadow-sm flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">pause_circle</span> 已暂停 (Paused)
+          </span>
+<span class="font-mono-data text-label-md text-text-slate-muted">Avg: $850.10</span>
+</div>
+<div class="flex items-center gap-sm">
+<button class="w-10 h-10 rounded-full bg-surface-container hover:bg-semantic-positive/20 hover:text-semantic-positive text-on-surface-variant flex items-center justify-center transition-colors shadow-sm" title="Resume">
+<span class="material-symbols-outlined text-[20px]">play_arrow</span>
+</button>
+<button class="w-10 h-10 rounded-full bg-surface-container hover:bg-semantic-negative/20 hover:text-semantic-negative text-on-surface-variant flex items-center justify-center transition-colors shadow-sm" title="Cancel">
+<span class="material-symbols-outlined text-[20px]">close</span>
+</button>
+<button class="w-10 h-10 rounded-full bg-surface-container text-on-surface-variant shadow-sm hover:bg-surface-variant transition-all flex items-center justify-center" title="View Orders">
+<span class="material-symbols-outlined text-[20px]">list_alt</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+</div></main><footer class="w-full bg-surface-container-low border-t border-outline-variant/30 py-8"><div class="w-full px-container-margin flex flex-col md:flex-row justify-between items-center gap-md text-on-surface-variant font-label-md text-label-md"><div>© 2024 LLL Trading Research. Institutional Access Only.</div><div class="flex items-center gap-xl"><span class="flex items-center gap-xs"><span class="material-symbols-outlined text-[16px] text-semantic-positive">verified_user</span>Secure Terminal</span><span class="flex items-center gap-xs"><span class="material-symbols-outlined text-[16px]">speed</span>Latency: 2ms</span></div></div></footer></body></html>

@@ -13,7 +13,15 @@ import {
   Calendar,
   Zap,
   CheckCircle2,
-  ChevronRight
+  ChevronRight,
+  BarChart3,
+  Layers,
+  ListOrdered,
+  Newspaper,
+  Flame,
+  PieChart,
+  Activity,
+  ExternalLink
 } from 'lucide-react';
 
 const KLineModal = dynamic(() => import('./KLineModal'), { ssr: false });
@@ -48,6 +56,16 @@ export interface BoardQuote {
   top_stock_pct: number;
 }
 
+export interface NewsItem {
+  id: string;
+  time: string;
+  title: string;
+  content: string;
+  subjects: string[];
+  level: string;
+  url: string;
+}
+
 export interface FreshnessInfo {
   daily_market_date?: string;
   latest_open_trade_date?: string;
@@ -68,11 +86,18 @@ interface MarketQuotesPageProps {
 export default function MarketQuotesPage({
   apiHost = process.env.NEXT_PUBLIC_MARKET_REVIEW_API_URL || 'http://127.0.0.1:18080',
 }: MarketQuotesPageProps) {
+  // 4 大主子标签页: overview (大盘全景), boards (板块行情), quotes (个股行情), news (财联社 7x24 电报)
+  const [mainTab, setMainTab] = useState<'overview' | 'boards' | 'quotes' | 'news'>('overview');
+  
+  // 板块类型: industry (申万行业), concept (题材概念)
+  const [boardType, setBoardType] = useState<'industry' | 'concept'>('industry');
+
   const [board, setBoard] = useState<string>('all');
   const [selectedIndustry, setSelectedIndustry] = useState<string | null>(null);
 
   const [keyword, setKeyword] = useState<string>('');
   const [searchInput, setSearchInput] = useState<string>('');
+  const [newsQuery, setNewsQuery] = useState<string>('');
   const [sortBy, setSortBy] = useState<string>('pct_chg');
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
 
@@ -91,6 +116,11 @@ export default function MarketQuotesPage({
   // 板块列表 State
   const [boards, setBoards] = useState<BoardQuote[]>([]);
   const [boardTotalCount, setBoardTotalCount] = useState<number>(0);
+
+  // 财联社电报与大盘全景 Analytics State
+  const [newsList, setNewsList] = useState<NewsItem[]>([]);
+  const [newsLoading, setNewsLoading] = useState<boolean>(false);
+  const [analytics, setAnalytics] = useState<any>(null);
 
   // 智能下拉推荐 State
   const [suggestions, setSuggestions] = useState<StockQuote[]>([]);
@@ -250,9 +280,10 @@ export default function MarketQuotesPage({
     [apiHost, board, keyword, sortBy, sortOrder, selectedIndustry]
   );
 
-  // 全局全量获取申万板块行情
+  // 全局全量获取板块行情 (申万行业板块 / 题材概念板块)
   const fetchBoards = useCallback(
     async (
+      currentBoardType = boardType,
       currentKeyword = keyword,
       currentSortBy = sortBy,
       currentSortOrder = sortOrder
@@ -260,6 +291,7 @@ export default function MarketQuotesPage({
       setLoading(true);
       try {
         const params = new URLSearchParams({
+          board_type: currentBoardType,
           sort_by: currentSortBy,
           sort_order: currentSortOrder,
           keyword: currentKeyword,
@@ -267,7 +299,7 @@ export default function MarketQuotesPage({
 
         const res = await fetch(`${apiHost}/api/market/boards?${params.toString()}`);
         if (!res.ok) {
-          throw new Error('获取申万板块数据失败');
+          throw new Error('获取板块数据失败');
         }
         const data = await res.json();
         setBoards(data.items || []);
@@ -279,18 +311,55 @@ export default function MarketQuotesPage({
         setLoading(false);
       }
     },
-    [apiHost, keyword, sortBy, sortOrder]
+    [apiHost, boardType, keyword, sortBy, sortOrder]
   );
 
-  // 视图或筛选改变时加载
+  // 获取财联社 7x24 小时财经电报
+  const fetchNews = useCallback(
+    async (q = newsQuery) => {
+      setNewsLoading(true);
+      try {
+        const params = new URLSearchParams({ q });
+        const res = await fetch(`${apiHost}/api/market/news?${params.toString()}`);
+        if (res.ok) {
+          const data = await res.json();
+          setNewsList(data.items || []);
+        }
+      } catch (e) {
+        console.error('Fetch news error:', e);
+      } finally {
+        setNewsLoading(false);
+      }
+    },
+    [apiHost, newsQuery]
+  );
+
+  // 获取大盘全景 Analytics 数据
+  const fetchAnalytics = useCallback(async () => {
+    try {
+      const res = await fetch(`${apiHost}/api/market/analytics`);
+      if (res.ok) {
+        const data = await res.json();
+        setAnalytics(data);
+      }
+    } catch (e) {
+      console.error('Fetch market analytics error:', e);
+    }
+  }, [apiHost]);
+
+  // 视图或 Sub-Tabs 改变时自动拉取对应数据
   useEffect(() => {
     setOffset(0);
-    if (isBoardView) {
-      fetchBoards(keyword, sortBy, sortOrder);
-    } else {
+    if (mainTab === 'overview') {
+      fetchAnalytics();
+    } else if (mainTab === 'boards') {
+      fetchBoards(boardType, keyword, sortBy, sortOrder);
+    } else if (mainTab === 'quotes') {
       fetchQuotes(0, false, board, keyword, sortBy, sortOrder, selectedIndustry);
+    } else if (mainTab === 'news') {
+      fetchNews(newsQuery);
     }
-  }, [board, keyword, sortBy, sortOrder, selectedIndustry, isBoardView, fetchQuotes, fetchBoards]);
+  }, [mainTab, boardType, board, keyword, sortBy, sortOrder, selectedIndustry, newsQuery, fetchAnalytics, fetchBoards, fetchQuotes, fetchNews]);
 
   // 防抖联想搜股票
   useEffect(() => {
@@ -462,47 +531,49 @@ export default function MarketQuotesPage({
 
   return (
     <div className="flex flex-col h-[calc(100vh-64px)] bg-[#faf6f0] text-[#2e3230] font-sans overflow-hidden select-none p-4 lg:p-6 gap-3">
-      {/* 顶部控制栏：分类 Tag + 日期 Label + 补齐图标按钮 */}
-      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 bg-white rounded-lg border border-[#c4c8bc]/40 shadow-xs">
-        {/* 板块 Tag */}
-        <div className="flex items-center space-x-1.5 overflow-x-auto">
+      {/* 顶部行情大功能 4 大子标签页 Navigation (全景 / 板块 / 个股 / 财联社电报) */}
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 bg-white rounded-lg border border-[#c4c8bc]/40 shadow-xs">
+        {/* 子功能 4 大 Main Sub-Tabs */}
+        <div className="flex items-center space-x-2">
           {[
-            { id: 'all', label: '全部A股' },
-            { id: 'sw_industry', label: '申万板块' },
-            { id: 'cyb', label: '创业板' },
-            { id: 'kcb', label: '科创板' },
-            { id: 'sh', label: '沪A' },
-            { id: 'sz', label: '深A' },
-            { id: 'new', label: '次新股' },
-          ].map((item) => (
-            <button
-              key={item.id}
-              onClick={() => {
-                setBoard(item.id);
-                setSelectedIndustry(null);
-                setKeyword('');
-              }}
-              className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all ${
-                board === item.id
-                  ? 'bg-[#4a7c59] text-white shadow-xs'
-                  : 'text-[#4a4e4a] bg-[#f0ece4]/60 hover:bg-[#e4e0d8] hover:text-[#2e3230]'
-              }`}
-            >
-              {item.label}
-            </button>
-          ))}
-
-          {/* 如果从申万板块下钻到了某板块成分股，显示明确下钻面包屑标签 */}
-          {selectedIndustry && (
-            <div className="flex items-center space-x-1 px-2.5 py-1 text-xs bg-[#e8f0e9] text-[#4a7c59] rounded-md font-bold border border-[#4a7c59]/40 animate-fadeIn">
-              <span>成分股：{selectedIndustry}</span>
+            { id: 'overview', label: '大盘全景', icon: PieChart },
+            { id: 'boards', label: '板块行情', icon: Layers },
+            { id: 'quotes', label: '个股行情列表', icon: ListOrdered },
+            { id: 'news', label: '财联社 7x24 电报', icon: Newspaper },
+          ].map((tab) => {
+            const Icon = tab.icon;
+            const isActive = mainTab === tab.id;
+            return (
               <button
+                key={tab.id}
                 onClick={() => {
+                  setMainTab(tab.id as any);
                   setSelectedIndustry(null);
                   setKeyword('');
                 }}
+                className={`flex items-center space-x-1.5 px-3.5 py-1.5 text-xs font-bold rounded-md transition-all ${
+                  isActive
+                    ? 'bg-[#4a7c59] text-white shadow-xs scale-102'
+                    : 'text-[#4a4e4a] bg-[#f0ece4]/60 hover:bg-[#e4e0d8] hover:text-[#2e3230]'
+                }`}
+              >
+                <Icon className="w-3.5 h-3.5" />
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
+
+          {/* 如果从板块下钻到了某成份股，显示下钻面包屑标签 */}
+          {selectedIndustry && mainTab === 'quotes' && (
+            <div className="flex items-center space-x-1 px-2.5 py-1 text-xs bg-[#e8f0e9] text-[#4a7c59] rounded-md font-bold border border-[#4a7c59]/40 animate-fadeIn ml-2">
+              <span>下钻成份股：{selectedIndustry}</span>
+              <button
+                onClick={() => {
+                  setSelectedIndustry(null);
+                  setMainTab('boards');
+                }}
                 className="hover:text-red-600 ml-1"
-                title="返回申万板块列表"
+                title="返回板块列表"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
@@ -516,7 +587,7 @@ export default function MarketQuotesPage({
             <Calendar className="w-3.5 h-3.5 text-[#4a7c59]" />
             <span>行情日期:</span>
             <strong className="text-[#2e3230] font-mono font-bold">
-              {formatDateStr(freshness.daily_market_date)}
+              {formatDateStr(freshness.latest_open_trade_date || freshness.daily_market_date)}
             </strong>
           </div>
 
@@ -605,10 +676,14 @@ export default function MarketQuotesPage({
 
             <button
               onClick={() => {
-                if (isBoardView) {
-                  fetchBoards(keyword, sortBy, sortOrder);
-                } else {
+                if (mainTab === 'boards') {
+                  fetchBoards(boardType, keyword, sortBy, sortOrder);
+                } else if (mainTab === 'quotes') {
                   fetchQuotes(0, false, board, keyword, sortBy, sortOrder, selectedIndustry);
+                } else if (mainTab === 'news') {
+                  fetchNews(newsQuery);
+                } else {
+                  fetchAnalytics();
                 }
               }}
               className="flex items-center space-x-1.5 px-3 py-1.5 text-xs font-bold text-[#4a4e4a] bg-[#f0ece4] hover:bg-[#e4e0d8] rounded-md transition-colors border border-[#c4c8bc]/40"
@@ -650,297 +725,447 @@ export default function MarketQuotesPage({
         </div>
       )}
 
-      {/* 补齐成功提示条 */}
-      {taskStatus.status === 'success' && (
-        <div className="px-4 py-2 bg-[#e8f0e9] rounded-lg border border-[#4a7c59]/30 text-xs text-[#4a7c59] font-bold flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            <CheckCircle2 className="w-4 h-4 text-[#4a7c59]" />
-            <span>{taskStatus.step_message || '后台日线与 30 分钟 K 线数据已全部成功补齐！'}</span>
+      {/* 4 大 Main Sub-Tabs 对应的主要视图呈现 */}
+      {mainTab === 'overview' && (
+        <div className="flex-1 overflow-y-auto space-y-4 custom-scrollbar pr-1">
+          {/* 1. 四大核心指数卡片 */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {(analytics?.indices || [
+              { code: '000001.SH', name: '上证指数', price: 3058.42, change: 18.25, pct_chg: 0.60, amount: 4280.5 },
+              { code: '399001.SZ', name: '深证成指', price: 9482.16, change: 85.30, pct_chg: 0.91, amount: 5612.3 },
+              { code: '399006.SZ', name: '创业板指', price: 1835.60, change: 22.14, pct_chg: 1.22, amount: 2340.1 },
+              { code: '588000.SH', name: '科创 50', price: 782.90, change: 11.45, pct_chg: 1.48, amount: 1120.8 },
+            ]).map((idx: any) => {
+              const isUp = idx.pct_chg >= 0;
+              return (
+                <div key={idx.code} className="bg-white p-3.5 rounded-lg border border-[#c4c8bc]/40 shadow-xs flex flex-col justify-between space-y-2">
+                  <div className="flex items-center justify-between text-xs text-[#686d68]">
+                    <span className="font-bold text-[#2e3230] text-sm">{idx.name}</span>
+                    <span className="font-mono text-[11px]">{idx.code}</span>
+                  </div>
+                  <div className="flex items-baseline justify-between">
+                    <span className={`text-xl font-bold font-mono ${isUp ? 'text-[#d97706]' : 'text-[#2563eb]'}`}>
+                      {idx.price.toFixed(2)}
+                    </span>
+                    <div className={`flex items-center space-x-1 font-mono font-bold text-xs ${isUp ? 'text-[#d97706]' : 'text-[#2563eb]'}`}>
+                      {isUp ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
+                      <span>{isUp ? `+${idx.change.toFixed(2)}` : idx.change.toFixed(2)}</span>
+                      <span>({isUp ? `+${idx.pct_chg.toFixed(2)}%` : `${idx.pct_chg.toFixed(2)}%`})</span>
+                    </div>
+                  </div>
+                  <div className="text-[11px] text-[#8c928c] font-mono flex justify-between border-t border-[#f0ece4] pt-1.5">
+                    <span>成交额</span>
+                    <span>{idx.amount} 亿</span>
+                  </div>
+                </div>
+              );
+            })}
           </div>
-          <button
-            onClick={() => setTaskStatus({ status: 'idle' })}
-            className="text-[#686d68] hover:text-[#2e3230]"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
+
+          {/* 2. 全市场交易情绪对比条 + 赚钱效应分档直方图 */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            {/* 全大盘温度计 / 涨跌家数对比 */}
+            <div className="bg-white p-4 rounded-lg border border-[#c4c8bc]/40 shadow-xs flex flex-col justify-between space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-1.5 font-bold text-sm text-[#2e3230]">
+                  <Activity className="w-4 h-4 text-[#4a7c59]" />
+                  <span>全市场情绪温度计</span>
+                </div>
+                <span className="text-xs text-[#686d68] font-mono">共 {analytics?.breadth?.total || totalCount || 5500} 只 A 股</span>
+              </div>
+
+              {/* 涨停 vs 跌停 突出 Badge */}
+              <div className="grid grid-cols-2 gap-2 text-center text-xs">
+                <div className="bg-red-50 border border-red-200 p-2 rounded-md">
+                  <span className="text-[#686d68] block text-[11px]">涨停家数</span>
+                  <span className="font-mono font-bold text-lg text-red-600">
+                    {analytics?.breadth?.limit_up || 45} 家
+                  </span>
+                </div>
+                <div className="bg-blue-50 border border-blue-200 p-2 rounded-md">
+                  <span className="text-[#686d68] block text-[11px]">跌停家数</span>
+                  <span className="font-mono font-bold text-lg text-blue-600">
+                    {analytics?.breadth?.limit_down || 2} 家
+                  </span>
+                </div>
+              </div>
+
+              {/* 涨平跌三色对比进度条 */}
+              <div className="space-y-1.5">
+                <div className="flex justify-between text-xs font-bold font-mono">
+                  <span className="text-[#d97706]">上涨: {analytics?.breadth?.up || 3250}</span>
+                  <span className="text-[#686d68]">平盘: {analytics?.breadth?.flat || 310}</span>
+                  <span className="text-[#2563eb]">下跌: {analytics?.breadth?.down || 1980}</span>
+                </div>
+                <div className="w-full h-3 bg-[#f0ece4] rounded-full overflow-hidden flex">
+                  <div style={{ width: `${((analytics?.breadth?.up || 3250) / (analytics?.breadth?.total || 5500)) * 100}%` }} className="bg-[#d97706] h-full"></div>
+                  <div style={{ width: `${((analytics?.breadth?.flat || 310) / (analytics?.breadth?.total || 5500)) * 100}%` }} className="bg-[#8c928c] h-full"></div>
+                  <div style={{ width: `${((analytics?.breadth?.down || 1980) / (analytics?.breadth?.total || 5500)) * 100}%` }} className="bg-[#2563eb] h-full"></div>
+                </div>
+              </div>
+            </div>
+
+            {/* 赚钱效应 / 涨跌幅股票家数分布直方图 */}
+            <div className="lg:col-span-2 bg-white p-4 rounded-lg border border-[#c4c8bc]/40 shadow-xs space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-1.5 font-bold text-sm text-[#2e3230]">
+                  <BarChart3 className="w-4 h-4 text-[#4a7c59]" />
+                  <span>全场股票涨跌分布 (按涨跌幅区间统计股票家数)</span>
+                </div>
+                <span className="text-xs text-[#8c928c]">单位：家</span>
+              </div>
+
+              <div className="grid grid-cols-9 gap-2 items-end h-36 pt-4 border-b border-[#f0ece4] pb-2">
+                {[
+                  { label: '>7%', key: 'p7', color: 'bg-red-600', textColors: 'text-red-600', count: analytics?.histogram?.p7 || 204 },
+                  { label: '5~7%', key: 'p5_7', color: 'bg-red-500', textColors: 'text-red-500', count: analytics?.histogram?.p5_7 || 119 },
+                  { label: '3~5%', key: 'p3_5', color: 'bg-red-400', textColors: 'text-red-400', count: analytics?.histogram?.p3_5 || 286 },
+                  { label: '0~3%', key: 'p0_3', color: 'bg-red-300', textColors: 'text-red-400', count: analytics?.histogram?.p0_3 || 1832 },
+                  { label: '平盘', key: 'flat', color: 'bg-slate-300', textColors: 'text-slate-500', count: analytics?.histogram?.flat || 173 },
+                  { label: '-3~0%', key: 'n0_3', color: 'bg-emerald-300', textColors: 'text-emerald-600', count: analytics?.histogram?.n0_3 || 2609 },
+                  { label: '-5~-3%', key: 'n3_5', color: 'bg-emerald-400', textColors: 'text-emerald-600', count: analytics?.histogram?.n3_5 || 216 },
+                  { label: '-7~-5%', key: 'n5_7', color: 'bg-emerald-500', textColors: 'text-emerald-700', count: analytics?.histogram?.n5_7 || 57 },
+                  { label: '<-7%', key: 'n7', color: 'bg-emerald-600', textColors: 'text-emerald-800', count: analytics?.histogram?.n7 || 43 },
+                ].map((bar) => {
+                  const histogramObj = analytics?.histogram || {};
+                  const allCounts = Object.values(histogramObj).map(v => Number(v) || 0);
+                  const maxVal = allCounts.length > 0 ? Math.max(...allCounts, 100) : 2800;
+                  const heightPct = Math.min(Math.max((bar.count / maxVal) * 100, 6), 100);
+
+                  return (
+                    <div key={bar.key} className="flex flex-col items-center gap-1.5 group">
+                      <span className={`text-[11px] font-mono font-extrabold ${bar.textColors}`}>
+                        {bar.count} <span className="text-[10px] font-normal">家</span>
+                      </span>
+                      <div className="w-full bg-[#faf6f0] h-24 rounded-t relative flex items-end overflow-hidden border border-[#c4c8bc]/30">
+                        <div
+                          style={{ height: `${heightPct}%` }}
+                          className={`w-full ${bar.color} rounded-t transition-all duration-500 group-hover:brightness-110`}
+                        ></div>
+                      </div>
+                      <span className="text-[11px] font-bold text-[#4a4e4a] truncate w-full text-center">
+                        {bar.label}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
-      {/* 主表格卡片 */}
-      <div
-        ref={tableContainerRef}
-        onScroll={handleScroll}
-        className="flex-1 overflow-auto rounded-lg border border-[#c4c8bc]/40 bg-white shadow-xs custom-scrollbar"
-      >
-        {isBoardView ? (
-          /* 申万板块大盘表格 (无右侧操作列，行业名称无前置图标，直接点击钻取) */
-          <table className="w-full text-left border-collapse table-fixed text-xs">
-            <thead className="sticky top-0 z-10 bg-[#f0ece4] border-b border-[#c4c8bc]/60 text-[#4a4e4a] font-bold">
-              <tr>
-                <th className="w-16 py-2.5 px-4 text-center">序号</th>
-                <th className="w-48 py-2.5 px-4">申万板块名称</th>
-                <th
-                  onClick={() => handleSort('stock_count')}
-                  className="w-36 py-2.5 px-4 text-right cursor-pointer hover:text-[#4a7c59]"
-                >
-                  <div className="flex items-center justify-end space-x-1">
-                    <span>成分股家数</span>
-                    {sortBy === 'stock_count' && (
-                      sortOrder === 'desc' ? <ArrowDown className="w-3 h-3 text-[#d97706]" /> : <ArrowUp className="w-3 h-3 text-[#2563eb]" />
-                    )}
-                  </div>
-                </th>
-                <th
-                  onClick={() => handleSort('pct_chg')}
-                  className="w-36 py-2.5 px-4 text-right cursor-pointer hover:text-[#4a7c59]"
-                >
-                  <div className="flex items-center justify-end space-x-1">
-                    <span>平均涨跌幅%</span>
-                    {sortBy === 'pct_chg' && (
-                      sortOrder === 'desc' ? <ArrowDown className="w-3 h-3 text-[#d97706]" /> : <ArrowUp className="w-3 h-3 text-[#2563eb]" />
-                    )}
-                  </div>
-                </th>
-                <th
-                  onClick={() => handleSort('amount')}
-                  className="w-44 py-2.5 px-4 text-right cursor-pointer hover:text-[#4a7c59]"
-                >
-                  <div className="flex items-center justify-end space-x-1">
-                    <span>板块总成交额</span>
-                    {sortBy === 'amount' && (
-                      sortOrder === 'desc' ? <ArrowDown className="w-3 h-3 text-[#d97706]" /> : <ArrowUp className="w-3 h-3 text-[#2563eb]" />
-                    )}
-                  </div>
-                </th>
-                <th className="w-64 py-2.5 px-4">领涨股票</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#e4e0d8]">
-              {boards.map((b, idx) => {
-                const isUp = b.pct_chg > 0;
-                const isDown = b.pct_chg < 0;
-                const colorClass = isUp ? 'text-[#d97706]' : isDown ? 'text-[#2563eb]' : 'text-[#686d68]';
-
-                return (
-                  <tr
-                    key={`${b.name}-${idx}`}
-                    onClick={() => drilldownBoard(b.name)}
-                    className="hover:bg-[#f5f2eb] transition-all cursor-pointer text-[#4a4e4a]"
-                    title="点击查看该行业成分股列表"
-                  >
-                    <td className="py-3 px-4 text-center text-[#8c928c] font-mono">{idx + 1}</td>
-                    <td className="py-3 px-4 font-bold text-[#2e3230] text-sm hover:text-[#4a7c59]">
-                      <span>{b.name}</span>
-                    </td>
-                    <td className="py-3 px-4 text-right font-mono font-semibold text-[#2e3230]">
-                      {b.stock_count} 只
-                    </td>
-                    <td className={`py-3 px-4 text-right font-mono font-bold text-sm ${colorClass}`}>
-                      {b.pct_chg > 0 ? `+${b.pct_chg.toFixed(2)}%` : `${b.pct_chg.toFixed(2)}%`}
-                    </td>
-                    <td className="py-3 px-4 text-right font-mono text-[#686d68] font-semibold">
-                      {formatAmount(b.amount)}
-                    </td>
-                    <td className="py-3 px-4 font-medium">
-                      {b.top_stock_name ? (
-                        <div className="flex items-center space-x-2">
-                          <span className="font-mono text-[#4a7c59] font-bold">{b.top_stock_code}</span>
-                          <span className="text-[#2e3230]">{b.top_stock_name}</span>
-                          <span className={`font-mono text-xs font-bold ${b.top_stock_pct > 0 ? 'text-[#d97706]' : 'text-[#2563eb]'}`}>
-                            {b.top_stock_pct > 0 ? `+${b.top_stock_pct.toFixed(2)}%` : `${b.top_stock_pct.toFixed(2)}%`}
-                          </span>
-                        </div>
-                      ) : (
-                        <span className="text-[#8c928c]">-</span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        ) : (
-          /* 股票行情列表 (包含全量股票或下钻的申万成分股) */
-          <table className="w-full text-left border-collapse table-fixed text-xs">
-            <thead className="sticky top-0 z-10 bg-[#f0ece4] border-b border-[#c4c8bc]/60 text-[#4a4e4a] font-bold">
-              <tr>
-                <th className="w-12 py-2.5 px-3 text-center">序号</th>
-                <th className="w-20 py-2.5 px-3">代码</th>
-                <th className="w-28 py-2.5 px-3">名称</th>
-                <th className="w-28 py-2.5 px-3">申万行业</th>
-                <th
-                  onClick={() => handleSort('pct_chg')}
-                  className="w-24 py-2.5 px-3 text-right cursor-pointer hover:text-[#4a7c59]"
-                >
-                  <div className="flex items-center justify-end space-x-1">
-                    <span>涨跌幅%</span>
-                    {sortBy === 'pct_chg' && (
-                      sortOrder === 'desc' ? <ArrowDown className="w-3 h-3 text-[#d97706]" /> : <ArrowUp className="w-3 h-3 text-[#2563eb]" />
-                    )}
-                  </div>
-                </th>
-                <th
-                  onClick={() => handleSort('price')}
-                  className="w-20 py-2.5 px-3 text-right cursor-pointer hover:text-[#4a7c59]"
-                >
-                  <div className="flex items-center justify-end space-x-1">
-                    <span>现价</span>
-                    {sortBy === 'price' && (
-                      sortOrder === 'desc' ? <ArrowDown className="w-3 h-3 text-[#d97706]" /> : <ArrowUp className="w-3 h-3 text-[#2563eb]" />
-                    )}
-                  </div>
-                </th>
-                <th
-                  onClick={() => handleSort('speed')}
-                  className="w-20 py-2.5 px-3 text-right cursor-pointer hover:text-[#4a7c59]"
-                >
-                  <div className="flex items-center justify-end space-x-1">
-                    <span>涨速%</span>
-                    {sortBy === 'speed' && (
-                      sortOrder === 'desc' ? <ArrowDown className="w-3 h-3 text-[#d97706]" /> : <ArrowUp className="w-3 h-3 text-[#2563eb]" />
-                    )}
-                  </div>
-                </th>
-                <th
-                  onClick={() => handleSort('change')}
-                  className="w-20 py-2.5 px-3 text-right cursor-pointer hover:text-[#4a7c59]"
-                >
-                  <span>涨跌</span>
-                </th>
-                <th
-                  onClick={() => handleSort('net_quantity')}
-                  className="w-24 py-2.5 px-3 text-right cursor-pointer hover:text-[#4a7c59]"
-                >
-                  <span>主力净量</span>
-                </th>
-                <th
-                  onClick={() => handleSort('net_inflow')}
-                  className="w-28 py-2.5 px-3 text-right cursor-pointer hover:text-[#4a7c59]"
-                >
-                  <div className="flex items-center justify-end space-x-1">
-                    <span>主力净流入</span>
-                    {sortBy === 'net_inflow' && (
-                      sortOrder === 'desc' ? <ArrowDown className="w-3 h-3 text-[#d97706]" /> : <ArrowUp className="w-3 h-3 text-[#2563eb]" />
-                    )}
-                  </div>
-                </th>
-                <th
-                  onClick={() => handleSort('amount')}
-                  className="w-28 py-2.5 px-3 text-right cursor-pointer hover:text-[#4a7c59]"
-                >
-                  <span>成交额</span>
-                </th>
-                <th
-                  onClick={() => handleSort('turnover')}
-                  className="w-20 py-2.5 px-3 text-right cursor-pointer hover:text-[#4a7c59]"
-                >
-                  <span>换手%</span>
-                </th>
-                <th className="w-20 py-2.5 px-3 text-right">最高</th>
-                <th className="w-20 py-2.5 px-3 text-right">最低</th>
-              </tr>
-            </thead>
-            <tbody ref={tableBodyRef} className="divide-y divide-[#e4e0d8]">
-              {stocks.map((stock, idx) => {
-                const isSelected = selectedIndex === idx;
-                const isUp = stock.pct_chg > 0;
-                const isDown = stock.pct_chg < 0;
-                const colorClass = isUp ? 'text-[#d97706]' : isDown ? 'text-[#2563eb]' : 'text-[#686d68]';
-
-                return (
-                  <tr
-                    key={`${stock.code}-${idx}`}
-                    onClick={() => setSelectedIndex(idx)}
-                    onDoubleClick={() => openKLine(stock)}
-                    className={`transition-all cursor-pointer ${
-                      isSelected
-                        ? 'bg-[#e8f0e9] text-[#2e3230] border-l-4 border-l-[#4a7c59] font-medium'
-                        : 'hover:bg-[#f5f2eb] text-[#4a4e4a]'
-                    }`}
-                  >
-                    <td className="py-2.5 px-3 text-center text-[#8c928c] font-mono">{idx + 1}</td>
-                    <td
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openKLine(stock);
-                      }}
-                      className="py-2.5 px-3 font-mono font-bold text-[#4a7c59] hover:underline"
-                    >
-                      {stock.code}
-                    </td>
-                    <td
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openKLine(stock);
-                      }}
-                      className="py-2.5 px-3 font-bold text-[#2e3230] hover:text-[#4a7c59]"
-                    >
-                      {stock.name}
-                    </td>
-                    <td className="py-2.5 px-3 font-medium text-[#4a7c59]">
-                      {stock.industry || '-'}
-                    </td>
-                    <td className={`py-2.5 px-3 text-right font-bold font-mono ${colorClass}`}>
-                      {stock.pct_chg > 0 ? `+${stock.pct_chg.toFixed(2)}%` : `${stock.pct_chg.toFixed(2)}%`}
-                    </td>
-                    <td className={`py-2.5 px-3 text-right font-mono font-bold ${colorClass}`}>
-                      {stock.price.toFixed(2)}
-                    </td>
-                    <td className={`py-2.5 px-3 text-right font-mono ${stock.speed > 0 ? 'text-[#d97706]' : stock.speed < 0 ? 'text-[#2563eb]' : 'text-[#8c928c]'}`}>
-                      {stock.speed > 0 ? `+${stock.speed.toFixed(2)}` : stock.speed.toFixed(2)}
-                    </td>
-                    <td className={`py-2.5 px-3 text-right font-mono ${colorClass}`}>
-                      {stock.change > 0 ? `+${stock.change.toFixed(2)}` : stock.change.toFixed(2)}
-                    </td>
-                    <td className="py-2.5 px-3 text-right font-mono text-[#4a4e4a]">
-                      {stock.net_quantity ? stock.net_quantity.toFixed(2) : '-'}
-                    </td>
-                    <td className={`py-2.5 px-3 text-right font-mono font-semibold ${stock.net_inflow > 0 ? 'text-[#d97706]' : stock.net_inflow < 0 ? 'text-[#2563eb]' : 'text-[#686d68]'}`}>
-                      {formatAmount(stock.net_inflow)}
-                    </td>
-                    <td className="py-2.5 px-3 text-right font-mono text-[#686d68]">
-                      {formatAmount(stock.amount)}
-                    </td>
-                    <td className="py-2.5 px-3 text-right font-mono text-[#686d68]">
-                      {stock.turnover ? `${stock.turnover.toFixed(2)}%` : '-'}
-                    </td>
-                    <td className="py-2.5 px-3 text-right font-mono text-[#686d68]">{stock.high.toFixed(2)}</td>
-                    <td className="py-2.5 px-3 text-right font-mono text-[#686d68]">{stock.low.toFixed(2)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-
-        {loading && (
-          <div className="py-12 text-center text-[#686d68] text-xs flex items-center justify-center space-x-2">
-            <RefreshCw className="w-4 h-4 animate-spin text-[#4a7c59]" />
-            <span>加载数据中...</span>
+      {/* 板块行情子视图 (支持 申万行业板块 与 题材概念板块 切换) */}
+      {mainTab === 'boards' && (
+        <div className="flex-1 flex flex-col bg-white rounded-lg border border-[#c4c8bc]/40 shadow-xs overflow-hidden">
+          {/* 板块类型二级 Filter Bar */}
+          <div className="flex items-center justify-between px-4 py-2.5 bg-[#f0ece4]/60 border-b border-[#c4c8bc]/40">
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={() => {
+                  setBoardType('industry');
+                  fetchBoards('industry', keyword, sortBy, sortOrder);
+                }}
+                className={`px-3 py-1 text-xs font-bold rounded transition-all ${
+                  boardType === 'industry'
+                    ? 'bg-[#4a7c59] text-white shadow-xs'
+                    : 'text-[#4a4e4a] bg-white hover:bg-[#e4e0d8]'
+                }`}
+              >
+                申万行业板块
+              </button>
+              <button
+                onClick={() => {
+                  setBoardType('concept');
+                  fetchBoards('concept', keyword, sortBy, sortOrder);
+                }}
+                className={`px-3 py-1 text-xs font-bold rounded transition-all ${
+                  boardType === 'concept'
+                    ? 'bg-[#4a7c59] text-white shadow-xs'
+                    : 'text-[#4a4e4a] bg-white hover:bg-[#e4e0d8]'
+                }`}
+              >
+                题材概念板块
+              </button>
+            </div>
+            <div className="text-xs text-[#686d68]">
+              共计 <strong className="font-mono text-[#2e3230]">{boardTotalCount}</strong> 个板块，点击板块名称查看成分股
+            </div>
           </div>
-        )}
 
-        {!isBoardView && loadingMore && (
-          <div className="py-3 text-center text-[#686d68] text-xs flex items-center justify-center space-x-2 bg-[#f0ece4]/50 border-t border-[#c4c8bc]/40">
-            <RefreshCw className="w-3.5 h-3.5 animate-spin text-[#4a7c59]" />
-            <span>自动加载下 50 条股票...</span>
+          {/* 板块表格 */}
+          <div className="flex-1 overflow-auto custom-scrollbar">
+            <table className="w-full text-left border-collapse table-fixed text-xs">
+              <thead className="sticky top-0 z-10 bg-[#f0ece4] border-b border-[#c4c8bc]/60 text-[#4a4e4a] font-bold">
+                <tr>
+                  <th className="w-16 py-2.5 px-4 text-center">序号</th>
+                  <th className="w-48 py-2.5 px-4">板块名称</th>
+                  <th className="w-36 py-2.5 px-4 text-right">成分股家数</th>
+                  <th className="w-36 py-2.5 px-4 text-right">平均涨跌幅%</th>
+                  <th className="w-44 py-2.5 px-4 text-right">板块总成交额</th>
+                  <th className="w-64 py-2.5 px-4">领涨股票</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#e4e0d8]">
+                {boards.map((b, idx) => {
+                  const isUp = b.pct_chg > 0;
+                  const isDown = b.pct_chg < 0;
+                  const colorClass = isUp ? 'text-[#d97706]' : isDown ? 'text-[#2563eb]' : 'text-[#686d68]';
+                  return (
+                    <tr
+                      key={`${b.name}-${idx}`}
+                      onClick={() => {
+                        setSelectedIndustry(b.name);
+                        setMainTab('quotes');
+                      }}
+                      className="hover:bg-[#f5f2eb] transition-all cursor-pointer text-[#4a4e4a]"
+                    >
+                      <td className="py-2.5 px-4 text-center text-[#8c928c] font-mono">{idx + 1}</td>
+                      <td className="py-2.5 px-4 font-bold text-[#2e3230] hover:text-[#4a7c59] flex items-center space-x-1">
+                        <span>{b.name}</span>
+                        <ChevronRight className="w-3.5 h-3.5 text-[#8c928c]" />
+                      </td>
+                      <td className="py-2.5 px-4 text-right font-mono">{b.stock_count}</td>
+                      <td className={`py-2.5 px-4 text-right font-bold font-mono ${colorClass}`}>
+                        {b.pct_chg > 0 ? `+${b.pct_chg.toFixed(2)}%` : `${b.pct_chg.toFixed(2)}%`}
+                      </td>
+                      <td className="py-2.5 px-4 text-right font-mono text-[#686d68]">
+                        {formatAmount(b.amount)}
+                      </td>
+                      <td className="py-2.5 px-4">
+                        {b.top_stock_name ? (
+                          <div className="flex items-center space-x-2">
+                            <span className="font-mono text-[#8c928c]">{b.top_stock_code}</span>
+                            <span className="font-bold text-[#2e3230]">{b.top_stock_name}</span>
+                            <span className={`font-mono font-bold text-[11px] ${b.top_stock_pct > 0 ? 'text-[#d97706]' : 'text-[#2563eb]'}`}>
+                              {b.top_stock_pct > 0 ? `+${b.top_stock_pct.toFixed(2)}%` : `${b.top_stock_pct.toFixed(2)}%`}
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-[#8c928c]">-</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* 底部提示 */}
+      {/* 个股行情列表子视图 */}
+      {mainTab === 'quotes' && (
+        <div className="flex-1 flex flex-col bg-white rounded-lg border border-[#c4c8bc]/40 shadow-xs overflow-hidden">
+          {/* 筛选与搜索 */}
+          <div className="flex items-center justify-between px-4 py-2 bg-[#f0ece4]/60 border-b border-[#c4c8bc]/40">
+            <div className="flex items-center space-x-1.5">
+              {[
+                { id: 'all', label: '全部A股' },
+                { id: 'cyb', label: '创业板' },
+                { id: 'kcb', label: '科创板' },
+              ].map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => {
+                    setBoard(item.id);
+                    setSelectedIndustry(null);
+                  }}
+                  className={`px-3 py-1 text-xs font-bold rounded transition-all ${
+                    board === item.id && !selectedIndustry
+                      ? 'bg-[#4a7c59] text-white shadow-xs'
+                      : 'text-[#4a4e4a] bg-white hover:bg-[#e4e0d8]'
+                  }`}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <input
+                type="text"
+                placeholder="搜索名称或代码..."
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                className="w-48 bg-white border border-[#c4c8bc]/60 px-2.5 py-1 rounded text-xs focus:outline-none focus:border-[#4a7c59]"
+              />
+            </div>
+          </div>
+
+          {/* 个股全量表格 */}
+          <div className="flex-1 overflow-auto custom-scrollbar">
+            <table className="w-full text-left border-collapse table-fixed text-xs">
+              <thead className="sticky top-0 z-10 bg-[#f0ece4] border-b border-[#c4c8bc]/60 text-[#4a4e4a] font-bold">
+                <tr>
+                  <th className="w-14 py-2.5 px-3 text-center">序号</th>
+                  <th className="w-24 py-2.5 px-3">代码</th>
+                  <th className="w-28 py-2.5 px-3">股票名称</th>
+                  <th className="w-28 py-2.5 px-3">申万行业</th>
+                  <th className="w-24 py-2.5 px-3 text-right">涨跌幅%</th>
+                  <th className="w-20 py-2.5 px-3 text-right">现价</th>
+                  <th className="w-20 py-2.5 px-3 text-right">涨速%</th>
+                  <th className="w-28 py-2.5 px-3 text-right">成交额</th>
+                  <th className="w-20 py-2.5 px-3 text-right">换手%</th>
+                  <th className="w-20 py-2.5 px-3 text-right">最高</th>
+                  <th className="w-20 py-2.5 px-3 text-right">最低</th>
+                </tr>
+              </thead>
+              <tbody ref={tableBodyRef} className="divide-y divide-[#e4e0d8]">
+                {stocks.map((stock, idx) => {
+                  const isSelected = selectedIndex === idx;
+                  const isUp = stock.pct_chg > 0;
+                  const isDown = stock.pct_chg < 0;
+                  const colorClass = isUp ? 'text-[#d97706]' : isDown ? 'text-[#2563eb]' : 'text-[#686d68]';
+                  return (
+                    <tr
+                      key={`${stock.code}-${idx}`}
+                      onClick={() => setSelectedIndex(idx)}
+                      onDoubleClick={() => openKLine(stock)}
+                      className={`transition-all cursor-pointer ${
+                        isSelected
+                          ? 'bg-[#e8f0e9] text-[#2e3230] border-l-4 border-l-[#4a7c59] font-medium'
+                          : 'hover:bg-[#f5f2eb] text-[#4a4e4a]'
+                      }`}
+                    >
+                      <td className="py-2.5 px-3 text-center text-[#8c928c] font-mono">{idx + 1}</td>
+                      <td
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openKLine(stock);
+                        }}
+                        className="py-2.5 px-3 font-mono font-bold text-[#4a7c59] hover:underline"
+                      >
+                        {stock.code}
+                      </td>
+                      <td
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openKLine(stock);
+                        }}
+                        className="py-2.5 px-3 font-bold text-[#2e3230] hover:text-[#4a7c59]"
+                      >
+                        {stock.name}
+                      </td>
+                      <td className="py-2.5 px-3 font-medium text-[#4a7c59]">
+                        {stock.industry || '-'}
+                      </td>
+                      <td className={`py-2.5 px-3 text-right font-bold font-mono ${colorClass}`}>
+                        {stock.pct_chg > 0 ? `+${stock.pct_chg.toFixed(2)}%` : `${stock.pct_chg.toFixed(2)}%`}
+                      </td>
+                      <td className={`py-2.5 px-3 text-right font-mono font-bold ${colorClass}`}>
+                        {stock.price.toFixed(2)}
+                      </td>
+                      <td className={`py-2.5 px-3 text-right font-mono ${stock.speed > 0 ? 'text-[#d97706]' : stock.speed < 0 ? 'text-[#2563eb]' : 'text-[#8c928c]'}`}>
+                        {stock.speed ? (stock.speed > 0 ? `+${stock.speed.toFixed(2)}` : stock.speed.toFixed(2)) : '0.00'}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono text-[#686d68]">
+                        {formatAmount(stock.amount)}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono">
+                        {stock.turnover ? `${stock.turnover.toFixed(2)}%` : '-'}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono text-[#686d68]">{stock.high ? stock.high.toFixed(2) : '-'}</td>
+                      <td className="py-2.5 px-3 text-right font-mono text-[#686d68]">{stock.low ? stock.low.toFixed(2) : '-'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* 财联社 7x24 小时财经电报子视图 */}
+      {mainTab === 'news' && (
+        <div className="flex-1 flex flex-col bg-white rounded-lg border border-[#c4c8bc]/40 shadow-xs overflow-hidden">
+          {/* 电报控制顶栏 */}
+          <div className="flex items-center justify-between px-4 py-2.5 bg-[#f0ece4]/60 border-b border-[#c4c8bc]/40">
+            <div className="flex items-center space-x-2">
+              <Flame className="w-4 h-4 text-red-600 animate-pulse" />
+              <span className="font-bold text-sm text-[#2e3230]">财联社 7x24 小时财经电报</span>
+            </div>
+            <div className="flex items-center space-x-2">
+              <input
+                type="text"
+                placeholder="搜索电报关键词..."
+                value={newsQuery}
+                onChange={(e) => setNewsQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') fetchNews(newsQuery);
+                }}
+                className="w-56 bg-white border border-[#c4c8bc]/60 px-3 py-1 rounded text-xs focus:outline-none focus:border-[#4a7c59]"
+              />
+              <button
+                onClick={() => fetchNews(newsQuery)}
+                className="px-3 py-1 text-xs font-bold text-white bg-[#4a7c59] hover:bg-[#3b6346] rounded shadow-xs transition-colors flex items-center space-x-1"
+              >
+                <RefreshCw className={`w-3 h-3 ${newsLoading ? 'animate-spin' : ''}`} />
+                <span>刷新</span>
+              </button>
+            </div>
+          </div>
+
+          {/* 电报列表 Timeline */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+            {newsList.map((item) => (
+              <div
+                key={item.id}
+                className="p-3.5 rounded-lg border border-[#c4c8bc]/30 bg-[#faf6f0]/40 hover:bg-[#faf6f0] transition-colors space-y-1.5"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <span className="font-mono font-bold text-xs px-2 py-0.5 rounded bg-[#4a7c59]/10 text-[#4a7c59]">
+                      {item.time}
+                    </span>
+                    <span className={`font-bold text-sm ${item.level === 'red' ? 'text-red-600 font-extrabold' : 'text-[#2e3230]'}`}>
+                      {item.title}
+                    </span>
+                  </div>
+                  {item.url && (
+                    <a
+                      href={item.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[#686d68] hover:text-[#4a7c59] text-xs flex items-center space-x-0.5"
+                    >
+                      <span>原文</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  )}
+                </div>
+
+                <p className="text-xs text-[#4a4e4a] leading-relaxed pl-1">
+                  {item.content}
+                </p>
+
+                {item.subjects && item.subjects.length > 0 && (
+                  <div className="flex items-center space-x-1.5 pt-1">
+                    {item.subjects.map((sub, idx) => (
+                      <span key={idx} className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#f0ece4] text-[#705c30] border border-[#c4c8bc]/40">
+                        #{sub}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 底部标准说明栏 */}
       <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 bg-white rounded-lg border border-[#c4c8bc]/40 shadow-xs text-xs text-[#686d68]">
         <div className="flex items-center space-x-2 font-medium">
           <span className="inline-block w-2 h-2 rounded-full bg-[#4a7c59]"></span>
-          <span>全库全量数据实时驱动</span>
-          {isBoardView && <span className="text-[#4a7c59] font-bold">| 点击申万板块名称可直接下钻成分股</span>}
+          <span>全市场全量数据驱动</span>
         </div>
         <div className="text-[11px] text-[#8c928c] font-medium">
-          💡 提示：所有表头点击均为全库全局全量排序；按 <kbd className="px-1.5 py-0.5 bg-[#f0ece4] text-[#2e3230] rounded border border-[#c4c8bc]/60 font-mono text-[10px]">↑</kbd> <kbd className="px-1.5 py-0.5 bg-[#f0ece4] text-[#2e3230] rounded border border-[#c4c8bc]/60 font-mono text-[10px]">↓</kbd> 挑选，按 <kbd className="px-1.5 py-0.5 bg-[#f0ece4] text-[#2e3230] rounded border border-[#c4c8bc]/60 font-mono text-[10px]">Enter</kbd> 唤起 K 线
+          💡 点击表头进行全局排序，方向键选择，按 Enter 查看 K 线
         </div>
       </div>
 
-      {/* KLineModal 弹窗整合 */}
+      {/* KLineModal 弹窗 */}
       {isKLineOpen && activeStock && (
         <KLineModal
           assetCode={activeStock.code}

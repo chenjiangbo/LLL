@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from datetime import time as dtime
 
 import pandas as pd
 
@@ -11,9 +12,19 @@ from backend.screening.config import ScreeningConfig
 from backend.screening.data_sync import ScreeningDataSync
 from backend.screening.feature_engine import FeatureEngine
 from backend.screening.service import CandidateScreeningService
+from backend.screening.storage import _completed_30m_slots
 
 
 class ScreeningFeatureTests(unittest.TestCase):
+    def test_completed_30m_slots_follow_a_share_sessions(self) -> None:
+        self.assertEqual(_completed_30m_slots(dtime(9, 59)), [])
+        self.assertEqual(_completed_30m_slots(dtime(11, 35)), ["10:00", "10:30", "11:00", "11:30"])
+        self.assertEqual(_completed_30m_slots(dtime(14, 5)), ["10:00", "10:30", "11:00", "11:30", "13:30", "14:00"])
+        self.assertEqual(
+            _completed_30m_slots(dtime(15, 5)),
+            ["10:00", "10:30", "11:00", "11:30", "13:30", "14:00", "14:30", "15:00"],
+        )
+
     def test_prev_high_does_not_include_today(self) -> None:
         rows = _asset_rows("000001.SZ", "stock", "测试股票", 80, base=10.0)
         rows[-1]["high"] = 100.0

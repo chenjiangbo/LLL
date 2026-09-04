@@ -1,0 +1,207 @@
+<html lang="zh-CN"><head><meta charset="utf-8"/><meta content="width=device-width, initial-scale=1.0" name="viewport"/><style>@layer base{html,body{margin:0;padding:0;}body{overscroll-behavior:none;}main>:first-child{margin-top:0!important;}main>:last-child{margin-bottom:0!important;}}::-webkit-scrollbar{display:none;}</style><script src="https://cdn.tailwindcss.com"></script><script id="tailwind-config">tailwind.config={theme:{extend:{"colors":{"secondary-container":"#a1f4c8","tertiary":"#713638","outline-variant":"#bfc9c1","surface-container":"#edeeef","tertiary-fixed-dim":"#ffb3b3","semantic-negative":"#ae2012","on-background":"#191c1d","inverse-on-surface":"#f0f1f2","tertiary-fixed":"#ffdad9","on-surface-variant":"#404943","surface-container-high":"#e7e8e9","inverse-primary":"#95d4b3","primary-fixed":"#b1f0ce","on-primary-fixed-variant":"#0e5138","background":"#f8f9fa","error":"#ba1a1a","on-primary":"#ffffff","on-tertiary-container":"#ffcfce","surface-container-lowest":"#ffffff","text-slate-muted":"#52616b","semantic-positive":"#2d6a4f","on-tertiary-fixed":"#390b0e","secondary-fixed":"#a1f4c8","primary-fixed-dim":"#95d4b3","on-secondary-fixed-variant":"#005236","outline":"#707973","on-surface":"#191c1d","surface-dim":"#d9dadb","on-tertiary":"#ffffff","real-account-badge":"#9b2226","primary":"#0f5238","tertiary-container":"#8d4d4e","k-line-green":"#26a69a","surface-container-highest":"#e1e3e4","error-container":"#ffdad6","on-secondary-container":"#1b724f","on-tertiary-fixed-variant":"#6f3537","on-secondary-fixed":"#002113","on-secondary":"#ffffff","k-line-red":"#ef5350","secondary":"#116c4a","semantic-warning":"#e67e22","primary-container":"#2d6a4f","background-cream":"#f8f9fa","surface-tint":"#2c694e","secondary-fixed-dim":"#86d7ad","on-primary-fixed":"#002114","surface-variant":"#e1e3e4","on-error-container":"#93000a","surface-bright":"#f8f9fa","surface":"#f8f9fa","text-slate-deep":"#1b262c","inverse-surface":"#2e3132","on-error":"#ffffff","border-subtle":"#dee2e6","on-primary-container":"#a8e7c5","surface-container-low":"#f3f4f5"},"borderRadius":{"DEFAULT":"0.25rem","lg":"0.5rem","xl":"0.75rem","full":"9999px"},"spacing":{"sm":"8px","xs":"4px","container-margin":"24px","lg":"24px","unit":"4px","gutter":"16px","md":"16px","xl":"32px"},"fontFamily":{"mono-data":["JetBrains Mono"],"headline-md":["Inter"],"display-lg":["Inter"],"headline-lg":["Inter"],"body-md":["Inter"],"label-md":["Inter"],"body-lg":["Inter"]},"fontSize":{"mono-data":["14px",{"lineHeight":"20px","fontWeight":"500"}],"headline-md":["20px",{"lineHeight":"28px","fontWeight":"600"}],"display-lg":["36px",{"lineHeight":"44px","letterSpacing":"-0.02em","fontWeight":"700"}],"headline-lg":["24px",{"lineHeight":"32px","fontWeight":"600"}],"body-md":["14px",{"lineHeight":"20px","fontWeight":"400"}],"label-md":["12px",{"lineHeight":"16px","letterSpacing":"0.01em","fontWeight":"500"}],"body-lg":["16px",{"lineHeight":"24px","fontWeight":"400"}]}}}}</script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap" rel="stylesheet"/></head><body class="bg-background-cream font-body-md text-on-surface"><header class="fixed top-0 w-full z-50 bg-surface/90 backdrop-blur-md shadow-[0_1px_8px_rgba(0,0,0,0.04)]"><div class="h-16 w-full px-container-margin flex items-center justify-between"><div class="flex items-center gap-xl"><div class="flex items-center gap-sm"><div class="w-8 h-8 bg-primary rounded-lg flex items-center justify-center"><span class="material-symbols-outlined text-on-primary">analytics</span></div><span class="font-headline-md text-headline-md text-primary tracking-tight whitespace-nowrap">LLL 交易研究</span></div><nav class="hidden xl:flex items-center gap-lg self-stretch" data-active-classes="text-primary font-bold border-b-2 border-primary"><a class="h-full flex items-center px-xs text-body-md text-on-surface-variant hover:text-primary transition-colors" data-path="overview" href="#">交易总览</a><a class="h-full flex items-center px-xs text-body-md text-on-surface-variant hover:text-primary transition-colors" data-path="plan" href="#">交易计划</a><a class="h-full flex items-center px-xs text-body-md text-on-surface-variant hover:text-primary transition-colors" data-path="execution" href="#">交易执行</a><a class="h-full flex items-center px-xs text-body-md text-on-surface-variant hover:text-primary transition-colors" data-path="orders" href="#">订单</a><a class="h-full flex items-center px-xs text-body-md text-on-surface-variant hover:text-primary transition-colors" data-path="positions" href="#">持仓</a><a class="h-full flex items-center px-xs text-body-md text-on-surface-variant hover:text-primary transition-colors" data-path="settings" href="#">交易设置</a></nav></div><div class="flex items-center gap-md"><div class="flex items-center gap-sm px-md py-1.5 bg-surface-container rounded-full border border-outline-variant"><div class="w-2 h-2 rounded-full bg-semantic-positive animate-pulse"></div><span class="text-label-md font-label-md text-on-surface-variant">实盘账户 - 连接正常</span><span class="px-2 py-0.5 bg-real-account-badge text-on-primary rounded text-[10px] font-bold uppercase">Live</span></div><button class="flex items-center gap-xs px-lg py-2 bg-semantic-negative text-on-primary rounded-lg hover:opacity-90 transition-all font-label-md"><span class="material-symbols-outlined text-[18px]">emergency_home</span>PAUSE ALL</button><div class="flex items-center gap-sm ml-sm"><div class="text-right hidden sm:block"><div class="text-label-md font-label-md text-on-surface">Trading Desk 01</div><div class="text-[10px] text-on-surface-variant leading-none">正常执行</div></div><div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center"><span class="material-symbols-outlined text-on-primary text-[18px]">person</span></div></div></div></div></header><main class="w-full pt-16 min-h-screen bg-background-cream"><div class="flex flex-col w-full gap-xl px-container-margin pb-xl">
+<!-- Top Metrics Section (Bento Grid) -->
+<div class="grid grid-cols-1 md:grid-cols-12 gap-lg mt-xl">
+<!-- Main Portfolio Card (Spans 8) -->
+<div class="md:col-span-8 flex flex-col bg-surface rounded-xl shadow-sm relative overflow-hidden group">
+<!-- Decorative blurred orb -->
+<div class="absolute -right-20 -top-20 w-64 h-64 bg-primary/10 rounded-full blur-3xl pointer-events-none transition-transform duration-1000 group-hover:scale-125"></div>
+<div class="p-lg flex flex-col h-full justify-between z-10">
+<div class="flex justify-between items-start w-full">
+<div class="flex flex-col gap-xs">
+<span class="font-label-md text-label-md text-text-slate-muted uppercase tracking-wider">Total Assets (总资产)</span>
+<div class="flex items-baseline gap-sm">
+<span class="font-display-lg text-display-lg text-on-surface">¥ 14,285,990.50</span>
+<span class="font-mono-data text-mono-data text-semantic-positive bg-semantic-positive/10 px-2 py-1 rounded">+1.24%</span>
+</div>
+</div>
+<div class="flex items-center gap-xs px-sm py-1 bg-real-account-badge rounded shadow-sm">
+<span class="material-symbols-outlined text-[16px] text-on-primary">shield</span>
+<span class="font-label-md text-label-md text-on-primary uppercase font-bold">实盘账户</span>
+</div>
+</div>
+<div class="grid grid-cols-2 gap-md mt-xl">
+<div class="flex flex-col gap-xs p-md bg-surface-container-lowest rounded-lg shadow-sm">
+<span class="font-label-md text-label-md text-text-slate-muted">Daily P/L (今日盈亏)</span>
+<span class="font-headline-md text-headline-md text-semantic-positive">+ ¥ 124,500.00</span>
+</div>
+<div class="flex flex-col gap-xs p-md bg-surface-container-lowest rounded-lg shadow-sm">
+<span class="font-label-md text-label-md text-text-slate-muted">Cumulative P/L (累计盈亏)</span>
+<span class="font-headline-md text-headline-md text-semantic-positive">+ ¥ 2,140,880.00</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Allocation & Cash Card (Spans 4) -->
+<div class="md:col-span-4 flex flex-col gap-md">
+<div class="flex flex-col p-lg bg-surface rounded-xl shadow-sm flex-1 justify-center">
+<span class="font-label-md text-label-md text-text-slate-muted uppercase tracking-wider mb-sm">Available Cash (可用现金)</span>
+<span class="font-headline-lg text-headline-lg text-on-surface">¥ 3,145,000.00</span>
+<!-- Position Ratio Visualization -->
+<div class="mt-lg flex flex-col gap-xs">
+<div class="flex justify-between items-center">
+<span class="font-label-md text-label-md text-text-slate-muted">Position Ratio (总仓位)</span>
+<span class="font-mono-data text-mono-data text-on-surface">78.5%</span>
+</div>
+<div class="w-full h-2 bg-surface-container rounded-full overflow-hidden">
+<div class="h-full bg-primary rounded-full transition-all duration-1000 w-[78.5%] shadow-sm"></div>
+</div>
+<div class="flex justify-between items-center mt-xs">
+<span class="font-label-md text-label-md text-text-slate-muted">Position Value (持仓市值)</span>
+<span class="font-mono-data text-mono-data text-on-surface">¥ 11,140,990.50</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Secondary Metrics Strip -->
+<div class="grid grid-cols-2 md:grid-cols-4 gap-md">
+<div class="bg-surface rounded-lg p-md shadow-sm flex items-center justify-between group cursor-pointer">
+<div class="flex flex-col gap-xs">
+<span class="font-label-md text-label-md text-text-slate-muted">Current Positions (当前持仓)</span>
+<span class="font-headline-md text-headline-md text-on-surface group-hover:text-primary transition-colors">12</span>
+</div>
+<div class="w-10 h-10 rounded-full bg-surface-container flex items-center justify-center text-primary group-hover:scale-110 transition-transform shadow-sm">
+<span class="material-symbols-outlined">pie_chart</span>
+</div>
+</div>
+<div class="bg-surface rounded-lg p-md shadow-sm flex items-center justify-between group cursor-pointer">
+<div class="flex flex-col gap-xs">
+<span class="font-label-md text-label-md text-text-slate-muted">Active Trade Plans (交易计划)</span>
+<span class="font-headline-md text-headline-md text-on-surface group-hover:text-primary transition-colors">5</span>
+</div>
+<div class="w-10 h-10 rounded-full bg-surface-container flex items-center justify-center text-primary group-hover:scale-110 transition-transform shadow-sm">
+<span class="material-symbols-outlined">assignment</span>
+</div>
+</div>
+<div class="bg-surface rounded-lg p-md shadow-sm flex items-center justify-between group cursor-pointer">
+<div class="flex flex-col gap-xs">
+<span class="font-label-md text-label-md text-text-slate-muted">Active Executions (执行计划)</span>
+<span class="font-headline-md text-headline-md text-on-surface group-hover:text-primary transition-colors">3</span>
+</div>
+<div class="w-10 h-10 rounded-full bg-surface-container flex items-center justify-center text-primary group-hover:scale-110 transition-transform shadow-sm">
+<span class="material-symbols-outlined">play_arrow</span>
+</div>
+</div>
+<div class="bg-surface rounded-lg p-md shadow-sm flex items-center justify-between group cursor-pointer">
+<div class="flex flex-col gap-xs">
+<span class="font-label-md text-label-md text-text-slate-muted">Unfilled Orders (未成交订单)</span>
+<span class="font-headline-md text-headline-md text-semantic-warning group-hover:text-semantic-warning transition-colors">2</span>
+</div>
+<div class="w-10 h-10 rounded-full bg-surface-container flex items-center justify-center text-semantic-warning group-hover:scale-110 transition-transform shadow-sm">
+<span class="material-symbols-outlined">pending_actions</span>
+</div>
+</div>
+</div>
+<!-- Planned Positions Table -->
+<div class="flex flex-col bg-surface rounded-xl shadow-sm overflow-hidden">
+<div class="p-lg bg-surface-container-lowest flex justify-between items-center shadow-sm z-10">
+<h2 class="font-headline-md text-headline-md text-on-surface">Planned Positions (计划持仓)</h2>
+<button class="flex items-center gap-xs px-md py-2 bg-primary text-on-primary rounded-lg hover:shadow-md transition-all font-label-md text-label-md">
+<span class="material-symbols-outlined text-[18px]">add</span>
+                New Trade Plan
+            </button>
+</div>
+<div class="overflow-x-auto">
+<div class="min-w-[1000px] flex flex-col bg-surface-container gap-px">
+<!-- Table Header -->
+<div class="grid grid-cols-10 gap-sm px-md py-sm bg-surface-container-low text-text-slate-muted font-label-md text-label-md uppercase tracking-wider sticky top-0">
+<div class="col-span-2">Symbol / Name</div>
+<div class="col-span-1 text-right">Quantity</div>
+<div class="col-span-1 text-right">Sellable</div>
+<div class="col-span-1 text-right">Avg Cost</div>
+<div class="col-span-1 text-right">Current Price</div>
+<div class="col-span-1 text-right">Market Value</div>
+<div class="col-span-1 text-right">P/L</div>
+<div class="col-span-1 text-right">Risk Ref</div>
+<div class="col-span-1 text-right">Actions</div>
+</div>
+<!-- Table Row 1 -->
+<div class="grid grid-cols-10 gap-sm px-md py-sm bg-surface-container-lowest hover:bg-background items-center transition-colors group">
+<div class="col-span-2 flex flex-col">
+<span class="font-mono-data text-mono-data text-on-surface font-bold">AAPL</span>
+<span class="font-label-md text-label-md text-text-slate-muted">Apple Inc.</span>
+</div>
+<div class="col-span-1 text-right font-mono-data text-mono-data text-on-surface">5,000</div>
+<div class="col-span-1 text-right font-mono-data text-mono-data text-on-surface">5,000</div>
+<div class="col-span-1 text-right font-mono-data text-mono-data text-on-surface">175.50</div>
+<div class="col-span-1 text-right font-mono-data text-mono-data text-semantic-positive">182.25</div>
+<div class="col-span-1 text-right font-mono-data text-mono-data text-on-surface">911,250</div>
+<div class="col-span-1 text-right flex flex-col items-end">
+<span class="font-mono-data text-mono-data text-semantic-positive">+33,750</span>
+<span class="font-label-md text-label-md text-semantic-positive">+3.85%</span>
+</div>
+<div class="col-span-1 text-right font-mono-data text-mono-data text-semantic-negative">168.00</div>
+<div class="col-span-1 flex justify-end gap-xs opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="w-8 h-8 rounded bg-surface-container hover:bg-primary hover:text-on-primary transition-colors flex items-center justify-center text-on-surface-variant" title="Create Plan">
+<span class="material-symbols-outlined text-[18px]">edit_document</span>
+</button>
+<button class="w-8 h-8 rounded bg-surface-container hover:bg-semantic-negative hover:text-on-primary transition-colors flex items-center justify-center text-on-surface-variant" title="Liquidate">
+<span class="material-symbols-outlined text-[18px]">close</span>
+</button>
+<button class="w-8 h-8 rounded bg-surface-container hover:bg-surface-variant transition-colors flex items-center justify-center text-on-surface-variant" title="History">
+<span class="material-symbols-outlined text-[18px]">history</span>
+</button>
+</div>
+</div>
+<!-- Table Row 2 -->
+<div class="grid grid-cols-10 gap-sm px-md py-sm bg-surface-container-lowest hover:bg-background items-center transition-colors group">
+<div class="col-span-2 flex flex-col">
+<span class="font-mono-data text-mono-data text-on-surface font-bold">NVDA</span>
+<span class="font-label-md text-label-md text-text-slate-muted">NVIDIA Corp.</span>
+</div>
+<div class="col-span-1 text-right font-mono-data text-mono-data text-on-surface">1,200</div>
+<div class="col-span-1 text-right font-mono-data text-mono-data text-on-surface">800</div>
+<div class="col-span-1 text-right font-mono-data text-mono-data text-on-surface">850.00</div>
+<div class="col-span-1 text-right font-mono-data text-mono-data text-semantic-negative">842.10</div>
+<div class="col-span-1 text-right font-mono-data text-mono-data text-on-surface">1,010,520</div>
+<div class="col-span-1 text-right flex flex-col items-end">
+<span class="font-mono-data text-mono-data text-semantic-negative">-9,480</span>
+<span class="font-label-md text-label-md text-semantic-negative">-0.93%</span>
+</div>
+<div class="col-span-1 text-right font-mono-data text-mono-data text-semantic-negative">805.00</div>
+<div class="col-span-1 flex justify-end gap-xs opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="w-8 h-8 rounded bg-surface-container hover:bg-primary hover:text-on-primary transition-colors flex items-center justify-center text-on-surface-variant" title="Create Plan">
+<span class="material-symbols-outlined text-[18px]">edit_document</span>
+</button>
+<button class="w-8 h-8 rounded bg-surface-container hover:bg-semantic-negative hover:text-on-primary transition-colors flex items-center justify-center text-on-surface-variant" title="Liquidate">
+<span class="material-symbols-outlined text-[18px]">close</span>
+</button>
+<button class="w-8 h-8 rounded bg-surface-container hover:bg-surface-variant transition-colors flex items-center justify-center text-on-surface-variant" title="History">
+<span class="material-symbols-outlined text-[18px]">history</span>
+</button>
+</div>
+</div>
+<!-- Table Row 3 -->
+<div class="grid grid-cols-10 gap-sm px-md py-sm bg-surface-container-lowest hover:bg-background items-center transition-colors group">
+<div class="col-span-2 flex flex-col">
+<span class="font-mono-data text-mono-data text-on-surface font-bold">MSFT</span>
+<span class="font-label-md text-label-md text-text-slate-muted">Microsoft Corp.</span>
+</div>
+<div class="col-span-1 text-right font-mono-data text-mono-data text-on-surface">3,500</div>
+<div class="col-span-1 text-right font-mono-data text-mono-data text-on-surface">3,500</div>
+<div class="col-span-1 text-right font-mono-data text-mono-data text-on-surface">410.25</div>
+<div class="col-span-1 text-right font-mono-data text-mono-data text-semantic-positive">415.80</div>
+<div class="col-span-1 text-right font-mono-data text-mono-data text-on-surface">1,455,300</div>
+<div class="col-span-1 text-right flex flex-col items-end">
+<span class="font-mono-data text-mono-data text-semantic-positive">+19,425</span>
+<span class="font-label-md text-label-md text-semantic-positive">+1.35%</span>
+</div>
+<div class="col-span-1 text-right font-mono-data text-mono-data text-semantic-negative">395.00</div>
+<div class="col-span-1 flex justify-end gap-xs opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="w-8 h-8 rounded bg-surface-container hover:bg-primary hover:text-on-primary transition-colors flex items-center justify-center text-on-surface-variant" title="Create Plan">
+<span class="material-symbols-outlined text-[18px]">edit_document</span>
+</button>
+<button class="w-8 h-8 rounded bg-surface-container hover:bg-semantic-negative hover:text-on-primary transition-colors flex items-center justify-center text-on-surface-variant" title="Liquidate">
+<span class="material-symbols-outlined text-[18px]">close</span>
+</button>
+<button class="w-8 h-8 rounded bg-surface-container hover:bg-surface-variant transition-colors flex items-center justify-center text-on-surface-variant" title="History">
+<span class="material-symbols-outlined text-[18px]">history</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div></main><footer class="w-full bg-surface-container-low border-t border-outline-variant/30 py-8"><div class="w-full px-container-margin flex flex-col md:flex-row justify-between items-center gap-md text-on-surface-variant font-label-md text-label-md"><div>© 2024 LLL Trading Research. Institutional Access Only.</div><div class="flex items-center gap-xl"><span class="flex items-center gap-xs"><span class="material-symbols-outlined text-[16px] text-semantic-positive">verified_user</span>Secure Terminal</span><span class="flex items-center gap-xs"><span class="material-symbols-outlined text-[16px]">speed</span>Latency: 2ms</span></div></div></footer></body></html>

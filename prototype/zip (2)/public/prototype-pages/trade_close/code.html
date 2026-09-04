@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN"><head><meta charset="utf-8"/><meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<style>@layer base{html,body{margin:0;padding:0;}body{overscroll-behavior:none;}main>:first-child{margin-top:0!important;}main>:last-child{margin-bottom:0!important;}}::-webkit-scrollbar{display:none;}</style><script id="tailwind-config">tailwind.config={darkMode:"class",theme:{extend:{colors:{"inverse-on-surface":"#f5f0e8","on-secondary":"#ffffff","primary-fixed-dim":"#8ecf9e","on-tertiary-container":"#554020","on-primary":"#ffffff","tertiary-container":"#c4a66a","surface-dim":"#dbd7cf","error-container":"#ffdad8","tertiary-fixed":"#f8e0a8","surface-container-lowest":"#ffffff","secondary-fixed-dim":"#d4ccbf","on-background":"#2e3230","secondary-container":"#f0e8db","on-tertiary-fixed-variant":"#554020","on-surface":"#2e3230","on-error":"#ffffff","outline":"#74796e","tertiary-fixed-dim":"#dcc48e","surface-tint":"#4a7c59","on-secondary-container":"#5e5548","background":"#faf6f0","secondary":"#6b6358","on-primary-fixed-variant":"#2a6038","inverse-surface":"#2e3230","on-primary-container":"#d8f0de","inverse-primary":"#8ecf9e","surface-container-high":"#eae6de","on-error-container":"#690005","on-tertiary-fixed":"#221a05","primary":"#4a7c59","on-secondary-fixed-variant":"#4a4538","on-tertiary":"#ffffff","primary-container":"#78a886","surface-container-low":"#f5f1ea","on-secondary-fixed":"#1e1a13","on-primary-fixed":"#002110","secondary-fixed":"#f0e8db","surface-container":"#f0ece4","surface-bright":"#faf6f0","error":"#b83230","on-surface-variant":"#4a4e4a","surface-variant":"#e4e0d8","outline-variant":"#c4c8bc","primary-fixed":"#c8e8d0","tertiary":"#705c30","surface-container-highest":"#e4e0d8","surface":"#faf6f0"},borderRadius:{DEFAULT:"0.5rem",lg:"1rem",xl:"1.5rem",full:"9999px"},spacing:{},fontFamily:{headline:["Literata"],display:["Literata"],body:["Nunito Sans"],label:["Nunito Sans"]},fontSize:{}}}}</script></head><body class="bg-surface font-body text-on-surface select-none antialiased min-h-screen"><header class="fixed top-0 left-0 right-0 h-12 bg-surface-container-lowest/90 backdrop-blur-md z-50 flex items-center justify-between px-3 shadow-[0_1px_8px_rgba(46,50,48,0.06)]"><div class="flex items-center gap-5"><div class="flex items-center gap-2 pr-2"><div class="w-7 h-7 rounded-lg bg-surface-container-low flex items-center justify-center text-primary"><span class="material-symbols-outlined text-[20px]">vital_signs</span></div><span class="font-headline font-bold text-sm tracking-wide text-on-surface whitespace-nowrap">LLL 交易研究</span></div><nav class="flex items-center gap-1 text-xs" data-active-classes="bg-primary text-on-primary font-medium rounded-full shadow-sm"><a class="px-3 py-1.5 rounded-full text-on-surface-variant hover:text-on-surface transition-colors whitespace-nowrap" data-path="a-share-market" href="#">A股行情</a><a class="px-3 py-1.5 rounded-full text-on-surface-variant hover:text-on-surface transition-colors whitespace-nowrap" data-path="market-review" href="#">复盘</a><a class="px-3 py-1.5 rounded-full text-on-surface-variant hover:text-on-surface transition-colors whitespace-nowrap" data-path="auto-stock-screener" href="#">自动选股</a><a class="px-3 py-1.5 rounded-full text-on-surface-variant hover:text-on-surface transition-colors whitespace-nowrap" data-path="market-technical-categories" href="#">全市场技术分类</a><a class="px-3 py-1.5 rounded-full text-on-surface-variant hover:text-on-surface transition-colors whitespace-nowrap" data-path="watchlist" href="#">☆ 自选股</a><a class="px-3 py-1.5 rounded-full text-on-surface-variant hover:text-on-surface transition-colors whitespace-nowrap" data-path="trading-overview" href="#">交易系统</a></nav></div><div class="flex items-center gap-2"><button class="flex items-center gap-1 px-2.5 py-1 text-xs text-on-surface-variant bg-surface-container hover:bg-surface-container-high rounded-full transition-colors" type="button"><span class="material-symbols-outlined text-xs">handyman</span><span>独立研究工具</span></button><button class="w-7 h-7 rounded-full bg-error text-on-error flex items-center justify-center hover:opacity-90 transition-opacity" title="暂停执行" type="button"><span class="material-symbols-outlined text-[16px]">pause</span></button><button class="w-7 h-7 rounded-full text-on-surface-variant hover:bg-surface-container flex items-center justify-center transition-colors" title="券商连接" type="button"><span class="material-symbols-outlined text-[18px]">hub</span></button><button class="w-7 h-7 rounded-full text-on-surface-variant hover:bg-surface-container flex items-center justify-center transition-colors" title="系统设置" type="button"><span class="material-symbols-outlined text-[18px]">settings</span></button><button class="w-7 h-7 rounded-full text-on-surface-variant hover:bg-surface-container flex items-center justify-center transition-colors" title="切换模式" type="button"><span class="material-symbols-outlined text-[18px]">light_mode</span></button><img alt="Profile" class="w-7 h-7 rounded-full object-cover ml-1 shadow-sm" src="/prototype-assets/prototype-remote-4.png"/></div></header><aside class="fixed left-0 top-12 bottom-0 w-14 bg-surface-container-low/95 z-40 flex flex-col justify-between items-center py-2.5 shadow-[0_1px_8px_rgba(46,50,48,0.04)]"><nav class="w-full flex flex-col items-center gap-1" data-active-classes="bg-surface-container-high text-primary font-semibold"><a class="w-11 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-all" data-path="trading-overview" href="#"><span class="material-symbols-outlined text-[19px]">monitoring</span><span class="text-[10px] scale-95">总览</span></a><a aria-current="page" class="w-11 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all bg-surface-container-high text-primary font-semibold" data-path="trading-lifecycle" href="#"><span class="material-symbols-outlined text-[19px]">currency_exchange</span><span class="text-[10px] scale-95">交易</span></a><a class="w-11 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-all" data-path="execution-plans" href="#"><span class="material-symbols-outlined text-[19px]">play_circle</span><span class="text-[10px] scale-95">执行</span></a><a class="w-11 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-all" data-path="order-management" href="#"><span class="material-symbols-outlined text-[19px]">receipt_long</span><span class="text-[10px] scale-95">订单</span></a><a class="w-11 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-all" data-path="portfolio-positions" href="#"><span class="material-symbols-outlined text-[19px]">account_balance_wallet</span><span class="text-[10px] scale-95">持仓</span></a></nav><div class="w-full flex flex-col items-center pb-1"><a class="w-11 h-11 rounded-xl bg-primary text-on-primary flex flex-col items-center justify-center shadow-sm hover:opacity-90 transition-opacity" data-path="trading-settings" href="#"><span class="material-symbols-outlined text-[18px]">tune</span><span class="text-[10px] scale-90">配置</span></a></div></aside><div class="pl-14"><main class="relative pt-12 min-h-screen bg-surface"><div class="flex flex-col w-full">
+<!-- Active Navigation Sync for Shell (Secondary Sidebar '交易') -->
+<script>
+    (function syncNav() {
+      const asideNavLinks = document.querySelectorAll('aside nav a');
+      asideNavLinks.forEach(link => {
+        if (link.getAttribute('data-path') === 'trading-lifecycle') {
+          link.className = 'w-11 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 bg-surface-container-high text-primary font-semibold shadow-sm transition-all';
+        } else {
+          link.classList.remove('bg-surface-container-high', 'text-primary', 'font-semibold');
+        }
+      });
+    })();
+  </script>
+<!-- Main Container -->
+<div class="p-6 md:p-8 max-w-7xl mx-auto w-full space-y-6">
+<!-- Top Action Bar -->
+<header class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-2">
+<div class="flex items-center gap-3">
+<a class="w-9 h-9 rounded-lg bg-surface-container flex items-center justify-center text-on-surface-variant hover:bg-surface-container-high transition-colors" href="#">
+<span class="material-symbols-outlined text-lg">arrow_back</span>
+</a>
+<div>
+<div class="flex items-center gap-2">
+<span class="text-[11px] font-label font-bold tracking-widest text-tertiary uppercase">Phase 05 · Settlement</span>
+<span class="text-xs px-2 py-0.5 rounded-full bg-secondary-container text-on-secondary-container font-medium">趋势交易 #TR-202309-008</span>
+</div>
+<h1 class="text-2xl font-headline font-bold text-on-surface tracking-tight flex items-center gap-3 mt-0.5">
+            清仓计划 · CLOSE
+            <span class="text-xs font-body font-normal px-2.5 py-1 rounded-full bg-surface-container-high text-on-surface-variant flex items-center gap-1.5">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary animate-pulse"></span>
+              进行中 → 即将清仓
+            </span>
+</h1>
+</div>
+</div>
+<!-- Action Buttons -->
+<div class="flex items-center gap-2 self-end md:self-auto">
+<button class="px-3.5 py-2 rounded-lg bg-surface-container text-xs font-medium text-on-surface-variant hover:bg-surface-container-high transition-colors flex items-center gap-1" type="button">
+<span class="material-symbols-outlined text-sm">open_in_new</span>
+          返回 Trade
+        </button>
+<button class="px-3.5 py-2 rounded-lg bg-surface-container text-xs font-medium text-on-surface-variant hover:bg-surface-container-high transition-colors" type="button">
+          取消
+        </button>
+<button class="px-5 py-2 rounded-lg bg-error text-on-error hover:opacity-95 text-xs font-semibold shadow-md flex items-center gap-1.5 transition-all" id="btn-submit-close" type="button">
+<span class="material-symbols-outlined text-base">power_settings_new</span>
+          确认清仓
+        </button>
+</div>
+</header>
+<!-- T+1 Warning & Execution Status Banner -->
+<section class="rounded-xl bg-surface-container p-4.5 shadow-sm relative overflow-hidden">
+<div class="absolute left-0 top-0 bottom-0 w-1.5 bg-error"></div>
+<div class="flex flex-col md:flex-row md:items-center justify-between gap-4 pl-2">
+<div class="flex items-start gap-3">
+<div class="w-8 h-8 rounded-full bg-error-container text-error flex items-center justify-center shrink-0 mt-0.5">
+<span class="material-symbols-outlined text-lg">info</span>
+</div>
+<div class="space-y-1">
+<div class="flex flex-wrap items-center gap-2">
+<span class="font-headline font-bold text-sm text-on-surface">资产交割与 T+1 状态警示</span>
+<span class="text-xs px-2 py-0.5 rounded bg-surface-container-highest text-on-surface-variant font-medium">交割限制中</span>
+</div>
+<p class="text-xs text-on-surface-variant leading-relaxed">
+              目标清仓 <strong class="text-on-surface font-semibold">500 股</strong> | 
+              当前可执行：<span class="text-primary font-bold">300 股</span> | 
+              <span class="text-tertiary font-semibold">T+1 待处理：200 股</span>（昨日加仓仓位，将于下一个交易日 09:15 自动释放并挂单）。
+            </p>
+<p class="text-[11px] text-on-surface-variant/80">
+              * 点击“确认清仓”后，Trade 状态将立即流转至 <span class="font-semibold text-tertiary">CLOSING (清仓中)</span>，待第二批执行完成且全部持仓归零后，系统将自动标记为 <span class="font-semibold text-primary">CLOSED (已结束)</span>。
+            </p>
+</div>
+</div>
+<!-- Mini Visual Progress -->
+<div class="flex items-center gap-4 shrink-0 bg-surface-container-low px-4 py-2.5 rounded-lg self-stretch md:self-auto justify-around">
+<div class="text-center">
+<div class="text-[10px] text-on-surface-variant uppercase font-medium">即时执行</div>
+<div class="text-sm font-bold text-primary">60.0%</div>
+<div class="text-[10px] text-on-surface-variant">300 股</div>
+</div>
+<div class="w-px h-8 bg-surface-variant"></div>
+<div class="text-center">
+<div class="text-[10px] text-on-surface-variant uppercase font-medium">T+1 递延</div>
+<div class="text-sm font-bold text-tertiary">40.0%</div>
+<div class="text-[10px] text-on-surface-variant">200 股</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Two-column Core Workspace -->
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+<!-- LEFT COLUMN: Settlement Inputs & Execution Parameters (7 cols) -->
+<section class="lg:col-span-7 space-y-6">
+<!-- Module 1: Reason Selector -->
+<div class="bg-surface-container-lowest rounded-xl p-5 shadow-sm space-y-4">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-primary"></span>
+<h2 class="font-headline font-bold text-base text-on-surface">1. 清仓原因认定</h2>
+</div>
+<span class="text-xs text-on-surface-variant">单选 · 计入复盘归因模型</span>
+</div>
+<div class="grid grid-cols-2 sm:grid-cols-3 gap-2.5" id="reason-container">
+<button class="reason-pill active flex items-center justify-between p-3 rounded-lg text-left bg-primary text-on-primary shadow-sm transition-all text-xs font-medium" data-reason="trend_end" type="button">
+<span>趋势彻底终结</span>
+<span class="material-symbols-outlined text-sm">check_circle</span>
+</button>
+<button class="reason-pill flex items-center justify-between p-3 rounded-lg text-left bg-surface-container-low text-on-surface hover:bg-surface-container transition-all text-xs font-medium" data-reason="target_hit" type="button">
+<span>达终极目标位</span>
+<span class="material-symbols-outlined text-sm opacity-0">check_circle</span>
+</button>
+<button class="reason-pill flex items-center justify-between p-3 rounded-lg text-left bg-surface-container-low text-on-surface hover:bg-surface-container transition-all text-xs font-medium" data-reason="stop_loss" type="button">
+<span>触及风控止损</span>
+<span class="material-symbols-outlined text-sm opacity-0">check_circle</span>
+</button>
+<button class="reason-pill flex items-center justify-between p-3 rounded-lg text-left bg-surface-container-low text-on-surface hover:bg-surface-container transition-all text-xs font-medium" data-reason="rebalance" type="button">
+<span>调仓换股分配</span>
+<span class="material-symbols-outlined text-sm opacity-0">check_circle</span>
+</button>
+<button class="reason-pill flex items-center justify-between p-3 rounded-lg text-left bg-surface-container-low text-on-surface hover:bg-surface-container transition-all text-xs font-medium" data-reason="strategy_fail" type="button">
+<span>策略逻辑失效</span>
+<span class="material-symbols-outlined text-sm opacity-0">check_circle</span>
+</button>
+<button class="reason-pill flex items-center justify-between p-3 rounded-lg text-left bg-surface-container-low text-on-surface hover:bg-surface-container transition-all text-xs font-medium" data-reason="time_out" type="button">
+<span>持仓时间耗尽</span>
+<span class="material-symbols-outlined text-sm opacity-0">check_circle</span>
+</button>
+</div>
+<!-- Reason Detail Note -->
+<div class="pt-2">
+<label class="block text-xs font-medium text-on-surface-variant mb-1.5">清仓决策备忘（可选）</label>
+<textarea class="w-full text-xs p-3 rounded-lg bg-surface-container-low text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:bg-surface-container transition-colors resize-none" placeholder="记录退出逻辑点：如日线级别跌破 20 日均线，量能衰竭出现顶背离形态..." rows="2"></textarea>
+</div>
+</div>
+<!-- Module 2: Price & Execution Trigger Parameters -->
+<div class="bg-surface-container-lowest rounded-xl p-5 shadow-sm space-y-4">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-primary"></span>
+<h2 class="font-headline font-bold text-base text-on-surface">2. 价格参数与防滑点保护</h2>
+</div>
+<span class="text-xs text-primary font-medium flex items-center gap-1">
+<span class="material-symbols-outlined text-sm">shield</span>
+              滑点限制 ±1.5%
+            </span>
+</div>
+<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+<div class="p-3.5 rounded-lg bg-surface-container-low space-y-1.5">
+<span class="text-xs text-on-surface-variant font-medium">基准参考卖出价 (当前买一/最新)</span>
+<div class="flex items-baseline gap-2">
+<span class="text-2xl font-headline font-bold text-on-surface">¥32.10</span>
+<span class="text-xs text-error font-medium">-0.62% 日内</span>
+</div>
+<p class="text-[11px] text-on-surface-variant">基于实时 Level-2 深度盘口最优五档综合加权</p>
+</div>
+<div class="p-3.5 rounded-lg bg-surface-container space-y-1.5">
+<span class="text-xs text-on-surface-variant font-medium">最低可接受卖出限价 (底线)</span>
+<div class="flex items-center gap-2">
+<span class="text-2xl font-headline font-bold text-error">¥31.60</span>
+<span class="text-[11px] px-2 py-0.5 rounded bg-error-container text-on-error-container font-semibold">强保护</span>
+</div>
+<p class="text-[11px] text-on-surface-variant">低于此价格将自动转为冰山排单，拒绝低流动性砸盘</p>
+</div>
+</div>
+<div class="space-y-2 pt-1">
+<label class="block text-xs font-medium text-on-surface-variant">执行触发条件</label>
+<div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+<label class="flex items-center gap-2.5 p-3 rounded-lg bg-surface-container-low cursor-pointer hover:bg-surface-container transition-colors">
+<input checked="" class="accent-primary w-4 h-4" name="trigger_cond" type="radio"/>
+<div>
+<div class="text-xs font-semibold text-on-surface">最优市价平仓 (即刻止盈)</div>
+<div class="text-[11px] text-on-surface-variant">在限价保护范围内快速消耗买方流动性</div>
+</div>
+</label>
+<label class="flex items-center gap-2.5 p-3 rounded-lg bg-surface-container-low cursor-pointer hover:bg-surface-container transition-colors">
+<input class="accent-primary w-4 h-4" name="trigger_cond" type="radio"/>
+<div>
+<div class="text-xs font-semibold text-on-surface">保本线下穿平仓 (防御性)</div>
+<div class="text-[11px] text-on-surface-variant">若价格反抽触碰 ¥31.85 提前离场</div>
+</div>
+</label>
+</div>
+</div>
+</div>
+<!-- Module 3: Execution Batch Schedule -->
+<div class="bg-surface-container-lowest rounded-xl p-5 shadow-sm space-y-4">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-primary"></span>
+<h2 class="font-headline font-bold text-base text-on-surface">3. 执行批次方案 (Two-Step Pipeline)</h2>
+</div>
+<span class="text-xs font-semibold text-tertiary">遵循 T+1 制度约束</span>
+</div>
+<div class="space-y-3">
+<!-- Step 1 -->
+<div class="flex items-center justify-between p-3 rounded-lg bg-surface-container-low">
+<div class="flex items-center gap-3">
+<div class="w-7 h-7 rounded-full bg-primary text-on-primary text-xs font-bold flex items-center justify-center">1</div>
+<div>
+<div class="text-xs font-bold text-on-surface">第一批：即时委托执行</div>
+<div class="text-[11px] text-on-surface-variant">确认清仓后 3 秒内直接发送指令至交易网关</div>
+</div>
+</div>
+<div class="text-right">
+<span class="text-sm font-bold text-primary">300 股</span>
+<span class="text-[11px] text-on-surface-variant block">可用额度 100%</span>
+</div>
+</div>
+<!-- Step 2 -->
+<div class="flex items-center justify-between p-3 rounded-lg bg-surface-container">
+<div class="flex items-center gap-3">
+<div class="w-7 h-7 rounded-full bg-tertiary-container text-on-tertiary-container text-xs font-bold flex items-center justify-center">2</div>
+<div>
+<div class="text-xs font-bold text-on-surface">第二批：次日集合竞价托管</div>
+<div class="text-[11px] text-on-surface-variant">T+1 份额解冻，系统将于次日 09:15-09:25 智能对价申报</div>
+</div>
+</div>
+<div class="text-right">
+<span class="text-sm font-bold text-tertiary">200 股</span>
+<span class="text-[11px] text-on-surface-variant block">次日开盘自动报单</span>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- RIGHT COLUMN: Final Settlement Preview & Trade Audit (5 cols) -->
+<section class="lg:col-span-5 space-y-6">
+<!-- Financial Settlement Card -->
+<div class="bg-surface-container-lowest rounded-xl p-5 shadow-sm space-y-5">
+<div class="border-b pb-3 flex items-center justify-between">
+<h2 class="font-headline font-bold text-base text-on-surface flex items-center gap-2">
+<span class="material-symbols-outlined text-primary text-xl">payments</span>
+              清仓结算预估看板
+            </h2>
+<span class="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-surface-container text-on-surface-variant">Simulated</span>
+</div>
+<!-- Key Big Numbers -->
+<div class="space-y-3">
+<div class="p-4 rounded-xl bg-surface-container-low flex items-center justify-between">
+<div>
+<span class="text-xs text-on-surface-variant font-medium">预计总回笼资金</span>
+<div class="text-2xl font-headline font-bold text-on-surface mt-0.5">¥16,050.00</div>
+</div>
+<div class="text-right">
+<span class="text-[10px] text-on-surface-variant">扣除印花税/规费后预估</span>
+<div class="text-xs text-secondary font-medium">净收 ¥16,032.40</div>
+</div>
+</div>
+<div class="p-4 rounded-xl bg-primary-fixed/30 flex items-center justify-between">
+<div>
+<span class="text-xs text-on-surface-variant font-medium">预计最终实现总盈利</span>
+<div class="text-2xl font-headline font-bold text-primary mt-0.5">+¥1,125.00</div>
+</div>
+<div class="text-right">
+<span class="text-xs px-2.5 py-1 rounded-full bg-primary text-on-primary font-bold inline-block">
+                  +7.54%
+                </span>
+<div class="text-[10px] text-on-surface-variant mt-1">初始胜算兑现</div>
+</div>
+</div>
+</div>
+<!-- Risk & Exposure Elimination Grid -->
+<div class="grid grid-cols-2 gap-3 pt-1">
+<div class="p-3 rounded-lg bg-surface-container space-y-1">
+<span class="text-[11px] text-on-surface-variant">计划本金风险 (R)</span>
+<div class="text-base font-bold text-on-surface flex items-center gap-1">
+<span>¥0.00</span>
+<span class="text-[10px] font-normal text-primary">已全部解除</span>
+</div>
+<p class="text-[10px] text-on-surface-variant/80">原始风控敞口 ¥600 彻底出清</p>
+</div>
+<div class="p-3 rounded-lg bg-surface-container space-y-1">
+<span class="text-[11px] text-on-surface-variant">释放持仓资金占比</span>
+<div class="text-base font-bold text-on-surface flex items-center gap-1">
+<span>16.05% → 0%</span>
+</div>
+<p class="text-[10px] text-on-surface-variant/80">释放出自由流动性现金</p>
+</div>
+</div>
+<!-- Risk Closure Progress Meter -->
+<div class="space-y-2 pt-2">
+<div class="flex justify-between text-xs font-medium">
+<span class="text-on-surface-variant">交易闭环完成度</span>
+<span class="text-primary font-bold">100% 准备就绪</span>
+</div>
+<div class="w-full h-2 rounded-full bg-surface-container overflow-hidden">
+<div class="h-full bg-primary rounded-full w-full"></div>
+</div>
+<div class="flex justify-between text-[10px] text-on-surface-variant">
+<span>OPEN 建仓</span>
+<span>ADD 加仓</span>
+<span>T+1 锁定</span>
+<span class="font-bold text-primary">CLOSE 清仓</span>
+</div>
+</div>
+</div>
+<!-- Trade Lifecycle Review Card -->
+<div class="bg-surface-container-lowest rounded-xl p-5 shadow-sm space-y-4">
+<div class="flex items-center justify-between border-b pb-2.5">
+<h3 class="font-headline font-bold text-sm text-on-surface flex items-center gap-2">
+<span class="material-symbols-outlined text-tertiary text-lg">history_edu</span>
+              交易生命周期全程回顾
+            </h3>
+<span class="text-[11px] text-on-surface-variant font-mono">17 个自然日</span>
+</div>
+<!-- Lifecycle Mini Stats -->
+<div class="grid grid-cols-3 gap-2 text-center py-1">
+<div class="p-2 rounded bg-surface-container-low">
+<span class="text-[10px] text-on-surface-variant block">建仓日期</span>
+<span class="text-xs font-bold text-on-surface">2023-09-03</span>
+</div>
+<div class="p-2 rounded bg-surface-container-low">
+<span class="text-[10px] text-on-surface-variant block">持仓调整</span>
+<span class="text-xs font-bold text-on-surface">1 OPEN · 1 ADD</span>
+</div>
+<div class="p-2 rounded bg-surface-container-low">
+<span class="text-[10px] text-on-surface-variant block">最终 R 倍数</span>
+<span class="text-xs font-bold text-primary">+1.87 R</span>
+</div>
+</div>
+<!-- Timeline Steps -->
+<div class="relative pl-5 space-y-3.5 text-xs before:absolute before:left-2 before:top-2 before:bottom-2 before:w-0.5 before:bg-surface-variant">
+<div class="relative">
+<div class="absolute -left-[17px] top-1 w-2.5 h-2.5 rounded-full bg-primary ring-2 ring-surface-container-lowest"></div>
+<div class="flex justify-between font-medium">
+<span class="text-on-surface">09-03 初次建仓 (OPEN)</span>
+<span class="text-on-surface-variant">300 股 @ ¥29.80</span>
+</div>
+<p class="text-[11px] text-on-surface-variant">突破周线颈线买入，初始止损设为 ¥27.80</p>
+</div>
+<div class="relative">
+<div class="absolute -left-[17px] top-1 w-2.5 h-2.5 rounded-full bg-primary ring-2 ring-surface-container-lowest"></div>
+<div class="flex justify-between font-medium">
+<span class="text-on-surface">09-18 顺势加仓 (ADD)</span>
+<span class="text-on-surface-variant">200 股 @ ¥30.50</span>
+</div>
+<p class="text-[11px] text-on-surface-variant">主升浪中继放量确认，同步上移止损保护</p>
+</div>
+<div class="relative">
+<div class="absolute -left-[17px] top-1 w-2.5 h-2.5 rounded-full bg-error ring-2 ring-surface-container-lowest"></div>
+<div class="flex justify-between font-medium text-error">
+<span>09-20 执行清仓 (CLOSE)</span>
+<span>500 股 (分批执行)</span>
+</div>
+<p class="text-[11px] text-on-surface-variant">触发趋势终结信号，系统收拢头寸结案</p>
+</div>
+</div>
+</div>
+</section>
+</div>
+</div>
+<!-- Interactive Reason Pills Logic -->
+<script>
+    (function handleReasonSelection() {
+      const pills = document.querySelectorAll('#reason-container .reason-pill');
+      pills.forEach(pill => {
+        pill.addEventListener('click', () => {
+          pills.forEach(p => {
+            p.classList.remove('bg-primary', 'text-on-primary', 'shadow-sm');
+            p.classList.add('bg-surface-container-low', 'text-on-surface');
+            const icon = p.querySelector('.material-symbols-outlined');
+            if (icon) icon.classList.add('opacity-0');
+          });
+          pill.classList.remove('bg-surface-container-low', 'text-on-surface');
+          pill.classList.add('bg-primary', 'text-on-primary', 'shadow-sm');
+          const activeIcon = pill.querySelector('.material-symbols-outlined');
+          if (activeIcon) activeIcon.classList.remove('opacity-0');
+        });
+      });
+
+      // Submit Micro-interaction
+      const submitBtn = document.getElementById('btn-submit-close');
+      if (submitBtn) {
+        submitBtn.addEventListener('click', () => {
+          if (confirm('确认执行清仓计划？\n• 第一批 300 股将立即市价报单。\n• 第二批 200 股 (T+1) 将移交系统次日清晨托管。')) {
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<span class="material-symbols-outlined text-sm animate-spin">progress_activity</span> 正在流转至 CLOSING...';
+            submitBtn.classList.remove('bg-error');
+            submitBtn.classList.add('bg-tertiary');
+            setTimeout(() => {
+              alert('指令已发出！Trade 状态已转为「CLOSING (清仓中)」。');
+              window.location.reload();
+            }, 1200);
+          }
+        });
+      }
+    })();
+  </script>
+</div></main></div></body></html>

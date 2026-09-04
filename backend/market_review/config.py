@@ -53,29 +53,23 @@ class PipelineConfig:
 
 
 @dataclass(frozen=True)
-class VertexConfig:
-    project: str
-    location: str
+class QwenConfig:
+    api_key: str
+    base_url: str
     model: str
-    credentials_path: Path
 
     @classmethod
-    def from_env(cls) -> "VertexConfig":
+    def from_env(cls) -> "QwenConfig":
         required = {
-            "VERTEXAI_PROJECT": os.getenv("VERTEXAI_PROJECT", "").strip(),
-            "VERTEXAI_LOCATION": os.getenv("VERTEXAI_LOCATION", "").strip(),
-            "VERTEX_MODEL": os.getenv("VERTEX_MODEL", "").strip(),
-            "GOOGLE_APPLICATION_CREDENTIALS": os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "").strip(),
+            "DASHSCOPE_API_KEY": os.getenv("DASHSCOPE_API_KEY", "").strip(),
+            "AI_BASE_BASE_URL": os.getenv("AI_BASE_BASE_URL", "").strip(),
+            "AI_BASE_MODEL": os.getenv("AI_BASE_MODEL", "").strip(),
         }
         missing = [key for key, value in required.items() if not value]
         if missing:
-            raise ValueError(f"missing required Vertex environment variables: {missing}")
-        credentials_path = Path(required["GOOGLE_APPLICATION_CREDENTIALS"])
-        if not credentials_path.is_file():
-            raise ValueError(f"GOOGLE_APPLICATION_CREDENTIALS file not found: {credentials_path}")
+            raise ValueError(f"missing required DashScope environment variables: {missing}")
         return cls(
-            project=required["VERTEXAI_PROJECT"],
-            location=required["VERTEXAI_LOCATION"],
-            model=required["VERTEX_MODEL"].replace("google/", ""),
-            credentials_path=credentials_path,
+            api_key=required["DASHSCOPE_API_KEY"],
+            base_url=required["AI_BASE_BASE_URL"],
+            model=required["AI_BASE_MODEL"],
         )

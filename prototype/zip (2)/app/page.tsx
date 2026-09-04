@@ -8,30 +8,38 @@ import RunHistoryModal from './components/RunHistoryModal';
 import { History } from 'lucide-react';
 
 const EarlyTurnFunnel = dynamic(() => import('./components/EarlyTurnFunnel'), { ssr: false });
-const SecondaryEvalView = dynamic(() => import('./components/SecondaryEvalView'), { ssr: false });
-const SampleValidationView = dynamic(() => import('./components/SampleValidationView'), { ssr: false });
 const SingleStockTestView = dynamic(() => import('./components/SingleStockTestView'), { ssr: false });
+const WatchlistView = dynamic(() => import('./components/WatchlistView'), { ssr: false });
 const KLineModal = dynamic(() => import('./components/KLineModal'), { ssr: false });
 const PoolStageFunnel = dynamic(() => import('./components/PoolStageFunnel'), { ssr: false });
 const ImportModal = dynamic(() => import('./components/ImportModal'), { ssr: false });
 const ImportedDashboard = dynamic(() => import('./components/ImportedDashboard'), { ssr: false });
 const ReverseBreakoutPage = dynamic(() => import('./components/ReverseBreakoutPage'), { ssr: false });
 const MarketQuotesPage = dynamic(() => import('./components/MarketQuotesPage'), { ssr: false });
+const TechnicalClassificationPage = dynamic(() => import('./components/TechnicalClassificationPage'), { ssr: false });
+const TradePlansPage = dynamic(() => import('./components/TradePlansPage'), { ssr: false });
+const TradingSystemShell = dynamic(() => import('./components/TradingSystemShell'), { ssr: false });
+const TradingOverviewPage = dynamic(() => import('./components/TradingOverviewPage'), { ssr: false });
+const GlobalSettingsPage = dynamic(() => import('./components/TradingSystemShell').then((module) => module.SettingsPage), { ssr: false });
 import {
   Activity,
   AlertTriangle,
   BarChart3,
   Calendar,
+  Cable,
   ChevronLeft,
   ChevronRight,
   CheckCircle2,
+  CirclePause,
   ExternalLink,
   LineChart,
   Loader2,
   PlayCircle,
   RefreshCw,
   Search,
+  Settings,
   Sparkles,
+  Star,
   Moon,
   Sun,
   Target,
@@ -41,6 +49,24 @@ import {
   ChevronDown,
   X,
 } from 'lucide-react';
+
+type WatchlistTradePlanPrefill = {
+  symbol: string;
+  securityName: string;
+  sourceType: 'MANUAL' | 'STRATEGY' | 'UNKNOWN';
+  strategy?: string | null;
+  stage?: string | null;
+  snapshotDate?: string | null;
+};
+
+type TradingAccountSummary = {
+  id: number;
+  name: string;
+  account_type: 'SIMULATION' | 'LIVE' | 'PLANNING' | string;
+  status: string;
+  is_default: boolean;
+  connection_status?: string | null;
+};
 
 type ReturnMap = Record<string, number | null>;
 
@@ -330,7 +356,7 @@ type ScreeningHistoryItem = {
   trade_date: string;
 };
 
-const API_BASE = process.env.NEXT_PUBLIC_MARKET_REVIEW_API_URL || 'http://127.0.0.1:18080';
+const API_BASE = process.env.NEXT_PUBLIC_MARKET_REVIEW_API_URL;
 
 function formatDate(value: string) {
   if (!value || value.length !== 8) return value;
@@ -358,12 +384,26 @@ function toneClass(value: number | null | undefined) {
 }
 
 async function fetchJson<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {cache: 'no-store'});
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `HTTP ${response.status}`);
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await fetch(`${API_BASE}${path}`, {cache: 'no-store'});
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `HTTP ${response.status}`);
+      }
+      return response.json();
+    } catch (error) {
+      lastError = error;
+      // 后端重启或端口短暂切换时，给服务一个短暂恢复窗口。
+      if (attempt < 2 && error instanceof TypeError) {
+        await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+        continue;
+      }
+      throw error;
+    }
   }
-  return response.json();
+  throw lastError instanceof Error ? lastError : new Error('数据接口暂时无法连接');
 }
 
 async function postJson<T>(path: string, body: unknown): Promise<T> {
@@ -380,7 +420,11 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
 }
 
 export default function MarketReviewApp() {
-  const [activeView, setActiveView] = useState<'market' | 'review' | 'screening' | 'reverse'>('market');
+  const [activeView, setActiveView] = useState<'market' | 'review' | 'screening' | 'watchlist' | 'technical-classification' | 'trading-system' | 'trading-overview' | 'trade-plans'>('market');
+  // 自动选股首次打开后保留组件实例，切换到其他模块时只隐藏它，
+  // 以保留用户已经筛选出的列表、滚动位置和抽屉状态。
+  const [screeningMounted, setScreeningMounted] = useState(false);
+  const [tradePlanPrefill, setTradePlanPrefill] = useState<WatchlistTradePlanPrefill | null>(null);
   const [report, setReport] = useState<OverviewReport | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -394,11 +438,17 @@ export default function MarketReviewApp() {
   const [screeningError, setScreeningError] = useState<string | null>(null);
   const [screeningPool, setScreeningPool] = useState<ScreeningPool>('A');
   const [screeningOnlySelected, setScreeningOnlySelected] = useState(false);
-  const [screeningSubTab, setScreeningSubTab] = useState<'SECONDARY' | 'EARLY_TURN' | 'SECONDARY_EVAL' | 'SAMPLES' | 'SINGLE_STOCK_TEST'>('EARLY_TURN');
+  const [screeningSubTab, setScreeningSubTab] = useState<'SECONDARY' | 'EARLY_TURN' | 'SAMPLES' | 'SINGLE_STOCK_TEST'>('EARLY_TURN');
   const [screeningRunning, setScreeningRunning] = useState(false);
   const [screeningRequest, setScreeningRequest] = useState<ScreeningRequest>(DEFAULT_SCREENING_REQUEST);
   const [taskStatus, setTaskStatus] = useState<{ status: string; progress: number; step_message: string } | null>(null);
   const [theme, setTheme] = useState<'default' | 'dark'>('default');
+  const [tradingAccounts, setTradingAccounts] = useState<TradingAccountSummary[]>([]);
+  const [selectedTradingAccountId, setSelectedTradingAccountId] = useState<number | null>(null);
+  const [tradingAccountsLoading, setTradingAccountsLoading] = useState(false);
+  const [tradingAccountsError, setTradingAccountsError] = useState<string | null>(null);
+  const [tradingAccountsRefreshKey, setTradingAccountsRefreshKey] = useState(0);
+  const [globalSettingsOpen, setGlobalSettingsOpen] = useState(false);
 
   useEffect(() => {
     const saved = localStorage.getItem('app-theme') as 'default' | 'dark' | null;
@@ -426,9 +476,10 @@ export default function MarketReviewApp() {
       return;
     }
 
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = rect.left + rect.width / 2;
-    const y = rect.top + rect.height / 2;
+    const btn = (typeof document !== 'undefined' ? document.getElementById('theme-toggle-btn') : null) || e.currentTarget;
+    const rect = btn ? btn.getBoundingClientRect() : { left: window.innerWidth - 50, top: 25, width: 32, height: 32 };
+    const x = Math.round(rect.left + rect.width / 2);
+    const y = Math.round(rect.top + rect.height / 2);
     const endRadius = Math.hypot(
       Math.max(x, window.innerWidth - x),
       Math.max(y, window.innerHeight - y)
@@ -504,6 +555,10 @@ export default function MarketReviewApp() {
     loadData();
     loadScreening();
   }, []);
+
+  useEffect(() => {
+    if (activeView === 'screening') setScreeningMounted(true);
+  }, [activeView, tradingAccountsRefreshKey]);
 
   async function loadScreening(
     pool: ScreeningPool = screeningPool,
@@ -637,6 +692,34 @@ export default function MarketReviewApp() {
     }
   }
 
+  useEffect(() => {
+    if (activeView !== 'trading-system') return;
+    let cancelled = false;
+    setTradingAccountsLoading(true);
+    setTradingAccountsError(null);
+    fetchJson<{ status: string; items: TradingAccountSummary[] }>('/api/trading/accounts')
+      .then((result) => {
+        if (cancelled) return;
+        if (result.status !== 'SUCCESS' || !Array.isArray(result.items) || result.items.length === 0) {
+          throw new Error('未读取到可用交易账号');
+        }
+        setTradingAccounts(result.items);
+        setSelectedTradingAccountId((current) => {
+          if (current !== null && result.items.some((item) => item.id === current)) return current;
+          const defaultAccount = result.items.find((item) => item.is_default);
+          if (!defaultAccount) throw new Error('交易账号列表未标记默认账号');
+          return defaultAccount.id;
+        });
+      })
+      .catch((reason) => {
+        if (!cancelled) setTradingAccountsError(reason instanceof Error ? reason.message : '交易账号读取失败');
+      })
+      .finally(() => {
+        if (!cancelled) setTradingAccountsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [activeView]);
+
   return (
     <div className={`min-h-screen flex flex-col ${theme === 'dark' ? 'bg-[#0b0f19] text-[#f8fafc]' : 'bg-[#faf6f0] text-[#2e3230]'}`} data-theme={theme}>
       <header className="fixed top-0 z-50 w-full border-b border-[#c4c8bc]/30 bg-[#f0ece4]/90 backdrop-blur-md">
@@ -668,69 +751,61 @@ export default function MarketReviewApp() {
                 自动选股
               </button>
               <button
-                onClick={() => setActiveView('reverse')}
-                className={`rounded-md px-3 py-1.5 text-sm font-bold ${activeView === 'reverse' ? 'bg-[#4a7c59] text-white' : 'text-[#4a4e4a] hover:bg-[#e4e0d8]'}`}
+                onClick={() => setActiveView('technical-classification')}
+                className={`rounded-md px-3 py-1.5 text-sm font-bold ${activeView === 'technical-classification' ? 'bg-[#4a7c59] text-white' : 'text-[#4a4e4a] hover:bg-[#e4e0d8]'}`}
               >
-                形态反查
+                全市场技术分类
               </button>
-
-            </nav>
-          </div>
-          <div className="flex items-center gap-3">
-            {activeView === 'review' ? (
-              <>
-                <button
-                  onClick={() => setShowImportModal(true)}
-                  className="inline-flex items-center gap-1.5 rounded-md bg-[#4a7c59] px-3 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-[#3b6447]"
-                >
-                  <Sparkles className="h-3.5 w-3.5" />
-                  导入复盘文章
-                </button>
-                <label className="flex items-center gap-2 rounded-md bg-[#eae6de] px-3 py-1.5 text-xs font-bold text-[#4a4e4a]">
-                  <Calendar className="h-3.5 w-3.5" />
+              <button
+                onClick={() => setActiveView('watchlist')}
+                className={`rounded-md px-3 py-1.5 text-sm font-bold ${activeView === 'watchlist' ? 'bg-[#4a7c59] text-white' : 'text-[#4a4e4a] hover:bg-[#e4e0d8]'}`}
+              >
+                <><Star className="mr-1 inline h-4 w-4" strokeWidth={1.8} />自选股</>
+              </button>
+              <button
+                onClick={() => setActiveView('trading-system')}
+                className={`rounded-md px-3 py-1.5 text-sm font-bold ${activeView === 'trading-system' ? 'bg-[#4a7c59] text-white' : 'text-[#4a4e4a] hover:bg-[#e4e0d8]'}`}
+              >
+                交易系统
+              </button>
+              {activeView === 'trading-system' && (
+                <label className="ml-1 hidden items-center gap-2 rounded-lg border border-[#c4c8bc]/60 bg-white px-2.5 py-1 text-xs font-bold text-[#4a4e4a] lg:flex">
+                  <span className="whitespace-nowrap">账号</span>
                   <select
-                    aria-label="选择复盘日期"
-                    value={report?.trade_date || ''}
-                    onChange={(event) => selectDate(event.target.value)}
-                    className="bg-transparent outline-none"
+                    value={selectedTradingAccountId ?? ''}
+                    disabled={tradingAccountsLoading || tradingAccounts.length === 0}
+                    onChange={(event) => setSelectedTradingAccountId(Number(event.target.value))}
+                    className="max-w-[180px] bg-transparent text-xs outline-none disabled:opacity-60"
+                    aria-label="选择交易账号"
                   >
-                    {!report && <option value="">未加载</option>}
-                    {history.map((item) => (
-                      <option key={item.trade_date} value={item.trade_date}>{formatDate(item.trade_date)}</option>
+                    {tradingAccounts.map((account) => (
+                      <option key={account.id} value={account.id}>{account.name}</option>
                     ))}
                   </select>
                 </label>
-              </>
-            ) : activeView === 'screening' ? (
-              <label className="flex items-center gap-2 rounded-md bg-[#eae6de] px-3 py-1.5 text-xs font-bold text-[#4a4e4a]">
-                <Calendar className="h-3.5 w-3.5" />
-                <select
-                  aria-label="选择选股日期"
-                  value={screening?.trade_date || ''}
-                  onChange={(event) => selectScreeningDate(event.target.value)}
-                  className="bg-transparent outline-none"
-                >
-                  {!screening && <option value="">未加载</option>}
-                  {screeningHistory.map((item) => (
-                    <option key={item.trade_date} value={item.trade_date}>{formatDate(item.trade_date)}</option>
-                  ))}
-                </select>
-              </label>
-            ) : (
+              )}
+            </nav>
+          </div>
+          <div className="flex items-center gap-3">
+            {activeView !== 'screening' && (
               <span className="hidden text-xs font-bold text-[#686d68] sm:inline">
                 独立研究工具
               </span>
             )}
-            {activeView !== 'reverse' && (
+            {activeView === 'screening' && (
               <button
-                onClick={() => activeView === 'review' ? loadData(report?.trade_date) : loadScreening(screeningPool, screening?.trade_date)}
+                onClick={() => loadScreening(screeningPool, screening?.trade_date)}
                 className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[#c4c8bc]/60 bg-white text-[#4a4e4a] hover:text-[#2e3230]"
                 title="刷新"
               >
                 <RefreshCw className="h-4 w-4" />
               </button>
             )}
+            <button type="button" onClick={() => setGlobalSettingsOpen(true)} title="全局设置" aria-label="全局设置" className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[#c4c8bc]/60 bg-white text-[#4a4e4a] hover:text-[#2e3230]">
+              <Settings className="h-4 w-4" />
+            </button>
             <button
+              id="theme-toggle-btn"
               onClick={toggleTheme}
               className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#c4c8bc]/60 bg-white text-[#4a4e4a] shadow-xs transition-all hover:scale-110 active:scale-95 hover:shadow-md theme-toggle-btn"
               title={theme === 'default' ? '切换至 暗色科技 主题' : '切换至 原木默认 主题'}
@@ -750,94 +825,64 @@ export default function MarketReviewApp() {
         {activeView === 'review' && loading && <LoadingState label="正在读取复盘数据" />}
         {activeView === 'review' && !loading && error && <ErrorState message={error} onRetry={loadData} />}
         {activeView === 'review' && !loading && !error && report && (
-          <Dashboard report={report} onGenerateAI={generateAI} aiLoading={aiLoading} aiError={aiError} />
-        )}
-        {activeView === 'screening' && (
-          <div className="px-4 pt-3 sm:px-6 lg:px-8">
-            <div className="flex items-center gap-2 border-b border-[#c4c8bc]/40 pb-2 mb-2">
-              <button
-                onClick={() => setScreeningSubTab('SECONDARY')}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
-                  screeningSubTab === 'SECONDARY'
-                    ? 'bg-[#2e3230] text-white shadow-xs'
-                    : 'bg-white text-[#4a4e4a] hover:bg-[#e4e0d8] border border-[#c4c8bc]/50'
-                }`}
-              >
-                <span>📊 ABC池二次筛选 (五层过滤)</span>
-              </button>
-
-              <button
-                onClick={() => setScreeningSubTab('EARLY_TURN')}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
-                  screeningSubTab === 'EARLY_TURN'
-                    ? 'bg-[#4a7c59] text-white shadow-xs'
-                    : 'bg-white text-[#4a4e4a] hover:bg-[#e4e0d8] border border-[#c4c8bc]/50'
-                }`}
-              >
-                <span>🧪 A-Pre V2 早期转强 (均线状态迁移)</span>
-              </button>
-
-              <button
-                onClick={() => setScreeningSubTab('SAMPLES')}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
-                  screeningSubTab === 'SAMPLES'
-                    ? 'bg-[#705c30] text-white shadow-xs'
-                    : 'bg-white text-[#4a4e4a] hover:bg-[#e4e0d8] border border-[#c4c8bc]/50'
-                }`}
-              >
-                <span>🎯 正负样本回归校验看板</span>
-              </button>
-
-              <button
-                onClick={() => setScreeningSubTab('SINGLE_STOCK_TEST')}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
-                  screeningSubTab === 'SINGLE_STOCK_TEST'
-                    ? 'bg-[#2e3230] text-white shadow-xs'
-                    : 'bg-white text-[#4a4e4a] hover:bg-[#e4e0d8] border border-[#c4c8bc]/50'
-                }`}
-              >
-                <span>🔬 单股策略测试</span>
-              </button>
-            </div>
-          </div>
-        )}
-
-        {activeView === 'screening' && screeningSubTab === 'SINGLE_STOCK_TEST' && (
-          <div className="px-4 pb-6 sm:px-6 lg:px-8">
-            <SingleStockTestView />
-          </div>
-        )}
-
-        {activeView === 'screening' && screeningSubTab === 'SECONDARY' && screeningLoading && <LoadingState label="正在读取选股结果" />}
-        {activeView === 'screening' && screeningSubTab === 'SECONDARY' && !screeningLoading && screeningError && <ErrorState message={screeningError} onRetry={() => loadScreening(screeningPool, screening?.trade_date)} />}
-        {activeView === 'screening' && screeningSubTab === 'SECONDARY' && !screeningLoading && !screeningError && screening && (
-          <ScreeningTab
-            payload={screening}
-            activePool={screeningPool}
-            onPoolChange={(pool) => {
-              setScreeningPool(pool);
-              loadScreening(pool, screening.trade_date, {...screeningRequest, page: 1}, screeningOnlySelected);
-            }}
-            onlySelected={screeningOnlySelected}
-            onOnlySelectedChange={(onlySelected) => {
-              loadScreening(screeningPool, screening.trade_date, {...screeningRequest, page: 1}, onlySelected);
-            }}
-            request={screeningRequest}
-            onRequestChange={(req) => loadScreening(screeningPool, screening.trade_date, req, screeningOnlySelected)}
-            onRun={runScreening}
-            running={screeningRunning}
-            taskStatus={taskStatus}
-            onToggleSelect={toggleCandidateSelect}
+          <Dashboard 
+            report={report} 
+            onGenerateAI={generateAI} 
+            aiLoading={aiLoading} 
+            aiError={aiError}
+            onOpenImportModal={() => setShowImportModal(true)}
+            history={history}
+            onSelectDate={(d) => selectDate(d)}
           />
         )}
+        {activeView === 'watchlist' && (
+          <div className="px-4 pb-6 sm:px-6 lg:px-8">
+            <WatchlistView onCreateTradePlan={(stock) => {
+              const strategySource = stock.source_type === 'STRATEGY';
+              setTradePlanPrefill({
+                symbol: stock.asset_code,
+                securityName: stock.name,
+                sourceType: strategySource ? 'STRATEGY' : stock.source_type === 'UNKNOWN' ? 'UNKNOWN' : 'MANUAL',
+                strategy: strategySource ? stock.source_strategy : null,
+                stage: strategySource ? stock.source_stage : null,
+                snapshotDate: strategySource ? stock.source_snapshot_date : null,
+              });
+              setActiveView('trading-system');
+            }} />
+          </div>
+        )}
+
+        {screeningMounted && (
+          <div className={activeView === 'screening' ? 'px-4 pt-3 pb-6 sm:px-6 lg:px-8' : 'hidden'}>
+            <EarlyTurnFunnel />
+          </div>
+        )}
         {activeView === 'market' && <MarketQuotesPage />}
-        {activeView === 'reverse' && <ReverseBreakoutPage />}
+        {activeView === 'technical-classification' && <TechnicalClassificationPage />}
+        {activeView === 'trading-overview' && selectedTradingAccountId !== null && <TradingOverviewPage accountId={selectedTradingAccountId} />}
+        {activeView === 'trade-plans' && selectedTradingAccountId !== null && <TradePlansPage accountId={selectedTradingAccountId} />}
+        {activeView === 'trading-system' && (
+          tradingAccountsError ? <ErrorState message={tradingAccountsError} onRetry={() => setTradingAccountsRefreshKey((value) => value + 1)} /> :
+          selectedTradingAccountId === null ? <LoadingState label="正在读取交易账号" /> :
+          <TradingSystemShell
+              embedded
+              accountId={selectedTradingAccountId}
+              initialView={tradePlanPrefill ? 'open' : 'overview'}
+              tradePlanPrefill={tradePlanPrefill}
+              onPlanPrefillConsumed={() => setTradePlanPrefill(null)}
+              onNavigate={setActiveView}
+            />
+        )}
 
         <ImportModal
           isOpen={showImportModal}
           onClose={() => setShowImportModal(false)}
-          onSuccess={(date) => loadData(date)}
+          onSuccess={(date) => {
+            setActiveView('review');
+            loadData(date);
+          }}
         />
+        {globalSettingsOpen && <GlobalSettingsPage mode="global" onRefresh={() => undefined} onClose={() => setGlobalSettingsOpen(false)} />}
       </main>
     </div>
   );
@@ -848,11 +893,17 @@ function Dashboard({
   onGenerateAI,
   aiLoading,
   aiError,
+  onOpenImportModal,
+  history = [],
+  onSelectDate,
 }: {
   report: OverviewReport;
   onGenerateAI: () => void;
   aiLoading: boolean;
   aiError: string | null;
+  onOpenImportModal?: () => void;
+  history?: Array<{ trade_date: string }>;
+  onSelectDate?: (date: string) => void;
 }) {
   if (report.is_imported && report.imported_payload) {
     return (
@@ -860,6 +911,10 @@ function Dashboard({
         tradeDate={report.trade_date}
         payload={report.imported_payload}
         rawContent={report.raw_content}
+        marketData={(report as any).market_data}
+        onOpenImportModal={onOpenImportModal}
+        history={history}
+        onSelectDate={onSelectDate}
       />
     );
   }

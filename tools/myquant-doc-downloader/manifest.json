@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "MyQuant 文档增量下载器",
+  "version": "1.0.0",
+  "description": "下载 MyQuant docs2 文档并按内容哈希做增量更新。",
+  "permissions": ["storage", "downloads", "activeTab"],
+  "host_permissions": ["https://www.myquant.cn/docs2/*", "https://myquant.cn/docs2/*"],
+  "action": {
+    "default_title": "MyQuant 文档下载",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.myquant.cn/docs2/*", "https://myquant.cn/docs2/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  }
+}

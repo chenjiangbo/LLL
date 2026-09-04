@@ -1,0 +1,9 @@
+{
+  "source": "Windows real gm.api MODE_LIVE readonly query",
+  "observed_at": "2026-09-02T23:03:24+08:00",
+  "python": "3.9.13",
+  "gm_version": "3.0.186",
+  "account_mode": "SIM",
+  "redactions": ["strategy_id", "account_id", "account_name", "cl_ord_id", "order_id", "ex_ord_id", "exec_id", "token"]
+}
+

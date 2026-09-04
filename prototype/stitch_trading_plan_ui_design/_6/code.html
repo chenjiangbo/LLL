@@ -1,0 +1,241 @@
+<html lang="zh-CN"><head><meta charset="utf-8"/><meta content="width=device-width, initial-scale=1.0" name="viewport"/><style>@layer base{html,body{margin:0;padding:0;}body{overscroll-behavior:none;}main>:first-child{margin-top:0!important;}main>:last-child{margin-bottom:0!important;}}::-webkit-scrollbar{display:none;}</style><script src="https://cdn.tailwindcss.com"></script><script id="tailwind-config">tailwind.config={theme:{extend:{"colors":{"secondary-container":"#a1f4c8","tertiary":"#713638","outline-variant":"#bfc9c1","surface-container":"#edeeef","tertiary-fixed-dim":"#ffb3b3","semantic-negative":"#ae2012","on-background":"#191c1d","inverse-on-surface":"#f0f1f2","tertiary-fixed":"#ffdad9","on-surface-variant":"#404943","surface-container-high":"#e7e8e9","inverse-primary":"#95d4b3","primary-fixed":"#b1f0ce","on-primary-fixed-variant":"#0e5138","background":"#f8f9fa","error":"#ba1a1a","on-primary":"#ffffff","on-tertiary-container":"#ffcfce","surface-container-lowest":"#ffffff","text-slate-muted":"#52616b","semantic-positive":"#2d6a4f","on-tertiary-fixed":"#390b0e","secondary-fixed":"#a1f4c8","primary-fixed-dim":"#95d4b3","on-secondary-fixed-variant":"#005236","outline":"#707973","on-surface":"#191c1d","surface-dim":"#d9dadb","on-tertiary":"#ffffff","real-account-badge":"#9b2226","primary":"#0f5238","tertiary-container":"#8d4d4e","k-line-green":"#26a69a","surface-container-highest":"#e1e3e4","error-container":"#ffdad6","on-secondary-container":"#1b724f","on-tertiary-fixed-variant":"#6f3537","on-secondary-fixed":"#002113","on-secondary":"#ffffff","k-line-red":"#ef5350","secondary":"#116c4a","semantic-warning":"#e67e22","primary-container":"#2d6a4f","background-cream":"#f8f9fa","surface-tint":"#2c694e","secondary-fixed-dim":"#86d7ad","on-primary-fixed":"#002114","surface-variant":"#e1e3e4","on-error-container":"#93000a","surface-bright":"#f8f9fa","surface":"#f8f9fa","text-slate-deep":"#1b262c","inverse-surface":"#2e3132","on-error":"#ffffff","border-subtle":"#dee2e6","on-primary-container":"#a8e7c5","surface-container-low":"#f3f4f5"},"borderRadius":{"DEFAULT":"0.25rem","lg":"0.5rem","xl":"0.75rem","full":"9999px"},"spacing":{"sm":"8px","xs":"4px","container-margin":"24px","lg":"24px","unit":"4px","gutter":"16px","md":"16px","xl":"32px"},"fontFamily":{"mono-data":["JetBrains Mono"],"headline-md":["Inter"],"display-lg":["Inter"],"headline-lg":["Inter"],"body-md":["Inter"],"label-md":["Inter"],"body-lg":["Inter"]},"fontSize":{"mono-data":["14px",{"lineHeight":"20px","fontWeight":"500"}],"headline-md":["20px",{"lineHeight":"28px","fontWeight":"600"}],"display-lg":["36px",{"lineHeight":"44px","letterSpacing":"-0.02em","fontWeight":"700"}],"headline-lg":["24px",{"lineHeight":"32px","fontWeight":"600"}],"body-md":["14px",{"lineHeight":"20px","fontWeight":"400"}],"label-md":["12px",{"lineHeight":"16px","letterSpacing":"0.01em","fontWeight":"500"}],"body-lg":["16px",{"lineHeight":"24px","fontWeight":"400"}]}}}}</script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap" rel="stylesheet"/></head><body class="bg-background-cream font-body-md text-on-surface"><header class="fixed top-0 w-full z-50 bg-surface/90 backdrop-blur-md shadow-[0_1px_8px_rgba(0,0,0,0.04)]"><div class="h-16 w-full px-container-margin flex items-center justify-between"><div class="flex items-center gap-xl"><div class="flex items-center gap-sm"><div class="w-8 h-8 bg-primary rounded-lg flex items-center justify-center"><span class="material-symbols-outlined text-on-primary">analytics</span></div><span class="font-headline-md text-headline-md text-primary tracking-tight whitespace-nowrap">LLL 交易研究</span></div><nav class="hidden xl:flex items-center gap-lg self-stretch" data-active-classes="text-primary font-bold border-b-2 border-primary"><a class="h-full flex items-center px-xs text-body-md text-on-surface-variant hover:text-primary transition-colors" data-path="overview" href="#">交易总览</a><a class="h-full flex items-center px-xs text-body-md text-on-surface-variant hover:text-primary transition-colors" data-path="plan" href="#">交易计划</a><a class="h-full flex items-center px-xs text-body-md text-on-surface-variant hover:text-primary transition-colors" data-path="execution" href="#">交易执行</a><a class="h-full flex items-center px-xs text-body-md text-on-surface-variant hover:text-primary transition-colors" data-path="orders" href="#">订单</a><a class="h-full flex items-center px-xs text-body-md text-on-surface-variant hover:text-primary transition-colors" data-path="positions" href="#">持仓</a><a class="h-full flex items-center px-xs text-body-md text-on-surface-variant hover:text-primary transition-colors" data-path="settings" href="#">交易设置</a></nav></div><div class="flex items-center gap-md"><div class="flex items-center gap-sm px-md py-1.5 bg-surface-container rounded-full border border-outline-variant"><div class="w-2 h-2 rounded-full bg-semantic-positive animate-pulse"></div><span class="text-label-md font-label-md text-on-surface-variant">实盘账户 - 连接正常</span><span class="px-2 py-0.5 bg-real-account-badge text-on-primary rounded text-[10px] font-bold uppercase">Live</span></div><button class="flex items-center gap-xs px-lg py-2 bg-semantic-negative text-on-primary rounded-lg hover:opacity-90 transition-all font-label-md"><span class="material-symbols-outlined text-[18px]">emergency_home</span>PAUSE ALL</button><div class="flex items-center gap-sm ml-sm"><div class="text-right hidden sm:block"><div class="text-label-md font-label-md text-on-surface">Trading Desk 01</div><div class="text-[10px] text-on-surface-variant leading-none">正常执行</div></div><div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center"><span class="material-symbols-outlined text-on-primary text-[18px]">person</span></div></div></div></div></header><main class="w-full pt-16 min-h-screen bg-background-cream"><div class="flex flex-col w-full h-full p-container-margin gap-xl">
+<div class="flex flex-col gap-sm">
+<h1 class="font-display-lg text-display-lg text-on-background">交易设置</h1>
+<p class="font-body-lg text-body-lg text-text-slate-muted">系统配置、账户管理与风险控制规则</p>
+</div>
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-lg relative">
+<div class="col-span-1 lg:col-span-3">
+<nav class="flex flex-col sticky top-24 gap-xs" id="settings-nav">
+<button class="flex items-center gap-sm p-3 rounded-lg bg-primary-fixed text-on-primary-fixed-variant transition-colors text-left" data-target="account-card">
+<span class="material-symbols-outlined text-[20px]">account_balance_wallet</span>
+<span class="font-headline-md text-[16px] font-semibold">账户管理</span>
+</button>
+<button class="flex items-center gap-sm p-3 rounded-lg hover:bg-surface-container text-on-surface-variant transition-colors text-left" data-target="risk-card">
+<span class="material-symbols-outlined text-[20px]">security</span>
+<span class="font-headline-md text-[16px] font-semibold">风险控制规则</span>
+</button>
+<button class="flex items-center gap-sm p-3 rounded-lg hover:bg-surface-container text-on-surface-variant transition-colors text-left" data-target="broker-card">
+<span class="material-symbols-outlined text-[20px]">swap_horiz</span>
+<span class="font-headline-md text-[16px] font-semibold">券商连接</span>
+</button>
+<button class="flex items-center gap-sm p-3 rounded-lg hover:bg-surface-container text-on-surface-variant transition-colors text-left" data-target="system-card">
+<span class="material-symbols-outlined text-[20px]">settings</span>
+<span class="font-headline-md text-[16px] font-semibold">系统偏好</span>
+</button>
+</nav>
+</div>
+<div class="col-span-1 lg:col-span-9 flex flex-col gap-xl pb-32">
+<div class="bg-surface-container-lowest rounded-xl shadow-sm p-lg flex flex-col gap-lg transition-transform duration-300" id="account-card">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-sm">
+<div class="w-10 h-10 rounded-full bg-secondary-fixed flex items-center justify-center">
+<span class="material-symbols-outlined text-on-secondary-fixed-variant">person</span>
+</div>
+<div>
+<h2 class="font-headline-lg text-headline-lg text-on-surface">主交易账户</h2>
+<p class="font-body-md text-body-md text-text-slate-muted">实盘 · 股票策略</p>
+</div>
+</div>
+<button class="px-md py-2 rounded-lg bg-surface-container hover:bg-surface-container-high transition-colors font-label-md text-label-md text-on-surface font-semibold flex items-center gap-xs">
+<span class="material-symbols-outlined text-[16px]">edit</span> 编辑
+                    </button>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-md">
+<div class="flex flex-col gap-xs p-md bg-surface-container-low rounded-lg">
+<span class="font-label-md text-label-md text-on-surface-variant uppercase tracking-wider">账户名称</span>
+<span class="font-body-lg text-body-lg font-medium text-on-surface">Alpha Fund 01</span>
+</div>
+<div class="flex flex-col gap-xs p-md bg-surface-container-low rounded-lg">
+<span class="font-label-md text-label-md text-on-surface-variant uppercase tracking-wider">券商</span>
+<span class="font-body-lg text-body-lg font-medium text-on-surface">Interactive Brokers</span>
+</div>
+<div class="flex flex-col gap-xs p-md bg-surface-container-low rounded-lg">
+<span class="font-label-md text-label-md text-on-surface-variant uppercase tracking-wider">账号</span>
+<span class="font-mono-data text-mono-data text-text-slate-deep">U1234567</span>
+</div>
+<div class="flex flex-col gap-xs p-md bg-surface-container-low rounded-lg">
+<span class="font-label-md text-label-md text-on-surface-variant uppercase tracking-wider">基础货币</span>
+<span class="font-body-lg text-body-lg font-medium text-on-surface">USD</span>
+</div>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-md mt-sm">
+<div class="flex justify-between items-center p-md bg-primary-fixed/20 rounded-lg">
+<span class="font-label-md text-label-md text-on-primary-fixed-variant">净资产 (Equity)</span>
+<span class="font-mono-data text-[20px] font-bold text-on-primary-fixed-variant">$1,250,430.00</span>
+</div>
+<div class="flex justify-between items-center p-md bg-surface-container-low rounded-lg">
+<span class="font-label-md text-label-md text-on-surface-variant">可用资金 (Cash)</span>
+<span class="font-mono-data text-[20px] font-bold text-on-surface">$450,210.50</span>
+</div>
+</div>
+</div>
+<div class="bg-surface-container-lowest rounded-xl shadow-sm p-lg flex flex-col gap-lg" id="risk-card">
+<div class="flex items-center gap-sm">
+<span class="material-symbols-outlined text-tertiary-container text-[24px]">gpp_maybe</span>
+<h2 class="font-headline-lg text-headline-lg text-on-surface">风险控制规则</h2>
+</div>
+<p class="font-body-md text-body-md text-text-slate-muted max-w-2xl">这些参数将强制应用于所有新生成的交易计划和订单执行。修改这些参数需要二次确认。</p>
+<div class="flex flex-col gap-md">
+<div class="flex items-center justify-between p-md bg-surface-container-low rounded-lg group hover:bg-surface-container transition-colors">
+<div class="flex flex-col">
+<span class="font-body-lg text-body-lg font-medium text-on-surface">默认单笔风险比例</span>
+<span class="font-label-md text-label-md text-on-surface-variant">基于总净资产的百分比</span>
+</div>
+<div class="flex items-center gap-md">
+<span class="font-mono-data text-[16px] font-bold text-on-surface">1.0%</span>
+<button class="opacity-0 group-hover:opacity-100 transition-opacity text-primary hover:text-primary-fixed-dim">
+<span class="material-symbols-outlined text-[20px]">edit</span>
+</button>
+</div>
+</div>
+<div class="flex items-center justify-between p-md bg-surface-container-low rounded-lg group hover:bg-surface-container transition-colors">
+<div class="flex flex-col">
+<span class="font-body-lg text-body-lg font-medium text-on-surface">最大单笔允许风险</span>
+<span class="font-label-md text-label-md text-semantic-negative">超过此比例将拒绝建仓</span>
+</div>
+<div class="flex items-center gap-md">
+<span class="font-mono-data text-[16px] font-bold text-semantic-negative">2.5%</span>
+<button class="opacity-0 group-hover:opacity-100 transition-opacity text-primary hover:text-primary-fixed-dim">
+<span class="material-symbols-outlined text-[20px]">edit</span>
+</button>
+</div>
+</div>
+<div class="flex items-center justify-between p-md bg-surface-container-low rounded-lg group hover:bg-surface-container transition-colors">
+<div class="flex flex-col">
+<span class="font-body-lg text-body-lg font-medium text-on-surface">单一个股最大仓位权重</span>
+<span class="font-label-md text-label-md text-on-surface-variant">限制资金过度集中</span>
+</div>
+<div class="flex items-center gap-md">
+<span class="font-mono-data text-[16px] font-bold text-on-surface">15.0%</span>
+<button class="opacity-0 group-hover:opacity-100 transition-opacity text-primary hover:text-primary-fixed-dim">
+<span class="material-symbols-outlined text-[20px]">edit</span>
+</button>
+</div>
+</div>
+<div class="flex items-center justify-between p-md bg-surface-container-low rounded-lg group hover:bg-surface-container transition-colors">
+<div class="flex flex-col">
+<span class="font-body-lg text-body-lg font-medium text-on-surface">最大总杠杆率</span>
+<span class="font-label-md text-label-md text-on-surface-variant">总持仓市值 / 净资产</span>
+</div>
+<div class="flex items-center gap-md">
+<span class="font-mono-data text-[16px] font-bold text-on-surface">1.5x</span>
+<button class="opacity-0 group-hover:opacity-100 transition-opacity text-primary hover:text-primary-fixed-dim">
+<span class="material-symbols-outlined text-[20px]">edit</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+<div class="bg-surface-container-lowest rounded-xl shadow-sm p-lg flex flex-col gap-lg" id="broker-card">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-sm">
+<span class="material-symbols-outlined text-primary text-[24px]">cable</span>
+<h2 class="font-headline-lg text-headline-lg text-on-surface">券商连接与同步</h2>
+</div>
+<div class="flex items-center gap-xs px-3 py-1 bg-semantic-positive/10 rounded-full">
+<div class="w-2 h-2 rounded-full bg-semantic-positive animate-pulse"></div>
+<span class="font-label-md text-[12px] text-semantic-positive font-bold">API Connected</span>
+</div>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-lg">
+<div class="flex flex-col gap-sm">
+<h3 class="font-headline-md text-[16px] text-on-surface">连接状态</h3>
+<div class="bg-surface-container-low p-md rounded-lg flex flex-col gap-xs">
+<div class="flex justify-between items-center border-b border-outline-variant/30 pb-2 mb-2">
+<span class="font-body-md text-on-surface-variant">最后同步时间</span>
+<span class="font-mono-data text-sm text-text-slate-deep">2024-05-20 09:45:12</span>
+</div>
+<div class="flex justify-between items-center border-b border-outline-variant/30 pb-2 mb-2">
+<span class="font-body-md text-on-surface-variant">持仓核对状态</span>
+<span class="font-body-md text-semantic-positive flex items-center gap-1"><span class="material-symbols-outlined text-[16px]">check_circle</span> 一致</span>
+</div>
+<div class="flex justify-between items-center">
+<span class="font-body-md text-on-surface-variant">延迟 (Latency)</span>
+<span class="font-mono-data text-sm text-text-slate-deep">45 ms</span>
+</div>
+</div>
+<button class="mt-2 py-2 px-4 rounded-lg bg-surface-container hover:bg-surface-container-high transition-colors font-label-md text-on-surface font-semibold w-full">
+                            强制完全同步
+                        </button>
+</div>
+<div class="flex flex-col gap-sm">
+<h3 class="font-headline-md text-[16px] text-on-surface">支持的订单类型</h3>
+<div class="flex flex-wrap gap-2">
+<span class="px-3 py-1 bg-surface-container rounded font-mono-data text-[12px] text-on-surface">MKT</span>
+<span class="px-3 py-1 bg-surface-container rounded font-mono-data text-[12px] text-on-surface">LMT</span>
+<span class="px-3 py-1 bg-surface-container rounded font-mono-data text-[12px] text-on-surface">STP</span>
+<span class="px-3 py-1 bg-surface-container rounded font-mono-data text-[12px] text-on-surface">STP LMT</span>
+<span class="px-3 py-1 bg-surface-container rounded font-mono-data text-[12px] text-on-surface">TRAIL</span>
+</div>
+<div class="mt-4 p-md bg-secondary-container/20 rounded-lg flex items-start gap-md">
+<span class="material-symbols-outlined text-secondary text-[20px] mt-1">info</span>
+<p class="font-label-md text-label-md text-on-surface-variant leading-relaxed">
+                                当前券商接口支持高级条件单。系统将优先使用原生 OCO (One-Cancels-the-Other) 订单进行止盈止损。
+                            </p>
+</div>
+</div>
+</div>
+</div>
+<div class="bg-surface-container-lowest rounded-xl shadow-sm p-lg flex flex-col gap-lg" id="system-card">
+<h2 class="font-headline-lg text-headline-lg text-on-surface">系统偏好</h2>
+<div class="flex flex-col gap-md">
+<div class="flex items-center justify-between p-md border-b border-outline-variant/30">
+<div class="flex flex-col">
+<span class="font-body-lg text-body-lg font-medium text-on-surface">K线红绿配色</span>
+<span class="font-label-md text-label-md text-on-surface-variant">选择适合您的图表颜色习惯</span>
+</div>
+<select class="bg-surface-container p-2 rounded-lg font-body-md text-on-surface focus:outline-none focus:ring-2 focus:ring-primary">
+<option>红涨绿跌 (中国大陆/台湾)</option>
+<option selected="">绿涨红跌 (国际惯例)</option>
+</select>
+</div>
+<div class="flex items-center justify-between p-md">
+<div class="flex flex-col">
+<span class="font-body-lg text-body-lg font-medium text-on-surface">关键操作二次确认</span>
+<span class="font-label-md text-label-md text-on-surface-variant">发送市价单、撤销全部订单时要求确认</span>
+</div>
+<div class="w-12 h-6 bg-primary rounded-full relative cursor-pointer">
+<div class="w-4 h-4 bg-on-primary rounded-full absolute top-1 right-1 shadow-sm"></div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const navButtons = document.querySelectorAll('#settings-nav button');
+        
+        navButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                // Reset all
+                navButtons.forEach(b => {
+                    b.classList.remove('bg-primary-fixed', 'text-on-primary-fixed-variant');
+                    b.classList.add('hover:bg-surface-container', 'text-on-surface-variant');
+                });
+                
+                // Set active
+                btn.classList.add('bg-primary-fixed', 'text-on-primary-fixed-variant');
+                btn.classList.remove('hover:bg-surface-container', 'text-on-surface-variant');
+
+                // Smooth scroll to target
+                const targetId = btn.getAttribute('data-target');
+                const targetEl = document.getElementById(targetId);
+                if(targetEl) {
+                    const yOffset = -80; // offset for sticky header
+                    const y = targetEl.getBoundingClientRect().top + window.pageYOffset + yOffset;
+                    window.scrollTo({top: y, behavior: 'smooth'});
+                    
+                    // Highlight effect
+                    targetEl.classList.add('ring-2', 'ring-primary', 'ring-offset-4', 'ring-offset-background-cream');
+                    setTimeout(() => {
+                        targetEl.classList.remove('ring-2', 'ring-primary', 'ring-offset-4', 'ring-offset-background-cream');
+                    }, 1000);
+                }
+            });
+        });
+    });
+</script></main><footer class="w-full bg-surface-container-low border-t border-outline-variant/30 py-8"><div class="w-full px-container-margin flex flex-col md:flex-row justify-between items-center gap-md text-on-surface-variant font-label-md text-label-md"><div>© 2024 LLL Trading Research. Institutional Access Only.</div><div class="flex items-center gap-xl"><span class="flex items-center gap-xs"><span class="material-symbols-outlined text-[16px] text-semantic-positive">verified_user</span>Secure Terminal</span><span class="flex items-center gap-xs"><span class="material-symbols-outlined text-[16px]">speed</span>Latency: 2ms</span></div></div></footer></body></html>

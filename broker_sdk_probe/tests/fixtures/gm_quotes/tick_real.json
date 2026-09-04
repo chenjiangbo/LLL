@@ -1,0 +1,23 @@
+{
+  "symbol": "SZSE.000661",
+  "quotes": [
+    {"bid_p": 74.81, "bid_v": 300, "ask_p": 74.88, "ask_v": 1400},
+    {"bid_p": 74.80, "bid_v": 100, "ask_p": 74.90, "ask_v": 100},
+    {"bid_p": 74.78, "bid_v": 500, "ask_p": 74.91, "ask_v": 500},
+    {"bid_p": 74.75, "bid_v": 500, "ask_p": 74.92, "ask_v": 100},
+    {"bid_p": 74.73, "bid_v": 800, "ask_p": 74.93, "ask_v": 2000}
+  ],
+  "price": 74.85,
+  "open": 74.22,
+  "high": 75.37,
+  "low": 74.17,
+  "cum_volume": 629400,
+  "cum_amount": 47042310.0,
+  "last_amount": 374118.0,
+  "last_volume": 5000,
+  "trade_type": 7,
+  "flag": 0,
+  "created_at": "2026-09-03T09:40:36+08:00",
+  "receive_local_time": 1788399635.7844367,
+  "iopv": 0.0
+}

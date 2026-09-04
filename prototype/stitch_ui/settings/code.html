@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN"><head><meta charset="utf-8"/><meta content="width=device-width, initial-scale=1.0" name="viewport"/><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet"/><link href="https://fonts.googleapis.com" rel="preconnect"/><link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/><link href="https://fonts.googleapis.com/css2?family=Literata:ital,opsz,wght@0,7..72,200..900;1,7..72,200..900&amp;family=Nunito+Sans:ital,opsz,wght@0,200..1000;1,200..1000&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/><style>@layer base{html,body{margin:0;padding:0;}body{overscroll-behavior:none;}main>:first-child{margin-top:0!important;}main>:last-child{margin-bottom:0!important;}}::-webkit-scrollbar{display:none;}</style><script src="https://cdn.tailwindcss.com"></script><script id="tailwind-config">tailwind.config={darkMode:"class",theme:{extend:{colors:{"inverse-on-surface":"#f5f0e8","on-secondary":"#ffffff","primary-fixed-dim":"#8ecf9e","on-tertiary-container":"#554020","on-primary":"#ffffff","tertiary-container":"#c4a66a","surface-dim":"#dbd7cf","error-container":"#ffdad8","tertiary-fixed":"#f8e0a8","surface-container-lowest":"#ffffff","secondary-fixed-dim":"#d4ccbf","on-background":"#2e3230","secondary-container":"#f0e8db","on-tertiary-fixed-variant":"#554020","on-surface":"#2e3230","on-error":"#ffffff","outline":"#74796e","tertiary-fixed-dim":"#dcc48e","surface-tint":"#4a7c59","on-secondary-container":"#5e5548","background":"#faf6f0","secondary":"#6b6358","on-primary-fixed-variant":"#2a6038","inverse-surface":"#2e3230","on-primary-container":"#d8f0de","inverse-primary":"#8ecf9e","surface-container-high":"#eae6de","on-error-container":"#690005","on-tertiary-fixed":"#221a05","primary":"#4a7c59","on-secondary-fixed-variant":"#4a4538","on-tertiary":"#ffffff","primary-container":"#78a886","surface-container-low":"#f5f1ea","on-secondary-fixed":"#1e1a13","on-primary-fixed":"#002110","secondary-fixed":"#f0e8db","surface-container":"#f0ece4","surface-bright":"#faf6f0","error":"#b83230","on-surface-variant":"#4a4e4a","surface-variant":"#e4e0d8","outline-variant":"#c4c8bc","primary-fixed":"#c8e8d0","tertiary":"#705c30","surface-container-highest":"#e4e0d8","surface":"#faf6f0"},borderRadius:{DEFAULT:"0.5rem",lg:"1rem",xl:"1.5rem",full:"9999px"},spacing:{},fontFamily:{headline:["Literata"],display:["Literata"],body:["Nunito Sans"],label:["Nunito Sans"]},fontSize:{}}}}</script></head><body class="bg-surface font-body text-on-surface select-none antialiased min-h-screen"><header class="fixed top-0 left-0 right-0 h-12 bg-surface-container-lowest/90 backdrop-blur-md z-50 flex items-center justify-between px-3 shadow-[0_1px_8px_rgba(46,50,48,0.06)]"><div class="flex items-center gap-5"><div class="flex items-center gap-2 pr-2"><div class="w-7 h-7 rounded-lg bg-surface-container-low flex items-center justify-center text-primary"><span class="material-symbols-outlined text-[20px]">vital_signs</span></div><span class="font-headline font-bold text-sm tracking-wide text-on-surface whitespace-nowrap">LLL 交易研究</span></div><nav class="flex items-center gap-1 text-xs" data-active-classes="bg-primary text-on-primary font-medium rounded-full shadow-sm"><a class="px-3 py-1.5 rounded-full text-on-surface-variant hover:text-on-surface transition-colors whitespace-nowrap" data-path="a-share-market" href="#">A股行情</a><a class="px-3 py-1.5 rounded-full text-on-surface-variant hover:text-on-surface transition-colors whitespace-nowrap" data-path="market-review" href="#">复盘</a><a class="px-3 py-1.5 rounded-full text-on-surface-variant hover:text-on-surface transition-colors whitespace-nowrap" data-path="auto-stock-screener" href="#">自动选股</a><a class="px-3 py-1.5 rounded-full text-on-surface-variant hover:text-on-surface transition-colors whitespace-nowrap" data-path="market-technical-categories" href="#">全市场技术分类</a><a class="px-3 py-1.5 rounded-full text-on-surface-variant hover:text-on-surface transition-colors whitespace-nowrap" data-path="watchlist" href="#">☆ 自选股</a><a class="px-3 py-1.5 rounded-full text-on-surface-variant hover:text-on-surface transition-colors whitespace-nowrap" data-path="trading-overview" href="#">交易系统</a></nav></div><div class="flex items-center gap-2"><button class="flex items-center gap-1 px-2.5 py-1 text-xs text-on-surface-variant bg-surface-container hover:bg-surface-container-high rounded-full transition-colors" type="button"><span class="material-symbols-outlined text-xs">handyman</span><span>独立研究工具</span></button><button class="w-7 h-7 rounded-full bg-error text-on-error flex items-center justify-center hover:opacity-90 transition-opacity" title="暂停执行" type="button"><span class="material-symbols-outlined text-[16px]">pause</span></button><button class="w-7 h-7 rounded-full text-on-surface-variant hover:bg-surface-container flex items-center justify-center transition-colors" title="券商连接" type="button"><span class="material-symbols-outlined text-[18px]">hub</span></button><button class="w-7 h-7 rounded-full text-on-surface-variant hover:bg-surface-container flex items-center justify-center transition-colors" title="系统设置" type="button"><span class="material-symbols-outlined text-[18px]">settings</span></button><button class="w-7 h-7 rounded-full text-on-surface-variant hover:bg-surface-container flex items-center justify-center transition-colors" title="切换模式" type="button"><span class="material-symbols-outlined text-[18px]">light_mode</span></button><img alt="Profile" class="w-7 h-7 rounded-full object-cover ml-1 shadow-sm" src="https://lh3.googleusercontent.com/aida/AEtjO1WrL_yEqPKdEg8iuLvyJAqO0wIjmNhfVpOTlUuuUcL2gnUPyUceipN9_tBJptTklRaf6X35lB83UnwjTixedN2ZdKy_54xBo7r-Jx8UeblH_JqUKWDBgJElrmIZcyRhTUKM-LhrINQEO474SM25Gdw7_ZsenQnlHMncGjiEC-f1aZ3JSFSZmmhY-6fDc-rAdIr3cxplkzmeT-1UNl1aF5cI6QRDb9Qf04UQF6p3c7C1fK7-aesBc40vD9Ys8oAZRCJF0GNIj-r2ww"/></div></header><aside class="fixed left-0 top-12 bottom-0 w-14 bg-surface-container-low/95 z-40 flex flex-col justify-between items-center py-2.5 shadow-[0_1px_8px_rgba(46,50,48,0.04)]"><nav class="w-full flex flex-col items-center gap-1" data-active-classes="bg-surface-container-high text-primary font-semibold"><a class="w-11 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-all" data-path="trading-overview" href="#"><span class="material-symbols-outlined text-[19px]">monitoring</span><span class="text-[10px] scale-95">总览</span></a><a aria-current="page" class="w-11 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all bg-surface-container-high text-primary font-semibold" data-path="trading-lifecycle" href="#"><span class="material-symbols-outlined text-[19px]">currency_exchange</span><span class="text-[10px] scale-95">交易</span></a><a class="w-11 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-all" data-path="execution-plans" href="#"><span class="material-symbols-outlined text-[19px]">play_circle</span><span class="text-[10px] scale-95">执行</span></a><a class="w-11 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-all" data-path="order-management" href="#"><span class="material-symbols-outlined text-[19px]">receipt_long</span><span class="text-[10px] scale-95">订单</span></a><a class="w-11 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-all" data-path="portfolio-positions" href="#"><span class="material-symbols-outlined text-[19px]">account_balance_wallet</span><span class="text-[10px] scale-95">持仓</span></a></nav><div class="w-full flex flex-col items-center pb-1"><a class="w-11 h-11 rounded-xl bg-primary text-on-primary flex flex-col items-center justify-center shadow-sm hover:opacity-90 transition-opacity" data-path="trading-settings" href="#"><span class="material-symbols-outlined text-[18px]">tune</span><span class="text-[10px] scale-90">配置</span></a></div></aside><div class="pl-14"><main class="relative pt-12 min-h-screen bg-surface"><div class="flex flex-col w-full px-5 py-4 space-y-4">
+<!-- 顶部面包屑与状态指示栏 -->
+<div class="flex flex-wrap items-center justify-between gap-3 pb-2 border-b-0">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-lg bg-surface-container flex items-center justify-center text-primary shadow-sm">
+<span class="material-symbols-outlined text-[20px]">tune</span>
+</div>
+<div>
+<div class="flex items-center gap-2">
+<span class="text-xs font-semibold text-primary tracking-wide">交易系统设置</span>
+<span class="text-xs text-secondary-fixed-dim">/</span>
+<h1 class="text-sm font-headline font-bold text-on-surface">风控与网关管理 (Settings)</h1>
+</div>
+<p class="text-[11px] text-on-surface-variant leading-none mt-0.5">本地前置校验引擎与券商 RPC 网关底层运行参数配置</p>
+</div>
+</div>
+<!-- 4个标准设置模块 Tab 切换 -->
+<div class="flex items-center p-0.5 bg-surface-container rounded-xl shadow-inner">
+<button class="flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-lg bg-surface-container-lowest text-primary shadow-sm" type="button">
+<span class="material-symbols-outlined text-[15px]">hub</span>
+<span>券商连接</span>
+</button>
+<button class="flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-lg text-on-surface-variant hover:text-on-surface transition-colors" type="button">
+<span class="material-symbols-outlined text-[15px]">security</span>
+<span>风险控制</span>
+</button>
+<button class="flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-lg text-on-surface-variant hover:text-on-surface transition-colors" type="button">
+<span class="material-symbols-outlined text-[15px]">manage_accounts</span>
+<span>账户管理</span>
+</button>
+<button class="flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-lg text-on-surface-variant hover:text-on-surface transition-colors" type="button">
+<span class="material-symbols-outlined text-[15px]">database</span>
+<span>数据管理</span>
+</button>
+</div>
+</div>
+<!-- 网关与通道概览状态条 -->
+<div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+<div class="bg-surface-container-low p-3 rounded-xl flex items-center gap-3">
+<div class="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
+<span class="material-symbols-outlined text-[18px]">cell_tower</span>
+</div>
+<div>
+<div class="text-[10px] text-secondary font-medium">RPC 链路延迟</div>
+<div class="text-xs font-headline font-bold text-primary flex items-center gap-1.5">
+<span>1.84 ms</span>
+<span class="w-1.5 h-1.5 rounded-full bg-primary inline-block"></span>
+<span class="text-[10px] font-normal text-on-surface-variant">极佳</span>
+</div>
+</div>
+</div>
+<div class="bg-surface-container-low p-3 rounded-xl flex items-center gap-3">
+<div class="w-8 h-8 rounded-lg bg-tertiary/10 text-tertiary flex items-center justify-center">
+<span class="material-symbols-outlined text-[18px]">verified_user</span>
+</div>
+<div>
+<div class="text-[10px] text-secondary font-medium">风控前置拦截状态</div>
+<div class="text-xs font-headline font-bold text-tertiary flex items-center gap-1.5">
+<span>实时拦截开启</span>
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary inline-block"></span>
+</div>
+</div>
+</div>
+<div class="bg-surface-container-low p-3 rounded-xl flex items-center gap-3">
+<div class="w-8 h-8 rounded-lg bg-surface-container-high text-on-surface-variant flex items-center justify-center">
+<span class="material-symbols-outlined text-[18px]">token</span>
+</div>
+<div>
+<div class="text-[10px] text-secondary font-medium">Token 凭证鉴权</div>
+<div class="text-xs font-headline font-semibold text-on-surface">有效 (剩余 82天)</div>
+</div>
+</div>
+<div class="bg-surface-container-low p-3 rounded-xl flex items-center gap-3">
+<div class="w-8 h-8 rounded-lg bg-surface-container-high text-on-surface-variant flex items-center justify-center">
+<span class="material-symbols-outlined text-[18px]">account_tree</span>
+</div>
+<div>
+<div class="text-[10px] text-secondary font-medium">活动实例 / 挂载上限</div>
+<div class="text-xs font-headline font-semibold text-on-surface">1 / 4 席位已挂载</div>
+</div>
+</div>
+</div>
+<!-- 主体工作区布局 -->
+<div class="grid grid-cols-1 xl:grid-cols-12 gap-4">
+<!-- 左/主面板：板块一 券商网关与交易通道 (占用 7 栏) -->
+<div class="xl:col-span-7 flex flex-col space-y-3">
+<div class="bg-surface-container-lowest p-4 rounded-xl shadow-[0_4px_20px_rgba(46,50,48,0.04)] flex flex-col space-y-3.5">
+<!-- 板块标题与新增入口 -->
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-primary text-[19px]">sensors</span>
+<div>
+<span class="font-headline font-bold text-sm text-on-surface">券商网关与交易通道</span>
+<span class="ml-2 text-[11px] px-2 py-0.5 rounded-full bg-surface-container text-on-surface-variant">已挂载 1 个实例</span>
+</div>
+</div>
+<button class="flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-primary text-on-primary rounded-lg shadow-sm hover:opacity-95 transition-all" type="button">
+<span class="material-symbols-outlined text-[15px]">add</span>
+<span>添加券商通道</span>
+</button>
+</div>
+<!-- 实例卡片（对应实盘截图国投证券掘金通道） -->
+<div class="bg-surface-container-low/70 rounded-xl p-3.5 flex flex-col space-y-3">
+<div class="flex items-start justify-between">
+<div class="flex items-center gap-2.5">
+<div class="w-8 h-8 rounded-lg bg-primary text-on-primary flex items-center justify-center text-xs font-bold font-headline shadow-sm">
+                GM
+              </div>
+<div>
+<div class="flex items-center gap-2">
+<span class="font-headline font-bold text-xs text-on-surface">LLL 仿真</span>
+<span class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-primary-fixed text-on-primary-fixed-variant font-medium">
+<span class="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span>
+                    仿真环境 · 已配置
+                  </span>
+</div>
+<div class="text-[11px] text-secondary mt-0.5">内部实例别名：<span class="font-mono text-on-surface">guotou_sim_01</span></div>
+</div>
+</div>
+<!-- 操作按钮组合：严格 2-4 字 -->
+<div class="flex items-center gap-1.5">
+<button class="px-2.5 py-1 text-xs rounded-lg bg-surface-container text-on-surface hover:bg-surface-container-high transition-colors flex items-center gap-1" type="button">
+<span class="material-symbols-outlined text-[14px]">edit_note</span>
+<span>编辑</span>
+</button>
+<button class="px-2.5 py-1 text-xs rounded-lg bg-surface-container-high text-primary hover:bg-primary hover:text-on-primary transition-all flex items-center gap-1 font-medium" type="button">
+<span class="material-symbols-outlined text-[14px]">network_ping</span>
+<span>测试</span>
+</button>
+<button class="px-2.5 py-1 text-xs rounded-lg bg-surface-container text-error hover:bg-error-container transition-colors flex items-center gap-1" type="button">
+<span class="material-symbols-outlined text-[14px]">delete</span>
+<span>删除</span>
+</button>
+</div>
+</div>
+<!-- 通道核心字段详情表格/网格 -->
+<div class="grid grid-cols-2 sm:grid-cols-3 gap-2.5 pt-1 text-xs">
+<div class="bg-surface-container-lowest/90 p-2.5 rounded-lg shadow-sm">
+<div class="text-[10px] text-secondary">券商渠道</div>
+<div class="font-semibold text-on-surface text-xs mt-0.5 flex items-center gap-1">
+<span>国投证券掘金</span>
+<span class="text-[9px] px-1 py-0.2 bg-secondary-fixed text-on-secondary-fixed rounded">RPC-v3</span>
+</div>
+</div>
+<div class="bg-surface-container-lowest/90 p-2.5 rounded-lg shadow-sm">
+<div class="text-[10px] text-secondary">账户 ID</div>
+<div class="font-mono font-medium text-on-surface text-xs mt-0.5 truncate" title="fbfb9281-90a1">
+                fbfb********
+              </div>
+</div>
+<div class="bg-surface-container-lowest/90 p-2.5 rounded-lg shadow-sm">
+<div class="text-[10px] text-secondary">策略 ID</div>
+<div class="font-mono font-medium text-on-surface text-xs mt-0.5 truncate" title="7e91d34c-62bb">
+                7e91********
+              </div>
+</div>
+<div class="bg-surface-container-lowest/90 p-2.5 rounded-lg shadow-sm">
+<div class="text-[10px] text-secondary">Token 凭据密钥</div>
+<div class="font-mono text-on-surface-variant text-xs mt-0.5 truncate">
+                1c7fb2********
+              </div>
+</div>
+<div class="bg-surface-container-lowest/90 p-2.5 rounded-lg shadow-sm sm:col-span-2">
+<div class="text-[10px] text-secondary">网关 RPC 物理侦听地址</div>
+<div class="font-mono text-primary text-xs mt-0.5 flex items-center justify-between">
+<span>http://192.168.20.104:7001</span>
+<span class="text-[10px] text-secondary font-sans font-normal">HTTP/Keep-Alive</span>
+</div>
+</div>
+</div>
+<!-- 通道状态小指示器与健康指标 -->
+<div class="flex items-center justify-between text-[11px] text-secondary pt-1 px-1">
+<div class="flex items-center gap-4">
+<span class="flex items-center gap-1">
+<span class="material-symbols-outlined text-[13px] text-primary">sync</span>
+                行情推送：正常 (500ms)
+              </span>
+<span class="flex items-center gap-1">
+<span class="material-symbols-outlined text-[13px] text-primary">swap_horiz</span>
+                委托通道：就绪
+              </span>
+</div>
+<span class="font-mono text-[10px]">心跳最后应答: 14:59:58</span>
+</div>
+</div>
+<!-- 历史实盘原型底图参考展示 -->
+<div class="bg-surface-container-low rounded-xl p-3 flex flex-col space-y-2">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-1.5 text-xs font-semibold text-secondary">
+<span class="material-symbols-outlined text-[15px]">layers</span>
+<span>生产系统与网关拓扑图谱</span>
+</div>
+<span class="text-[10px] text-on-surface-variant">同步自实盘配置中心</span>
+</div>
+<div class="relative w-full h-36 rounded-lg overflow-hidden bg-surface-container-high shadow-inner">
+<img alt="通道拓扑与实盘原界面" class="w-full h-full object-cover object-left opacity-90 hover:opacity-100 transition-opacity" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDXBRhef-qpyjnR5Yxn1jF_7aS3RrHsB8mae2bJWD2jFM5rrAnQaIOP5h2uNJb3m-tli90CiEo_Ai3DWKGfFhw2ylwr2eoUPhLzaOpwUyrNq50nTh73g0g3Y4iCyKcUzJ6czn-wk_DbCpW24iphpgscBKvR82JpIOnH4RE4qdtAbGB4PPAxnGNtn37p5E_4HmlEFqLDBII8VoqPGRA-B0ftO2H2WrVGs2xt5tt1SDC_skNTb-vHaEDJtBYiXxt9Qj59Yg"/>
+<div class="absolute inset-0 bg-gradient-to-t from-surface-container-lowest/80 via-transparent to-transparent pointer-events-none flex items-end p-2.5">
+<span class="text-[10px] font-mono text-on-surface bg-surface-container-lowest/90 px-2 py-0.5 rounded shadow-sm">
+                Gateway Engine: GM_SDK_V3.8.12 (A-Share DMA)
+              </span>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- 右面板：板块二 量化风控规则与前置拦截 (占用 5 栏) -->
+<div class="xl:col-span-5 flex flex-col space-y-3">
+<div class="bg-surface-container-lowest p-4 rounded-xl shadow-[0_4px_20px_rgba(46,50,48,0.04)] flex flex-col space-y-3.5">
+<!-- 板块标题与说明 -->
+<div class="flex items-start justify-between">
+<div>
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-tertiary text-[19px]">shield_lock</span>
+<span class="font-headline font-bold text-sm text-on-surface">量化风控规则与前置拦截</span>
+</div>
+<div class="flex items-center gap-1 mt-1 text-[11px] text-on-surface-variant leading-tight">
+<span class="w-1.5 h-1.5 rounded-full bg-primary inline-block"></span>
+<span>风控引擎已启用，报单将在本地与网关双重校验，超限直接驳回</span>
+</div>
+</div>
+<span class="text-[10px] font-mono px-2 py-0.5 bg-tertiary-container/30 text-tertiary rounded-full font-semibold">
+            STRICT
+          </span>
+</div>
+<!-- 5 个核心量化风控项卡片 -->
+<div class="space-y-2.5">
+<!-- 1. 单笔风险预算 (R) -->
+<div class="bg-surface-container-low p-2.5 rounded-xl flex items-center justify-between gap-2 hover:bg-surface-container transition-colors">
+<div class="flex flex-col pr-2">
+<div class="flex items-center gap-1.5">
+<span class="text-xs font-semibold text-on-surface">1. 单笔风险预算 (R)</span>
+<span class="text-[10px] px-1 py-0.2 rounded bg-surface-container-high text-on-surface-variant">基准</span>
+</div>
+<span class="text-[10px] text-secondary mt-0.5">触发单笔止损时允许损失的净资产上限比例</span>
+</div>
+<div class="flex items-center gap-1 shrink-0">
+<div class="relative">
+<input class="w-16 text-right font-mono text-xs font-bold text-primary bg-surface-container-lowest rounded-lg py-1 px-1.5 focus:outline-none focus:bg-surface-bright shadow-sm" type="text" value="0.80"/>
+<span class="absolute right-1.5 top-1 text-xs text-on-surface-variant font-mono pointer-events-none">%</span>
+</div>
+</div>
+</div>
+<!-- 2. 单笔风险硬上限 -->
+<div class="bg-surface-container-low p-2.5 rounded-xl flex items-center justify-between gap-2 hover:bg-surface-container transition-colors">
+<div class="flex flex-col pr-2">
+<div class="flex items-center gap-1.5">
+<span class="text-xs font-semibold text-on-surface">2. 单笔风险硬上限</span>
+<span class="text-[10px] px-1 py-0.2 rounded bg-error-container text-error font-medium">硬拦截</span>
+</div>
+<span class="text-[10px] text-secondary mt-0.5">黑天鹅极端跳空单笔最大容忍亏损极限</span>
+</div>
+<div class="flex items-center gap-1 shrink-0">
+<div class="relative">
+<input class="w-16 text-right font-mono text-xs font-bold text-error bg-surface-container-lowest rounded-lg py-1 px-1.5 focus:outline-none focus:bg-surface-bright shadow-sm" type="text" value="1.20"/>
+<span class="absolute right-1.5 top-1 text-xs text-on-surface-variant font-mono pointer-events-none">%</span>
+</div>
+</div>
+</div>
+<!-- 3. 单票最大持仓 -->
+<div class="bg-surface-container-low p-2.5 rounded-xl flex items-center justify-between gap-2 hover:bg-surface-container transition-colors">
+<div class="flex flex-col pr-2">
+<div class="flex items-center gap-1.5">
+<span class="text-xs font-semibold text-on-surface">3. 单票最大持仓</span>
+<span class="text-[10px] px-1 py-0.2 rounded bg-surface-container-high text-on-surface-variant">防集中度</span>
+</div>
+<span class="text-[10px] text-secondary mt-0.5">单个股票标的占用总市值的最高比例限制</span>
+</div>
+<div class="flex items-center gap-1 shrink-0">
+<div class="relative">
+<input class="w-16 text-right font-mono text-xs font-bold text-on-surface bg-surface-container-lowest rounded-lg py-1 px-1.5 focus:outline-none focus:bg-surface-bright shadow-sm" type="text" value="20.00"/>
+<span class="absolute right-1.5 top-1 text-xs text-on-surface-variant font-mono pointer-events-none">%</span>
+</div>
+</div>
+</div>
+<!-- 4. 账户最大总仓位 -->
+<div class="bg-surface-container-low p-2.5 rounded-xl flex items-center justify-between gap-2 hover:bg-surface-container transition-colors">
+<div class="flex flex-col pr-2">
+<div class="flex items-center gap-1.5">
+<span class="text-xs font-semibold text-on-surface">4. 账户最大总仓位</span>
+<span class="text-[10px] px-1 py-0.2 rounded bg-surface-container-high text-on-surface-variant">总敞口</span>
+</div>
+<span class="text-[10px] text-secondary mt-0.5">全市场股票多头持仓总市值占账户净资产最高限</span>
+</div>
+<div class="flex items-center gap-1 shrink-0">
+<div class="relative">
+<input class="w-16 text-right font-mono text-xs font-bold text-on-surface bg-surface-container-lowest rounded-lg py-1 px-1.5 focus:outline-none focus:bg-surface-bright shadow-sm" type="text" value="80.00"/>
+<span class="absolute right-1.5 top-1 text-xs text-on-surface-variant font-mono pointer-events-none">%</span>
+</div>
+</div>
+</div>
+<!-- 5. 最低现金留存 -->
+<div class="bg-surface-container-low p-2.5 rounded-xl flex items-center justify-between gap-2 hover:bg-surface-container transition-colors">
+<div class="flex flex-col pr-2">
+<div class="flex items-center gap-1.5">
+<span class="text-xs font-semibold text-on-surface">5. 最低现金留存</span>
+<span class="text-[10px] px-1 py-0.2 rounded bg-tertiary-fixed text-on-tertiary-fixed-variant font-medium">流动性</span>
+</div>
+<span class="text-[10px] text-secondary mt-0.5">禁止开仓耗尽的法定流动性安全垫</span>
+</div>
+<div class="flex items-center gap-1 shrink-0">
+<div class="relative">
+<input class="w-16 text-right font-mono text-xs font-bold text-tertiary bg-surface-container-lowest rounded-lg py-1 px-1.5 focus:outline-none focus:bg-surface-bright shadow-sm" type="text" value="20.00"/>
+<span class="absolute right-1.5 top-1 text-xs text-on-surface-variant font-mono pointer-events-none">%</span>
+</div>
+</div>
+</div>
+</div>
+<!-- 规则实时覆盖度微量进度条 -->
+<div class="p-2 bg-surface-container-low rounded-lg flex items-center justify-between text-[10px] text-on-surface-variant">
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px] text-primary">gavel</span>
+<span>合规检查引擎状态: 100% 规则实时生效中</span>
+</div>
+<span class="font-mono text-secondary">校验延迟 &lt; 0.12ms</span>
+</div>
+<!-- 底部操作栏 -->
+<div class="flex items-center justify-between pt-1">
+<button class="px-3 py-1.5 text-xs text-secondary hover:text-on-surface bg-surface-container hover:bg-surface-container-high rounded-lg transition-colors flex items-center gap-1" type="button">
+<span class="material-symbols-outlined text-[14px]">restart_alt</span>
+<span>重置为保守预设</span>
+</button>
+<button class="px-4 py-1.5 text-xs font-medium text-on-primary bg-primary hover:opacity-95 rounded-lg shadow-sm transition-all flex items-center gap-1" type="button">
+<span class="material-symbols-outlined text-[14px]">bolt</span>
+<span>应用并广播风控规则</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+<!-- 底部量化事件通知与安全审查状态栏 -->
+<div class="bg-surface-container-lowest p-3 rounded-xl shadow-[0_2px_10px_rgba(46,50,48,0.03)] flex flex-wrap items-center justify-between gap-3 text-xs">
+<div class="flex items-center gap-3">
+<span class="flex items-center gap-1 text-[11px] font-semibold text-primary">
+<span class="material-symbols-outlined text-[14px]">verified</span>
+        本地双重审计校验已就绪
+      </span>
+<span class="text-[11px] text-secondary">|</span>
+<span class="text-[11px] text-on-surface-variant">
+        最近前置拦截记录: 无违规委托 (今日委托总量 42 笔，放行率 100%)
+      </span>
+</div>
+<div class="flex items-center gap-4 text-[11px] font-mono text-secondary">
+<span>RPC: 192.168.20.104</span>
+<span>ENV: GUOTOU_SIM</span>
+<span>STATUS: ACTIVE</span>
+</div>
+</div>
+<!-- 轻量交互脚本：数值切换反馈 -->
+<script>
+    document.querySelectorAll('input[type="text"]').forEach(input => {
+      input.addEventListener('focus', () => {
+        input.parentElement.classList.add('scale-105');
+        input.parentElement.style.transition = 'all 0.2s ease';
+      });
+      input.addEventListener('blur', () => {
+        input.parentElement.classList.remove('scale-105');
+      });
+    });
+  </script>
+</div></main></div></body></html>

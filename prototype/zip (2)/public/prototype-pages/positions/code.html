@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN"><head><meta charset="utf-8"/><meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<style>@layer base{html,body{margin:0;padding:0;}body{overscroll-behavior:none;}main>:first-child{margin-top:0!important;}main>:last-child{margin-bottom:0!important;}}::-webkit-scrollbar{display:none;}</style><script id="tailwind-config">tailwind.config={darkMode:"class",theme:{extend:{colors:{"inverse-on-surface":"#f5f0e8","on-secondary":"#ffffff","primary-fixed-dim":"#8ecf9e","on-tertiary-container":"#554020","on-primary":"#ffffff","tertiary-container":"#c4a66a","surface-dim":"#dbd7cf","error-container":"#ffdad8","tertiary-fixed":"#f8e0a8","surface-container-lowest":"#ffffff","secondary-fixed-dim":"#d4ccbf","on-background":"#2e3230","secondary-container":"#f0e8db","on-tertiary-fixed-variant":"#554020","on-surface":"#2e3230","on-error":"#ffffff","outline":"#74796e","tertiary-fixed-dim":"#dcc48e","surface-tint":"#4a7c59","on-secondary-container":"#5e5548","background":"#faf6f0","secondary":"#6b6358","on-primary-fixed-variant":"#2a6038","inverse-surface":"#2e3230","on-primary-container":"#d8f0de","inverse-primary":"#8ecf9e","surface-container-high":"#eae6de","on-error-container":"#690005","on-tertiary-fixed":"#221a05","primary":"#4a7c59","on-secondary-fixed-variant":"#4a4538","on-tertiary":"#ffffff","primary-container":"#78a886","surface-container-low":"#f5f1ea","on-secondary-fixed":"#1e1a13","on-primary-fixed":"#002110","secondary-fixed":"#f0e8db","surface-container":"#f0ece4","surface-bright":"#faf6f0","error":"#b83230","on-surface-variant":"#4a4e4a","surface-variant":"#e4e0d8","outline-variant":"#c4c8bc","primary-fixed":"#c8e8d0","tertiary":"#705c30","surface-container-highest":"#e4e0d8","surface":"#faf6f0"},borderRadius:{DEFAULT:"0.5rem",lg:"1rem",xl:"1.5rem",full:"9999px"},spacing:{},fontFamily:{headline:["Literata"],display:["Literata"],body:["Nunito Sans"],label:["Nunito Sans"]},fontSize:{}}}}</script></head><body class="bg-surface font-body text-on-surface select-none antialiased min-h-screen"><header class="fixed top-0 left-0 right-0 h-12 bg-surface-container-lowest/90 backdrop-blur-md z-50 flex items-center justify-between px-3 shadow-[0_1px_8px_rgba(46,50,48,0.06)]"><div class="flex items-center gap-5"><div class="flex items-center gap-2 pr-2"><div class="w-7 h-7 rounded-lg bg-surface-container-low flex items-center justify-center text-primary"><span class="material-symbols-outlined text-[20px]">vital_signs</span></div><span class="font-headline font-bold text-sm tracking-wide text-on-surface whitespace-nowrap">LLL 交易研究</span></div><nav class="flex items-center gap-1 text-xs" data-active-classes="bg-primary text-on-primary font-medium rounded-full shadow-sm"><a class="px-3 py-1.5 rounded-full text-on-surface-variant hover:text-on-surface transition-colors whitespace-nowrap" data-path="a-share-market" href="#">A股行情</a><a class="px-3 py-1.5 rounded-full text-on-surface-variant hover:text-on-surface transition-colors whitespace-nowrap" data-path="market-review" href="#">复盘</a><a class="px-3 py-1.5 rounded-full text-on-surface-variant hover:text-on-surface transition-colors whitespace-nowrap" data-path="auto-stock-screener" href="#">自动选股</a><a class="px-3 py-1.5 rounded-full text-on-surface-variant hover:text-on-surface transition-colors whitespace-nowrap" data-path="market-technical-categories" href="#">全市场技术分类</a><a class="px-3 py-1.5 rounded-full text-on-surface-variant hover:text-on-surface transition-colors whitespace-nowrap" data-path="watchlist" href="#">☆ 自选股</a><a class="px-3 py-1.5 rounded-full text-on-surface-variant hover:text-on-surface transition-colors whitespace-nowrap" data-path="trading-overview" href="#">交易系统</a></nav></div><div class="flex items-center gap-2"><button class="flex items-center gap-1 px-2.5 py-1 text-xs text-on-surface-variant bg-surface-container hover:bg-surface-container-high rounded-full transition-colors" type="button"><span class="material-symbols-outlined text-xs">handyman</span><span>独立研究工具</span></button><button class="w-7 h-7 rounded-full bg-error text-on-error flex items-center justify-center hover:opacity-90 transition-opacity" title="暂停执行" type="button"><span class="material-symbols-outlined text-[16px]">pause</span></button><button class="w-7 h-7 rounded-full text-on-surface-variant hover:bg-surface-container flex items-center justify-center transition-colors" title="券商连接" type="button"><span class="material-symbols-outlined text-[18px]">hub</span></button><button class="w-7 h-7 rounded-full text-on-surface-variant hover:bg-surface-container flex items-center justify-center transition-colors" title="系统设置" type="button"><span class="material-symbols-outlined text-[18px]">settings</span></button><button class="w-7 h-7 rounded-full text-on-surface-variant hover:bg-surface-container flex items-center justify-center transition-colors" title="切换模式" type="button"><span class="material-symbols-outlined text-[18px]">light_mode</span></button><img alt="Profile" class="w-7 h-7 rounded-full object-cover ml-1 shadow-sm" src="/prototype-assets/prototype-remote-4.png"/></div></header><aside class="fixed left-0 top-12 bottom-0 w-14 bg-surface-container-low/95 z-40 flex flex-col justify-between items-center py-2.5 shadow-[0_1px_8px_rgba(46,50,48,0.04)]"><nav class="w-full flex flex-col items-center gap-1" data-active-classes="bg-surface-container-high text-primary font-semibold"><a class="w-11 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-all" data-path="trading-overview" href="#"><span class="material-symbols-outlined text-[19px]">monitoring</span><span class="text-[10px] scale-95">总览</span></a><a aria-current="page" class="w-11 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all bg-surface-container-high text-primary font-semibold" data-path="trading-lifecycle" href="#"><span class="material-symbols-outlined text-[19px]">currency_exchange</span><span class="text-[10px] scale-95">交易</span></a><a class="w-11 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-all" data-path="execution-plans" href="#"><span class="material-symbols-outlined text-[19px]">play_circle</span><span class="text-[10px] scale-95">执行</span></a><a class="w-11 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-all" data-path="order-management" href="#"><span class="material-symbols-outlined text-[19px]">receipt_long</span><span class="text-[10px] scale-95">订单</span></a><a class="w-11 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-all" data-path="portfolio-positions" href="#"><span class="material-symbols-outlined text-[19px]">account_balance_wallet</span><span class="text-[10px] scale-95">持仓</span></a></nav><div class="w-full flex flex-col items-center pb-1"><a class="w-11 h-11 rounded-xl bg-primary text-on-primary flex flex-col items-center justify-center shadow-sm hover:opacity-90 transition-opacity" data-path="trading-settings" href="#"><span class="material-symbols-outlined text-[18px]">tune</span><span class="text-[10px] scale-90">配置</span></a></div></aside><div class="pl-14"><main class="relative pt-12 min-h-screen bg-surface"><div class="flex flex-col w-full">
+<!-- Interactive Sub-nav Active State Injector -->
+<script>
+    (() => {
+      // Sync sidebar highlight to "持仓" (portfolio-positions)
+      const asideLinks = document.querySelectorAll('aside nav a');
+      asideLinks.forEach(el => {
+        if (el.getAttribute('data-path') === 'portfolio-positions') {
+          el.className = 'w-11 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 bg-surface-container-high text-primary font-semibold shadow-sm transition-all';
+        } else {
+          el.className = 'w-11 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-all';
+        }
+      });
+      // Top nav "交易系统" state
+      const topLinks = document.querySelectorAll('header nav a');
+      topLinks.forEach(el => {
+        if (el.getAttribute('data-path') === 'trading-overview') {
+          el.className = 'px-3 py-1.5 rounded-full bg-primary text-on-primary font-medium shadow-sm whitespace-nowrap';
+        }
+      });
+    })();
+  </script>
+<!-- Page Root Content Container -->
+<div class="p-3.5 space-y-3">
+<!-- 17.2 Top Account & Risk KPI Grid -->
+<section class="grid grid-cols-1 md:grid-cols-5 gap-2.5">
+<!-- 1. Total NAV -->
+<div class="bg-surface-container-lowest rounded-xl p-3 shadow-sm flex flex-col justify-between relative overflow-hidden group hover:shadow-md transition-shadow">
+<div class="flex items-center justify-between">
+<span class="text-[11px] font-medium text-on-surface-variant uppercase tracking-wider flex items-center gap-1">
+<span class="w-1.5 h-1.5 rounded-full bg-primary"></span>
+            证券总资产 (NAV)
+          </span>
+<span class="text-[10px] px-1.5 py-0.5 rounded bg-surface-container text-on-surface-variant font-mono">T+0实时</span>
+</div>
+<div class="my-1 flex items-baseline gap-1.5">
+<span class="text-xl font-bold font-headline tracking-tight text-on-surface">¥1,248,500.00</span>
+</div>
+<div class="flex items-center justify-between text-[11px] text-on-surface-variant pt-1 border-t-0">
+<span class="text-error font-medium">日内 +¥12,450.00 (+1.01%)</span>
+<span class="text-[10px] text-secondary">基准上证 +0.42%</span>
+</div>
+</div>
+<!-- 2. Market Cap of Positions -->
+<div class="bg-surface-container-lowest rounded-xl p-3 shadow-sm flex flex-col justify-between relative overflow-hidden group hover:shadow-md transition-shadow">
+<div class="flex items-center justify-between">
+<span class="text-[11px] font-medium text-on-surface-variant uppercase tracking-wider flex items-center gap-1">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary"></span>
+            持仓总市值
+          </span>
+<span class="text-[10px] px-1.5 py-0.5 rounded bg-surface-container text-on-surface-variant">5个标的 / 6个Trade</span>
+</div>
+<div class="my-1 flex items-baseline gap-1.5">
+<span class="text-xl font-bold font-headline tracking-tight text-on-surface">¥821,700.00</span>
+</div>
+<div class="flex items-center justify-between text-[11px]">
+<span class="text-error font-medium">累计浮盈 +¥68,920.00</span>
+<span class="text-secondary text-[10px]">成本 ¥752,780</span>
+</div>
+</div>
+<!-- 3. Available Cash -->
+<div class="bg-surface-container-lowest rounded-xl p-3 shadow-sm flex flex-col justify-between relative overflow-hidden group hover:shadow-md transition-shadow">
+<div class="flex items-center justify-between">
+<span class="text-[11px] font-medium text-on-surface-variant uppercase tracking-wider flex items-center gap-1">
+<span class="w-1.5 h-1.5 rounded-full bg-primary-container"></span>
+            可用现金额度
+          </span>
+<button class="text-[10px] text-primary hover:underline flex items-center gap-0.5" type="button">
+            银证转账 <span class="material-symbols-outlined text-[10px]">chevron_right</span>
+</button>
+</div>
+<div class="my-1 flex items-baseline gap-1.5">
+<span class="text-xl font-bold font-headline tracking-tight text-on-surface">¥426,800.00</span>
+</div>
+<div class="flex items-center justify-between text-[11px] text-on-surface-variant">
+<span>可取现: ¥426,800.00</span>
+<span class="text-primary font-medium text-[10px]">备用缓冲充裕</span>
+</div>
+</div>
+<!-- 4. Position Allocation Gauge -->
+<div class="bg-surface-container-lowest rounded-xl p-3 shadow-sm flex flex-col justify-between relative overflow-hidden group hover:shadow-md transition-shadow">
+<div class="flex items-center justify-between">
+<span class="text-[11px] font-medium text-on-surface-variant uppercase tracking-wider">当前资金总仓位</span>
+<span class="text-[10px] text-secondary font-mono">上限 80.0%</span>
+</div>
+<div class="my-1 flex items-baseline gap-1">
+<span class="text-xl font-bold font-headline text-on-surface">65.82%</span>
+<span class="text-xs text-secondary font-normal">/ 80.00%</span>
+</div>
+<div>
+<div class="w-full bg-surface-container h-1.5 rounded-full overflow-hidden flex">
+<div class="bg-primary h-full rounded-full transition-all duration-500" style="width: 65.82%"></div>
+</div>
+<div class="flex justify-between text-[10px] text-on-surface-variant mt-1">
+<span>已占用 65.8%</span>
+<span class="text-primary font-medium">剩余可开 14.18%</span>
+</div>
+</div>
+</div>
+<!-- 5. Planned Risk / Heat Budget -->
+<div class="bg-surface-container-lowest rounded-xl p-3 shadow-sm flex flex-col justify-between relative overflow-hidden group hover:shadow-md transition-shadow">
+<div class="flex items-center justify-between">
+<span class="text-[11px] font-medium text-on-surface-variant uppercase tracking-wider flex items-center gap-1">
+<span class="material-symbols-outlined text-[13px] text-primary">security</span>
+            总计划风险 (Heat)
+          </span>
+<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-primary-fixed text-on-primary-fixed-variant font-medium">风险额度充足</span>
+</div>
+<div class="my-1 flex items-baseline gap-1.5">
+<span class="text-xl font-bold font-headline tracking-tight text-on-surface">¥8,640.00</span>
+<span class="text-xs font-mono text-primary font-medium">0.69% NAV</span>
+</div>
+<div class="flex items-center justify-between text-[11px] text-on-surface-variant">
+<span>硬止损额度上限: 2.00%</span>
+<span class="text-secondary text-[10px]">利润垫 ¥68.9k</span>
+</div>
+</div>
+</section>
+<!-- 17.3 & 17.4 Positions & Trade Unified Manager Card -->
+<div class="bg-surface-container-lowest rounded-xl shadow-sm overflow-hidden flex flex-col">
+<!-- Subheader / Filter Bar -->
+<div class="px-3.5 py-2.5 bg-surface-container-low flex flex-wrap items-center justify-between gap-3 text-xs">
+<div class="flex items-center gap-2">
+<div class="flex items-center gap-1.5 bg-surface-container rounded-lg p-0.5">
+<button class="px-2.5 py-1 rounded-md bg-surface-container-lowest text-on-surface font-semibold shadow-xs">全部持仓 (5)</button>
+<button class="px-2.5 py-1 rounded-md text-on-surface-variant hover:text-on-surface">多Trade标的 (1)</button>
+<button class="px-2.5 py-1 rounded-md text-on-surface-variant hover:text-on-surface">有在途T+1 (2)</button>
+<button class="px-2.5 py-1 rounded-md text-on-surface-variant hover:text-on-surface">清仓中 (1)</button>
+</div>
+<div class="h-4 w-px bg-surface-container-highest"></div>
+<span class="text-[11px] text-on-surface-variant">
+            已开启：<strong class="text-primary font-medium">双层穿透 (证券账户 ↔ Trade生命周期)</strong>
+</span>
+</div>
+<div class="flex items-center gap-2">
+<div class="relative">
+<input class="pl-7 pr-3 py-1 bg-surface rounded-lg text-xs text-on-surface placeholder:text-outline focus:outline-none focus:ring-1 focus:ring-primary w-48" placeholder="搜索代码/名称/Trade ID..." type="text"/>
+<span class="material-symbols-outlined absolute left-2 top-1.5 text-sm text-outline">search</span>
+</div>
+<button class="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-surface hover:bg-surface-container text-on-surface-variant transition-colors" type="button">
+<span class="material-symbols-outlined text-xs">filter_list</span>
+<span>筛选</span>
+</button>
+<button class="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-primary text-on-primary hover:opacity-95 font-medium transition-opacity shadow-sm" type="button">
+<span class="material-symbols-outlined text-xs">add</span>
+<span>新建交易计划</span>
+</button>
+</div>
+</div>
+<!-- Main High-density Data Table -->
+<div class="overflow-x-auto w-full">
+<table class="w-full text-left text-xs whitespace-nowrap">
+<thead class="bg-surface-container text-[11px] text-on-surface-variant font-medium uppercase tracking-wider">
+<tr>
+<th class="py-2 px-3.5 w-8">#</th>
+<th class="py-2 px-3">标的名称/代码</th>
+<th class="py-2 px-3">所属Trade / 策略类型</th>
+<th class="py-2 px-3">Trade状态</th>
+<th class="py-2 px-3 text-right">总持仓 / 可卖数量</th>
+<th class="py-2 px-3 text-right">成本 / 现价 / 溢价率</th>
+<th class="py-2 px-3 text-right">浮动盈亏</th>
+<th class="py-2 px-3 text-right">仓位占比</th>
+<th class="py-2 px-3 text-right">本金计划风险</th>
+<th class="py-2 px-3 text-right">利润回吐风险</th>
+<th class="py-2 px-3 text-right">整体保护线</th>
+<th class="py-2 px-3.5 text-center">操作</th>
+</tr>
+</thead>
+<tbody class="text-on-surface divide-y-0">
+<!-- ROW 1: Multi-Trade Stock: 中际旭创 300308 (Parent row with multi-trade expansion) -->
+<tr class="hover:bg-surface-container-low transition-colors bg-surface-container-lowest/50 group">
+<td class="py-2.5 px-3.5 text-on-surface-variant">
+<button class="w-5 h-5 rounded flex items-center justify-center hover:bg-surface-container text-on-surface-variant transition-transform" onclick="toggleTradeLeg('group-300308', this)" type="button">
+<span class="material-symbols-outlined text-sm font-bold">expand_more</span>
+</button>
+</td>
+<td class="py-2.5 px-3">
+<div class="flex items-center gap-2">
+<div class="w-2 h-2 rounded-full bg-primary"></div>
+<div>
+<div class="flex items-center gap-1.5 font-bold text-sm tracking-tight text-on-surface">
+<span>中际旭创</span>
+<span class="text-[10px] font-mono px-1 py-0.2 rounded bg-tertiary-fixed text-on-tertiary-fixed font-semibold">多Trade(2)</span>
+</div>
+<div class="text-[10px] font-mono text-secondary">300308.SZ · 创业板</div>
+</div>
+</div>
+</td>
+<td class="py-2.5 px-3">
+<div class="flex flex-col">
+<span class="font-medium text-xs">聚合视图 (趋势主升 + 波段)</span>
+<span class="text-[10px] text-secondary font-mono">共计 2 项运行中 Trade</span>
+</div>
+</td>
+<td class="py-2.5 px-3">
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-primary-fixed text-on-primary-fixed-variant">
+<span class="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span>
+                  ACTIVE (进行中)
+                </span>
+</td>
+<td class="py-2.5 px-3 text-right">
+<div class="font-mono font-bold text-xs">1,500 股</div>
+<div class="text-[10px] text-on-surface-variant">
+                  可卖 <span class="font-semibold text-on-surface">1,000</span> <span class="text-tertiary">(待解 500)</span>
+</div>
+</td>
+<td class="py-2.5 px-3 text-right">
+<div class="font-mono text-xs">¥158.40 <span class="text-secondary">/</span> <strong class="text-error font-bold">¥173.20</strong></div>
+<div class="text-[10px] font-mono text-error font-semibold">+9.34% 溢价</div>
+</td>
+<td class="py-2.5 px-3 text-right">
+<div class="font-mono font-bold text-xs text-error">+¥22,200.00</div>
+<div class="text-[10px] font-mono text-error">+9.34%</div>
+</td>
+<td class="py-2.5 px-3 text-right">
+<div class="font-mono font-semibold text-xs">20.81%</div>
+<div class="w-16 bg-surface-container h-1 rounded-full ml-auto mt-1 overflow-hidden">
+<div class="bg-primary h-full" style="width: 78%"></div>
+</div>
+</td>
+<td class="py-2.5 px-3 text-right">
+<span class="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded bg-surface-container text-on-surface-variant font-mono">¥0.00 (无本金风险)</span>
+</td>
+<td class="py-2.5 px-3 text-right">
+<span class="font-mono text-xs text-tertiary font-semibold">¥4,800.00</span>
+<div class="text-[10px] text-secondary">利润防守回撤 21.6%</div>
+</td>
+<td class="py-2.5 px-3 text-right">
+<div class="font-mono font-bold text-xs text-primary">¥169.00</div>
+<div class="text-[10px] text-secondary font-mono">动态保本上移</div>
+</td>
+<td class="py-2.5 px-3.5 text-center">
+<div class="inline-flex items-center gap-1">
+<button class="px-2 py-1 rounded bg-primary text-on-primary text-[11px] font-medium hover:opacity-90 transition-opacity" type="button">查看Trade</button>
+<button class="px-1.5 py-1 rounded bg-surface-container hover:bg-surface-container-high text-on-surface-variant text-[11px] transition-colors" type="button">加仓</button>
+<button class="px-1.5 py-1 rounded bg-surface-container hover:bg-surface-container-high text-on-surface-variant text-[11px] transition-colors" type="button">减仓</button>
+<button class="px-1.5 py-1 rounded bg-surface-container hover:bg-surface-container-high text-on-surface-variant text-[11px] transition-colors" type="button">调风控</button>
+</div>
+</td>
+</tr>
+<!-- Expanded Trade Sub-Rows for 300308 (17.5 Multi-Trade & TradeLeg scenario) -->
+<tr class="bg-surface-container-low/70" id="group-300308-sub">
+<td class="py-2 px-3 pl-8" colspan="12">
+<div class="bg-surface-container-lowest rounded-lg p-2.5 space-y-2">
+<div class="flex items-center justify-between text-[11px] text-on-surface-variant">
+<span class="font-semibold text-on-surface flex items-center gap-1.5">
+<span class="material-symbols-outlined text-[13px] text-primary">account_tree</span>
+                      底层独立 Trade 穿透明细与 TradeLeg 拆解
+                    </span>
+<span class="text-[10px] text-secondary font-mono">双核驱动交易计划</span>
+</div>
+<!-- Trade 1: 趋势主升 -->
+<div class="bg-surface rounded-md p-2 flex flex-col md:flex-row md:items-center justify-between gap-2 text-xs">
+<div class="flex items-center gap-3">
+<span class="w-1.5 h-6 bg-primary rounded-full"></span>
+<div>
+<div class="flex items-center gap-2">
+<span class="font-bold text-on-surface">Trade #TRD-241108-01</span>
+<span class="px-1.5 py-0.2 rounded text-[9px] bg-primary-fixed text-on-primary-fixed-variant font-medium">趋势交易 (主仓)</span>
+<span class="text-primary font-mono text-[11px]">R-Multiple: +3.2R</span>
+</div>
+<div class="text-[10px] text-on-surface-variant flex items-center gap-3 font-mono mt-0.5">
+<span>Leg 1: OPEN 600股 @ ¥152.00</span>
+<span>Leg 2: ADD #1 400股 @ ¥165.00</span>
+<span class="text-secondary">加权成本: ¥157.20</span>
+</div>
+</div>
+</div>
+<div class="flex items-center gap-4 text-right">
+<div>
+<div class="font-mono text-xs font-semibold">1,000 股 (全部可卖)</div>
+<div class="text-[10px] text-error font-mono">+¥16,000.00 (+10.18%)</div>
+</div>
+<div class="text-right">
+<div class="text-[10px] text-secondary">风控止盈位</div>
+<div class="font-mono text-xs font-bold text-primary">¥168.50</div>
+</div>
+<div class="flex items-center gap-1 pl-2">
+<button class="px-2 py-0.5 rounded bg-surface-container text-[10px] hover:bg-surface-container-high">下钻详情</button>
+<button class="px-2 py-0.5 rounded bg-surface-container text-[10px] hover:bg-surface-container-high">移动保本</button>
+</div>
+</div>
+</div>
+<!-- Trade 2: 突破反弹快攻 -->
+<div class="bg-surface rounded-md p-2 flex flex-col md:flex-row md:items-center justify-between gap-2 text-xs">
+<div class="flex items-center gap-3">
+<span class="w-1.5 h-6 bg-tertiary-container rounded-full"></span>
+<div>
+<div class="flex items-center gap-2">
+<span class="font-bold text-on-surface">Trade #TRD-241120-04</span>
+<span class="px-1.5 py-0.2 rounded text-[9px] bg-secondary-container text-on-secondary-container font-medium">反弹波段 (次仓)</span>
+<span class="text-tertiary font-mono text-[11px]">今日刚建仓 T+1</span>
+</div>
+<div class="text-[10px] text-on-surface-variant flex items-center gap-3 font-mono mt-0.5">
+<span>Leg 1: OPEN 500股 @ ¥160.80</span>
+<span class="text-error font-medium">T+1 待解: 500 股</span>
+<span class="text-secondary">加权成本: ¥160.80</span>
+</div>
+</div>
+</div>
+<div class="flex items-center gap-4 text-right">
+<div>
+<div class="font-mono text-xs font-semibold">500 股 (不可卖 0/500)</div>
+<div class="text-[10px] text-error font-mono">+¥6,200.00 (+7.71%)</div>
+</div>
+<div class="text-right">
+<div class="text-[10px] text-secondary">硬防守止损线</div>
+<div class="font-mono text-xs font-bold text-error">¥156.00</div>
+</div>
+<div class="flex items-center gap-1 pl-2">
+<button class="px-2 py-0.5 rounded bg-surface-container text-[10px] hover:bg-surface-container-high">下钻详情</button>
+<button class="px-2 py-0.5 rounded bg-surface-container text-[10px] text-error hover:bg-surface-container-high">应急挂单</button>
+</div>
+</div>
+</div>
+</div>
+</td>
+</tr>
+<!-- ROW 2: 工业富联 601138 (Document sample specification: 500股 / 可卖300股，成本29.85，现价32.10) -->
+<tr class="hover:bg-surface-container-low transition-colors bg-surface-container-lowest group">
+<td class="py-2.5 px-3.5 text-on-surface-variant">
+<button class="w-5 h-5 rounded flex items-center justify-center hover:bg-surface-container text-on-surface-variant transition-transform" onclick="toggleTradeLeg('group-601138', this)" type="button">
+<span class="material-symbols-outlined text-sm">expand_more</span>
+</button>
+</td>
+<td class="py-2.5 px-3">
+<div class="flex items-center gap-2">
+<div class="w-2 h-2 rounded-full bg-primary"></div>
+<div>
+<div class="flex items-center gap-1 font-bold text-sm text-on-surface">
+<span>工业富联</span>
+</div>
+<div class="text-[10px] font-mono text-secondary">601138.SH · 主板</div>
+</div>
+</div>
+</td>
+<td class="py-2.5 px-3">
+<div class="flex flex-col">
+<span class="font-medium text-xs">趋势交易</span>
+<span class="text-[10px] text-secondary font-mono">TRD-241115-02</span>
+</div>
+</td>
+<td class="py-2.5 px-3">
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-primary-fixed text-on-primary-fixed-variant">
+<span class="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span>
+                  ACTIVE (进行中)
+                </span>
+</td>
+<td class="py-2.5 px-3 text-right">
+<div class="font-mono font-bold text-xs">500 股</div>
+<div class="text-[10px] text-on-surface-variant">
+                  可卖 <span class="font-semibold text-on-surface">300</span> <span class="text-tertiary">(待解 200)</span>
+</div>
+</td>
+<td class="py-2.5 px-3 text-right">
+<div class="font-mono text-xs">¥29.85 <span class="text-secondary">/</span> <strong class="text-error font-bold">¥32.10</strong></div>
+<div class="text-[10px] font-mono text-error font-semibold">+7.54% 溢价</div>
+</td>
+<td class="py-2.5 px-3 text-right">
+<div class="font-mono font-bold text-xs text-error">+¥1,125.00</div>
+<div class="text-[10px] font-mono text-error">+7.54%</div>
+</td>
+<td class="py-2.5 px-3 text-right">
+<div class="font-mono font-semibold text-xs">16.05%</div>
+<div class="w-16 bg-surface-container h-1 rounded-full ml-auto mt-1 overflow-hidden">
+<div class="bg-primary h-full" style="width: 55%"></div>
+</div>
+</td>
+<td class="py-2.5 px-3 text-right">
+<span class="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded bg-surface-container text-on-surface-variant font-mono">¥0.00 无本金风险</span>
+</td>
+<td class="py-2.5 px-3 text-right">
+<span class="font-mono text-xs text-tertiary font-semibold">¥780.00</span>
+<div class="text-[10px] text-secondary">利润防守回撤</div>
+</td>
+<td class="py-2.5 px-3 text-right">
+<div class="font-mono font-bold text-xs text-primary">¥30.54</div>
+<div class="text-[10px] text-secondary font-mono">保护参考线</div>
+</td>
+<td class="py-2.5 px-3.5 text-center">
+<div class="inline-flex items-center gap-1">
+<button class="px-2 py-1 rounded bg-primary text-on-primary text-[11px] font-medium hover:opacity-90 transition-opacity" type="button">查看Trade</button>
+<button class="px-1.5 py-1 rounded bg-surface-container hover:bg-surface-container-high text-on-surface-variant text-[11px] transition-colors" type="button">加仓</button>
+<button class="px-1.5 py-1 rounded bg-surface-container hover:bg-surface-container-high text-on-surface-variant text-[11px] transition-colors" type="button">减仓</button>
+<button class="px-1.5 py-1 rounded bg-surface-container hover:bg-surface-container-high text-on-surface-variant text-[11px] transition-colors" type="button">调风控</button>
+<button class="px-1.5 py-1 rounded bg-surface-container hover:bg-surface-container-high text-on-surface-variant text-[11px] transition-colors" type="button">清仓</button>
+</div>
+</td>
+</tr>
+<!-- Expanded TradeLeg breakdown for 601138 (17.5 details) -->
+<tr class="hidden bg-surface-container-low/70" id="group-601138-sub">
+<td class="py-2 px-3 pl-8" colspan="12">
+<div class="bg-surface-container-lowest rounded-lg p-2.5 flex items-center justify-between text-xs font-mono">
+<div class="flex items-center gap-4">
+<span class="font-sans font-semibold text-on-surface flex items-center gap-1">
+<span class="material-symbols-outlined text-[13px] text-primary">layers</span>
+                      TradeLeg 执行拆分明细:
+                    </span>
+<span class="text-on-surface">Leg 1 (OPEN): 300 股 @ ¥29.00 (已解禁，防守位 ¥30.54)</span>
+<span class="text-tertiary">Leg 2 (ADD #1): 200 股 @ ¥31.12 (昨日执行，待解禁)</span>
+</div>
+<div class="text-[11px] text-secondary font-sans">
+                    防守垫已锁定：本金绝对安全，当前仅承担 ¥780.00 浮盈回撤风险
+                  </div>
+</div>
+</td>
+</tr>
+<!-- ROW 3: 宁德时代 300750 (稳健大票) -->
+<tr class="hover:bg-surface-container-low transition-colors bg-surface-container-lowest group">
+<td class="py-2.5 px-3.5 text-on-surface-variant">
+<span class="material-symbols-outlined text-sm text-outline">remove</span>
+</td>
+<td class="py-2.5 px-3">
+<div class="flex items-center gap-2">
+<div class="w-2 h-2 rounded-full bg-primary"></div>
+<div>
+<div class="flex items-center gap-1 font-bold text-sm text-on-surface">
+<span>宁德时代</span>
+</div>
+<div class="text-[10px] font-mono text-secondary">300750.SZ · 创业板</div>
+</div>
+</div>
+</td>
+<td class="py-2.5 px-3">
+<div class="flex flex-col">
+<span class="font-medium text-xs">反弹波段</span>
+<span class="text-[10px] text-secondary font-mono">TRD-241112-09</span>
+</div>
+</td>
+<td class="py-2.5 px-3">
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-primary-fixed text-on-primary-fixed-variant">
+<span class="w-1.5 h-1.5 rounded-full bg-primary"></span>
+                  ACTIVE (进行中)
+                </span>
+</td>
+<td class="py-2.5 px-3 text-right">
+<div class="font-mono font-bold text-xs">800 股</div>
+<div class="text-[10px] text-on-surface-variant">
+                  可卖 <span class="font-semibold text-on-surface">800</span> <span class="text-secondary">(无在途)</span>
+</div>
+</td>
+<td class="py-2.5 px-3 text-right">
+<div class="font-mono text-xs">¥254.20 <span class="text-secondary">/</span> <strong class="text-error font-bold">¥268.50</strong></div>
+<div class="text-[10px] font-mono text-error font-semibold">+5.63% 溢价</div>
+</td>
+<td class="py-2.5 px-3 text-right">
+<div class="font-mono font-bold text-xs text-error">+¥11,440.00</div>
+<div class="text-[10px] font-mono text-error">+5.63%</div>
+</td>
+<td class="py-2.5 px-3 text-right">
+<div class="font-mono font-semibold text-xs">17.20%</div>
+<div class="w-16 bg-surface-container h-1 rounded-full ml-auto mt-1 overflow-hidden">
+<div class="bg-primary h-full" style="width: 62%"></div>
+</div>
+</td>
+<td class="py-2.5 px-3 text-right">
+<span class="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded bg-surface-container text-on-surface-variant font-mono">¥0.00 无本金风险</span>
+</td>
+<td class="py-2.5 px-3 text-right">
+<span class="font-mono text-xs text-tertiary font-semibold">¥2,400.00</span>
+<div class="text-[10px] text-secondary">利润防守回撤</div>
+</td>
+<td class="py-2.5 px-3 text-right">
+<div class="font-mono font-bold text-xs text-primary">¥260.00</div>
+<div class="text-[10px] text-secondary font-mono">保护参考线</div>
+</td>
+<td class="py-2.5 px-3.5 text-center">
+<div class="inline-flex items-center gap-1">
+<button class="px-2 py-1 rounded bg-primary text-on-primary text-[11px] font-medium hover:opacity-90 transition-opacity" type="button">查看Trade</button>
+<button class="px-1.5 py-1 rounded bg-surface-container hover:bg-surface-container-high text-on-surface-variant text-[11px] transition-colors" type="button">加仓</button>
+<button class="px-1.5 py-1 rounded bg-surface-container hover:bg-surface-container-high text-on-surface-variant text-[11px] transition-colors" type="button">减仓</button>
+<button class="px-1.5 py-1 rounded bg-surface-container hover:bg-surface-container-high text-on-surface-variant text-[11px] transition-colors" type="button">调风控</button>
+</div>
+</td>
+</tr>
+<!-- ROW 4: 赛力斯 601127 (有本金计划风险案例) -->
+<tr class="hover:bg-surface-container-low transition-colors bg-surface-container-lowest group">
+<td class="py-2.5 px-3.5 text-on-surface-variant">
+<span class="material-symbols-outlined text-sm text-outline">remove</span>
+</td>
+<td class="py-2.5 px-3">
+<div class="flex items-center gap-2">
+<div class="w-2 h-2 rounded-full bg-tertiary"></div>
+<div>
+<div class="flex items-center gap-1 font-bold text-sm text-on-surface">
+<span>赛力斯</span>
+</div>
+<div class="text-[10px] font-mono text-secondary">601127.SH · 主板</div>
+</div>
+</div>
+</td>
+<td class="py-2.5 px-3">
+<div class="flex flex-col">
+<span class="font-medium text-xs">突破试仓</span>
+<span class="text-[10px] text-secondary font-mono">TRD-241121-01</span>
+</div>
+</td>
+<td class="py-2.5 px-3">
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-tertiary-fixed text-on-tertiary-fixed">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary animate-pulse"></span>
+                  ACTIVE (进行中)
+                </span>
+</td>
+<td class="py-2.5 px-3 text-right">
+<div class="font-mono font-bold text-xs">600 股</div>
+<div class="text-[10px] text-on-surface-variant">
+                  可卖 <span class="font-semibold text-on-surface">600</span> <span class="text-secondary">(无在途)</span>
+</div>
+</td>
+<td class="py-2.5 px-3 text-right">
+<div class="font-mono text-xs">¥138.00 <span class="text-secondary">/</span> <strong class="text-primary font-bold">¥136.20</strong></div>
+<div class="text-[10px] font-mono text-primary font-semibold">-1.30% 贴水</div>
+</td>
+<td class="py-2.5 px-3 text-right">
+<div class="font-mono font-bold text-xs text-primary">-¥1,080.00</div>
+<div class="text-[10px] font-mono text-primary">-1.30%</div>
+</td>
+<td class="py-2.5 px-3 text-right">
+<div class="font-mono font-semibold text-xs">6.55%</div>
+<div class="w-16 bg-surface-container h-1 rounded-full ml-auto mt-1 overflow-hidden">
+<div class="bg-tertiary h-full" style="width: 25%"></div>
+</div>
+</td>
+<td class="py-2.5 px-3 text-right">
+<span class="font-mono text-xs text-error font-bold">¥3,600.00</span>
+<div class="text-[10px] text-secondary font-mono">0.29% NAV (安全)</div>
+</td>
+<td class="py-2.5 px-3 text-right">
+<span class="text-[10px] text-secondary font-mono">- (暂无浮盈)</span>
+</td>
+<td class="py-2.5 px-3 text-right">
+<div class="font-mono font-bold text-xs text-error">¥132.00</div>
+<div class="text-[10px] text-secondary font-mono">硬止损线 (SL)</div>
+</td>
+<td class="py-2.5 px-3.5 text-center">
+<div class="inline-flex items-center gap-1">
+<button class="px-2 py-1 rounded bg-primary text-on-primary text-[11px] font-medium hover:opacity-90 transition-opacity" type="button">查看Trade</button>
+<button class="px-1.5 py-1 rounded bg-surface-container hover:bg-surface-container-high text-on-surface-variant text-[11px] transition-colors" type="button">加仓</button>
+<button class="px-1.5 py-1 rounded bg-surface-container hover:bg-surface-container-high text-on-surface-variant text-[11px] transition-colors" type="button">调风控</button>
+<button class="px-1.5 py-1 rounded bg-surface-container hover:bg-surface-container-high text-error text-[11px] transition-colors" type="button">清仓</button>
+</div>
+</td>
+</tr>
+<!-- ROW 5: 阳光电源 300274 (CLOSING 清仓中状态) -->
+<tr class="hover:bg-surface-container-low transition-colors bg-surface-container-lowest group">
+<td class="py-2.5 px-3.5 text-on-surface-variant">
+<span class="material-symbols-outlined text-sm text-outline">remove</span>
+</td>
+<td class="py-2.5 px-3">
+<div class="flex items-center gap-2">
+<div class="w-2 h-2 rounded-full bg-error"></div>
+<div>
+<div class="flex items-center gap-1 font-bold text-sm text-on-surface">
+<span>阳光电源</span>
+</div>
+<div class="text-[10px] font-mono text-secondary">300274.SZ · 创业板</div>
+</div>
+</div>
+</td>
+<td class="py-2.5 px-3">
+<div class="flex flex-col">
+<span class="font-medium text-xs">趋势清仓阶段</span>
+<span class="text-[10px] text-secondary font-mono">TRD-241101-08</span>
+</div>
+</td>
+<td class="py-2.5 px-3">
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-error-container text-on-error-container">
+<span class="w-1.5 h-1.5 rounded-full bg-error animate-ping"></span>
+                  CLOSING (清仓中)
+                </span>
+</td>
+<td class="py-2.5 px-3 text-right">
+<div class="font-mono font-bold text-xs">400 股</div>
+<div class="text-[10px] text-on-surface-variant">
+                  挂单清卖中: <span class="font-semibold text-error">400</span>
+</div>
+</td>
+<td class="py-2.5 px-3 text-right">
+<div class="font-mono text-xs">¥78.10 <span class="text-secondary">/</span> <strong class="text-error font-bold">¥88.45</strong></div>
+<div class="text-[10px] font-mono text-error font-semibold">+13.25% 溢价</div>
+</td>
+<td class="py-2.5 px-3 text-right">
+<div class="font-mono font-bold text-xs text-error">+¥4,140.00</div>
+<div class="text-[10px] font-mono text-error">+13.25%</div>
+</td>
+<td class="py-2.5 px-3 text-right">
+<div class="font-mono font-semibold text-xs">2.83%</div>
+<div class="w-16 bg-surface-container h-1 rounded-full ml-auto mt-1 overflow-hidden">
+<div class="bg-error h-full" style="width: 10%"></div>
+</div>
+</td>
+<td class="py-2.5 px-3 text-right">
+<span class="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded bg-surface-container text-on-surface-variant font-mono">¥0.00 (锁定离场)</span>
+</td>
+<td class="py-2.5 px-3 text-right">
+<span class="font-mono text-xs text-secondary">¥0.00</span>
+<div class="text-[10px] text-secondary">已全部锁定利润</div>
+</td>
+<td class="py-2.5 px-3 text-right">
+<div class="font-mono font-bold text-xs text-on-surface">市价止盈</div>
+<div class="text-[10px] text-secondary font-mono">委托执行中</div>
+</td>
+<td class="py-2.5 px-3.5 text-center">
+<div class="inline-flex items-center gap-1">
+<button class="px-2 py-1 rounded bg-primary text-on-primary text-[11px] font-medium hover:opacity-90 transition-opacity" type="button">查看Trade</button>
+<button class="px-2 py-1 rounded bg-error text-on-error text-[11px] font-medium hover:opacity-90 transition-opacity" type="button">撤单重提</button>
+</div>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<!-- Bottom Status Strip -->
+<div class="px-3.5 py-2 bg-surface-container border-t-0 flex flex-wrap items-center justify-between text-[11px] text-on-surface-variant">
+<div class="flex items-center gap-4">
+<span class="flex items-center gap-1.5">
+<span class="w-2 h-2 rounded-full bg-primary"></span>
+            A股集中竞价中 (实时双向直连中金/华泰证券)
+          </span>
+<span>持仓证券合计: <strong class="text-on-surface font-mono">5</strong> 标的</span>
+<span>今日已实现收益: <strong class="text-error font-mono">+¥4,500.00</strong></span>
+</div>
+<div class="flex items-center gap-3">
+<span class="font-mono">最后同步: 14:48:32</span>
+<button class="flex items-center gap-0.5 text-primary hover:underline font-medium" type="button">
+<span class="material-symbols-outlined text-xs">sync</span> 强制校验证券持仓
+          </button>
+</div>
+</div>
+</div>
+<!-- Quick Insights & Defensive Buffer Bar (Clean compact layout) -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-2.5 text-xs">
+<div class="bg-surface-container-lowest rounded-xl p-3 shadow-sm flex items-center justify-between">
+<div class="flex items-center gap-2.5">
+<div class="w-8 h-8 rounded-lg bg-surface-container flex items-center justify-center text-primary">
+<span class="material-symbols-outlined text-lg">shield</span>
+</div>
+<div>
+<div class="font-bold text-on-surface text-xs">账户总防守垫与净利润比</div>
+<div class="text-[11px] text-secondary">已锁定垫 ¥68.9k / 敞口 ¥8,640 (7.98倍保护)</div>
+</div>
+</div>
+<span class="text-xs font-bold text-primary px-2 py-0.5 rounded bg-primary-fixed">极度健康</span>
+</div>
+<div class="bg-surface-container-lowest rounded-xl p-3 shadow-sm flex items-center justify-between">
+<div class="flex items-center gap-2.5">
+<div class="w-8 h-8 rounded-lg bg-surface-container flex items-center justify-center text-tertiary">
+<span class="material-symbols-outlined text-lg">lock_clock</span>
+</div>
+<div>
+<div class="font-bold text-on-surface text-xs">T+1 锁定流动性监控</div>
+<div class="text-[11px] text-secondary">在途锁定市值 ¥102,900.00 (占比总仓位 12.5%)</div>
+</div>
+</div>
+<span class="text-xs font-bold text-on-surface font-mono">次日 09:30 解禁</span>
+</div>
+<div class="bg-surface-container-lowest rounded-xl p-3 shadow-sm flex items-center justify-between">
+<div class="flex items-center gap-2.5">
+<div class="w-8 h-8 rounded-lg bg-surface-container flex items-center justify-center text-primary">
+<span class="material-symbols-outlined text-lg">auto_mode</span>
+</div>
+<div>
+<div class="font-bold text-on-surface text-xs">风控止盈保护自动化</div>
+<div class="text-[11px] text-secondary">4个 ACTIVE Trade 均已挂接云端保本追踪单</div>
+</div>
+</div>
+<span class="text-xs font-bold text-primary flex items-center gap-0.5">
+<span class="material-symbols-outlined text-[14px]">check_circle</span> 运行中
+        </span>
+</div>
+</div>
+</div>
+<!-- Interactive JavaScript for Multi-Trade & Leg Accordion -->
+<script>
+    function toggleTradeLeg(id, btn) {
+      const row = document.getElementById(id + '-sub');
+      if (!row) return;
+      const isHidden = row.classList.contains('hidden');
+      if (isHidden) {
+        row.classList.remove('hidden');
+        btn.innerHTML = '<span class="material-symbols-outlined text-sm font-bold">expand_more</span>';
+      } else {
+        row.classList.add('hidden');
+        btn.innerHTML = '<span class="material-symbols-outlined text-sm">chevron_right</span>';
+      }
+    }
+  </script>
+</div></main></div></body></html>

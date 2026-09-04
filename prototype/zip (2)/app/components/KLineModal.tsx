@@ -24,6 +24,7 @@ import {
   ZoomIn,
   ZoomOut,
   Star,
+  ChevronDown,
 } from 'lucide-react';
 
 interface KLineBar {
@@ -35,6 +36,7 @@ interface KLineBar {
   close: number;
   volume: number;
   turnover: number;
+  last_30m_slot?: string;
   [key: string]: unknown;
 }
 
@@ -51,10 +53,19 @@ interface MaConfigItem {
   color: string;
 }
 
+interface StrategyScoreItem {
+  trade_date: string;
+  high?: number;
+  total_score: number;
+  state: string;
+}
+
 interface KLineModalProps {
   assetCode: string;
   assetName: string;
   industry?: string;
+  scoreStartDate?: string;
+  scoreTradeDate?: string;
   isOpen: boolean;
   onClose: () => void;
   onNavigatePrev?: () => void;
@@ -64,6 +75,16 @@ interface KLineModalProps {
   apiHost?: string;
   isSelected?: boolean;
   onToggleSelect?: () => void;
+  onSpaceToggleWatchlist?: () => void;
+  watchlistSource?: { type: 'MANUAL' | 'STRATEGY'; strategy?: string; stage?: string; snapshot_date?: string };
+  showSubIndicators?: boolean;
+  showAiPoolButton?: boolean;
+  showWatchlistButton?: boolean;
+  embedded?: boolean;
+  showNavigation?: boolean;
+  showAssetInfo?: boolean;
+  onPickPrice?: (price: number) => void;
+  tradeMarkers?: Array<{ date: string; price?: number; label: string; color?: string }>;
 }
 
 const DRAWING_TOOLS = [
@@ -93,22 +114,91 @@ const DEFAULT_MA_ITEMS: MaConfigItem[] = [
   { id: '4', day: 60, color: '#8b5cf6' },
 ];
 
+const SCORE_OVERLAY_ID_PREFIX = 'early-turn-score-overlay-';
+// 固定副图 pane，避免 KLineModal 重建/切换周期时由 klinecharts 自动分配出重复副图。
+const VOLUME_PANE_ID = 'watchlist-volume-pane';
+const SUB_INDICATOR_PANE_ID = 'watchlist-sub-indicator-pane';
+// 不能在组件参数中直接使用 `=[]`：每次渲染都会创建新数组，进而触发图表
+// 初始化 effect 反复销毁、重建和重新请求数据。
+const EMPTY_TRADE_MARKERS: Array<{ date: string; price?: number; label: string; color?: string }> = [];
+
+function getScoreColor(score: number, state: string): { bg: string; text: string } {
+  if (score >= 85) return { bg: '#047857', text: '#ffffff' };
+  if (score >= 75) return { bg: '#2563eb', text: '#ffffff' };
+  if (score >= 60) return { bg: '#d97706', text: '#ffffff' };
+  if (score >= 45) return { bg: '#64748b', text: '#ffffff' };
+  switch (state) {
+    case 'EARLY_TURN':
+      return { bg: '#d97706', text: '#ffffff' };
+    case 'PRE_READY':
+      return { bg: '#705c30', text: '#ffffff' };
+    case 'WATCH':
+      return { bg: '#334155', text: '#ffffff' };
+    case 'TOO_LATE':
+      return { bg: '#be123c', text: '#ffffff' };
+    default:
+      return { bg: '#94a3b8', text: '#ffffff' };
+  }
+}
+
 export default function KLineModal({
   assetCode,
   assetName,
   industry,
+  scoreStartDate,
+  scoreTradeDate,
   isOpen,
   onClose,
   onNavigatePrev,
   onNavigateNext,
   hasPrev = false,
   hasNext = false,
-  apiHost = process.env.NEXT_PUBLIC_MARKET_REVIEW_API_URL || 'http://127.0.0.1:18080',
+  apiHost = process.env.NEXT_PUBLIC_MARKET_REVIEW_API_URL,
   isSelected = false,
   onToggleSelect,
+  onSpaceToggleWatchlist,
+  watchlistSource,
+  showSubIndicators = true,
+  showAiPoolButton = true,
+  showWatchlistButton = true,
+  embedded = false,
+  showNavigation = true,
+  showAssetInfo = !embedded,
+  onPickPrice,
+  tradeMarkers = EMPTY_TRADE_MARKERS,
 }: KLineModalProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<Nullable<Chart>>(null);
+
+  const [inWatchlist, setInWatchlist] = useState(false);
+
+  // Check & Toggle Watchlist in PostgreSQL
+  useEffect(() => {
+    if (!isOpen || !assetCode) return;
+    fetch(`${apiHost}/api/watchlist/stocks`)
+      .then((res) => res.json())
+      .then((data) => {
+        const codes = Array.isArray(data.watchlist_codes) ? data.watchlist_codes : [];
+        setInWatchlist(codes.includes(assetCode));
+      })
+      .catch(() => {});
+  }, [isOpen, assetCode, apiHost]);
+
+  const handleToggleWatchlist = async () => {
+    try {
+      const res = await fetch(`${apiHost}/api/watchlist/stocks/toggle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ asset_code: assetCode, source: watchlistSource }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setInWatchlist(data.in_watchlist);
+      }
+    } catch (e) {
+      console.error('Toggle watchlist error:', e);
+    }
+  };
 
   const [fetchedIndustry, setFetchedIndustry] = useState<string>('');
   const [period, setPeriod] = useState<'daily' | 'weekly' | 'monthly' | '30min'>('daily');
@@ -147,57 +237,60 @@ export default function KLineModal({
   const [showStylePanel, setShowStylePanel] = useState<boolean>(false);
   const stylePanelRef = useRef<HTMLDivElement>(null);
 
+  // 划线工具下拉状态
+  const [showDrawingDropdown, setShowDrawingDropdown] = useState<boolean>(false);
+  const drawingDropdownRef = useRef<HTMLDivElement>(null);
+
   // AI 分析池快捷操作
   const [inAiPool, setInAiPool] = useState<boolean>(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
 
-  const checkInAiPool = () => {
-    try {
-      const pool: string[] = JSON.parse(localStorage.getItem('ai_analysis_pool_codes') || '[]');
-      setInAiPool(pool.includes(assetCode));
-    } catch (e) {}
+  const copyStockText = async (value: string, label: string) => {
+    await navigator.clipboard.writeText(value);
+    setToastMsg(`已复制${label}：${value}`);
+    window.setTimeout(() => setToastMsg(null), 1800);
   };
 
   useEffect(() => {
-    if (isOpen && assetCode) {
-      checkInAiPool();
+    if (!isOpen || !assetCode || !showAiPoolButton) {
+      setInAiPool(false);
+      return;
     }
-  }, [isOpen, assetCode]);
 
-  const toggleAiPool = () => {
-    try {
-      const pool: string[] = JSON.parse(localStorage.getItem('ai_analysis_pool_codes') || '[]');
-      let nextPool: string[];
-      let added = false;
-      if (pool.includes(assetCode)) {
-        nextPool = pool.filter((c) => c !== assetCode);
-      } else {
-        nextPool = [...pool, assetCode];
-        added = true;
-      }
-      localStorage.setItem('ai_analysis_pool_codes', JSON.stringify(nextPool));
-      setInAiPool(added);
-      setToastMsg(added ? `已加入 AI 分析池 (共 ${nextPool.length} 只)` : `已移出 AI 分析池 (还剩 ${nextPool.length} 只)`);
-      setTimeout(() => setToastMsg(null), 2000);
-    } catch (e) {}
-  };
-
-  // 按 Space (空格键) 快捷加入/移出 AI 分析池
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code === 'Space' || e.key === ' ') {
-        const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
-        if (tag === 'input' || tag === 'textarea') return;
-        e.preventDefault();
-        toggleAiPool();
+    const controller = new AbortController();
+    const checkInAiPool = async () => {
+      try {
+        const res = await fetch(`${apiHost}/api/watchlist/ai-pool`, { signal: controller.signal });
+        if (!res.ok) throw new Error(`AI 分析池接口返回 HTTP ${res.status}`);
+        const data = await res.json();
+        if (!controller.signal.aborted) {
+          setInAiPool(Array.isArray(data.codes) && data.codes.includes(assetCode));
+        }
+      } catch (e) {
+        // 这是弹窗按钮的辅助状态。关闭或切换股票导致的取消不应成为控制台错误。
+        if (controller.signal.aborted || (e instanceof DOMException && e.name === 'AbortError')) return;
+        setInAiPool(false);
       }
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, assetCode]);
+    void checkInAiPool();
+    return () => controller.abort();
+  }, [isOpen, assetCode, apiHost, showAiPoolButton]);
 
-  // Click Outside 闭合均线及划线样式面板
+  const toggleAiPool = async () => {
+    try {
+      const res = await fetch(`${apiHost}/api/watchlist/ai-pool/toggle`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ asset_code: assetCode }) });
+      if (!res.ok) throw new Error(`AI 分析池接口返回 HTTP ${res.status}`);
+      const data = await res.json();
+      setInAiPool(Boolean(data.in_pool));
+      setToastMsg(data.in_pool ? '已加入 AI 分析池' : '已移出 AI 分析池');
+      setTimeout(() => setToastMsg(null), 2000);
+    } catch (e) {
+      console.error('AI 分析池操作失败:', e);
+      setToastMsg('AI 分析池操作失败，请重试');
+    }
+  };
+
+  // Click Outside 闭合均线、划线工具及划线样式面板
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (maConfigRef.current && !maConfigRef.current.contains(event.target as Node)) {
@@ -205,6 +298,9 @@ export default function KLineModal({
       }
       if (stylePanelRef.current && !stylePanelRef.current.contains(event.target as Node)) {
         setShowStylePanel(false);
+      }
+      if (drawingDropdownRef.current && !drawingDropdownRef.current.contains(event.target as Node)) {
+        setShowDrawingDropdown(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -226,7 +322,7 @@ export default function KLineModal({
   const autoSaveDrawings = async () => {
     if (!chartRef.current) return;
     const overlays = chartRef.current.getOverlays();
-    const drawingsData = overlays.map((o) => ({
+    const drawingsData = overlays.filter((o) => !String(o.id || '').startsWith(SCORE_OVERLAY_ID_PREFIX)).map((o) => ({
       id: o.id,
       name: o.name,
       points: o.points,
@@ -244,7 +340,7 @@ export default function KLineModal({
     }
   };
 
-  // 全局键盘监听：Esc 关闭弹窗，Space 入候选池，← / → 导航左右股票，Delete / Backspace 删划线
+  // 全局键盘监听：Esc 关闭弹窗，Space 加入/移出自选股，← / → 按列表顺序导航
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!isOpen) return;
@@ -261,7 +357,7 @@ export default function KLineModal({
 
       if (e.key === ' ' || e.code === 'Space') {
         e.preventDefault();
-        if (onToggleSelect) onToggleSelect();
+        if (onSpaceToggleWatchlist) onSpaceToggleWatchlist();
         return;
       }
 
@@ -405,12 +501,16 @@ export default function KLineModal({
       true,
     );
 
-    // 副图 1: 固定 VOL 成交量
-    chart.createIndicator('VOL', false);
-
-    // 副图 2: 切换的 MACD / KDJ / RSI
-    chart.createIndicator(subIndicator, false);
-    currentSubIndicatorRef.current = subIndicator;
+    // 仅在 showSubIndicators 为 true 时创建副图指标
+    if (showSubIndicators) {
+      // 防止开发环境 StrictMode 或外部重挂载在同一 chart 实例上遗留副图。
+      chart.getIndicators().filter((item) =>
+        item.name === 'VOL' || item.name === 'MACD' || item.name === 'KDJ' || item.name === 'RSI'
+      ).forEach((item) => chart.removeIndicator({ id: item.id }));
+      chart.createIndicator({ name: 'VOL', paneId: VOLUME_PANE_ID }, false);
+      chart.createIndicator({ name: subIndicator, paneId: SUB_INDICATOR_PANE_ID }, false);
+      currentSubIndicatorRef.current = subIndicator;
+    }
 
     // 3. 注册 DataLoader 异步载入数据
     chart.setDataLoader({
@@ -432,7 +532,29 @@ export default function KLineModal({
             }
           }
 
-          callback(bars);
+          if (bars.length > 0) {
+            const historyRaw = window.localStorage.getItem('trade-plan:kline-view-history');
+            let history: Record<string, number> = {};
+            if (historyRaw) {
+              try {
+                const parsed = JSON.parse(historyRaw);
+                if (parsed && typeof parsed === 'object') history = parsed;
+              } catch {
+                history = {};
+              }
+            }
+            history[currentAsset.split('.')[0]] = Date.now();
+            window.localStorage.setItem('trade-plan:kline-view-history', JSON.stringify(history));
+          }
+
+	          callback(bars);
+	          // 复盘文章中的股票也必须默认定位到当前最新交易日，不能停留在
+	          // 图表组件的历史默认视口（例如 7 月）。用户仍可手动向左回看。
+	          requestAnimationFrame(() => {
+	            if (chartRef.current === chart) {
+	              chart.scrollToRealTime();
+	            }
+	          });
 
           // 还原划线
           const drawingsRes = await fetch(`${currentApiHost}/api/screening/drawings/${currentAsset}`);
@@ -455,10 +577,63 @@ export default function KLineModal({
               });
               setDrawingCount(drawings.length);
             } else {
-              setDrawingCount(0);
-            }
+	              setDrawingCount(0);
+	            }
+	          }
+	          if (tradeMarkers.length > 0) {
+            const barsByDate = new Map(bars.map((bar) => [String(bar.trade_date).replace(/-/g, ''), bar]));
+            tradeMarkers.forEach((marker, index) => {
+              const bar = barsByDate.get(String(marker.date).slice(0, 10).replace(/-/g, ''));
+              if (!bar) return;
+              chart.createOverlay({
+                id: `trade-marker-${index}-${String(marker.date).replace(/[^0-9]/g, '')}`,
+                name: 'simpleAnnotation',
+                extendData: marker.label,
+                points: [{ timestamp: bar.timestamp, value: marker.price || bar.close }],
+                styles: { text: { color: '#ffffff', backgroundColor: marker.color || '#0f5238', borderRadius: 4, paddingLeft: 5, paddingRight: 5, paddingTop: 2, paddingBottom: 2 } },
+              });
+            });
           }
-        } catch (err: any) {
+	          if (currentPeriod === 'daily' && scoreTradeDate) {
+	            const cleanEndDate = scoreTradeDate.replace(/-/g, '');
+	            const cleanStartDate = (scoreStartDate || scoreTradeDate).replace(/-/g, '');
+	            const scoreParams = new URLSearchParams({
+	              ts_code: currentAsset,
+	              start_date: cleanStartDate,
+	              end_date: cleanEndDate,
+	              strategy_id: 'A_PRE_V2',
+	            });
+	            const scoreRes = await fetch(`${currentApiHost}/api/strategy/single-stock/eval?${scoreParams.toString()}`);
+	            if (scoreRes.ok) {
+	              const scoreJson = await scoreRes.json();
+	              const scores: StrategyScoreItem[] = Array.isArray(scoreJson.history) ? scoreJson.history : [];
+	              const barsByDate = new Map(bars.map((bar) => [bar.trade_date, bar]));
+	              scores.forEach((score) => {
+	                if (!score || typeof score.total_score !== 'number' || score.total_score <= 0) return;
+	                const scoreBar = barsByDate.get(score.trade_date);
+	                if (!scoreBar) return;
+                const colorInfo = getScoreColor(score.total_score, score.state);
+	                chart.createOverlay({
+	                  id: `${SCORE_OVERLAY_ID_PREFIX}${score.trade_date}`,
+	                  name: 'simpleAnnotation',
+	                  extendData: `${score.total_score.toFixed(1)}`,
+	                  points: [{ timestamp: scoreBar.timestamp, value: scoreBar.high }],
+	                  styles: {
+	                    text: {
+	                      color: colorInfo.text,
+	                      backgroundColor: colorInfo.bg,
+	                      borderRadius: 4,
+	                      paddingLeft: 5,
+	                      paddingRight: 5,
+	                      paddingTop: 2,
+	                      paddingBottom: 2,
+	                    },
+	                  },
+	                });
+	              });
+	            }
+	          }
+	        } catch (err: any) {
           setError(err.message || '加载图表失败');
         } finally {
           setLoading(false);
@@ -494,14 +669,14 @@ export default function KLineModal({
         chartRef.current = null;
       }
     };
-  }, [isOpen, assetCode, period, adjust]);
+  }, [isOpen, assetCode, period, adjust, scoreStartDate, scoreTradeDate, tradeMarkers]);
 
   // 切换副图指标 (MACD / KDJ / RSI)
   const handleChangeSubIndicator = (newIndicator: 'MACD' | 'KDJ' | 'RSI') => {
     if (!chartRef.current || newIndicator === subIndicator) return;
-    const oldIndicator = currentSubIndicatorRef.current;
-    chartRef.current.removeIndicator({ name: oldIndicator });
-    chartRef.current.createIndicator(newIndicator, false);
+    // 只操作固定的副图 pane，避免按名称删除/创建时留下重复指标实例。
+    chartRef.current.removeIndicator({ paneId: SUB_INDICATOR_PANE_ID });
+    chartRef.current.createIndicator({ name: newIndicator, paneId: SUB_INDICATOR_PANE_ID }, false);
     currentSubIndicatorRef.current = newIndicator;
     setSubIndicator(newIndicator);
   };
@@ -617,10 +792,21 @@ export default function KLineModal({
     autoSaveDrawings();
   };
 
+  const handleChartClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!onPickPrice || activeTool || !chartRef.current || !chartContainerRef.current) return;
+    const rect = chartContainerRef.current.getBoundingClientRect();
+    const point = chartRef.current.convertFromPixel(
+      [{ x: event.clientX - rect.left, y: event.clientY - rect.top }],
+      { paneId: 'candle_pane' },
+    );
+    const value = Array.isArray(point) ? point[0]?.value : point.value;
+    if (typeof value === 'number' && Number.isFinite(value)) onPickPrice(Number(value.toFixed(2)));
+  };
+
   if (!isOpen) return null;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-xs p-3">
+  const chartPanel = (
+    <>
       {/* Toast 提示 */}
       {toastMsg && (
         <div className="absolute top-6 left-1/2 -translate-x-1/2 z-50 bg-[#2e3230] text-white px-4 py-2 rounded-xl text-xs font-bold shadow-2xl flex items-center gap-2 border border-purple-400/40 animate-bounce">
@@ -628,42 +814,46 @@ export default function KLineModal({
           <span>{toastMsg}</span>
         </div>
       )}
-      <div className="flex flex-col w-[96vw] max-w-[1500px] h-[94vh] bg-white rounded-xl shadow-2xl overflow-hidden border border-slate-200">
+      <div className={`flex min-h-0 flex-col overflow-hidden bg-white ${embedded ? 'h-full w-full' : 'h-[94vh] w-[96vw] max-w-[1500px] rounded-xl border border-slate-200 shadow-2xl'}`}>
         {/* 全局单行工具栏 (Single Header Bar, 严格单行不换行 flex-nowrap) */}
-        <div className="flex flex-nowrap items-center justify-between px-3 py-1.5 border-b border-slate-200 bg-slate-50 shrink-0 gap-1.5 h-12 text-xs overflow-x-auto no-scrollbar">
+        <div className="relative z-20 flex flex-nowrap items-center justify-between px-3 py-1.5 border-b border-slate-200 bg-slate-50 shrink-0 gap-1.5 h-12 text-xs overflow-visible">
           {/* 左区：标的信息、上一只/下一只、周期/复权控制 */}
           <div className="flex items-center gap-1 shrink-0">
-            <LineChart className="w-4 h-4 text-emerald-600 mr-0.5" />
+            {!embedded && <LineChart className="w-4 h-4 text-emerald-600 mr-0.5" />}
 
             {/* 上一只/下一只导航按钮 */}
-            <div className="flex items-center gap-0.5 mr-1">
-              <button
-                onClick={onNavigatePrev}
-                disabled={!hasPrev}
-                className="p-1 text-slate-600 hover:text-slate-900 hover:bg-slate-200 rounded transition disabled:opacity-25"
-                title="上一只股票 (←)"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <button
-                onClick={onNavigateNext}
-                disabled={!hasNext}
-                className="p-1 text-slate-600 hover:text-slate-900 hover:bg-slate-200 rounded transition disabled:opacity-25"
-                title="下一只股票 (→)"
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            </div>
+            {showNavigation && (
+              <div className="flex items-center gap-0.5 mr-1">
+                <button
+                  onClick={onNavigatePrev}
+                  disabled={!hasPrev}
+                  className="p-1 text-slate-600 hover:text-slate-900 hover:bg-slate-200 rounded transition disabled:opacity-25"
+                  title="上一只股票 (←)"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={onNavigateNext}
+                  disabled={!hasNext}
+                  className="p-1 text-slate-600 hover:text-slate-900 hover:bg-slate-200 rounded transition disabled:opacity-25"
+                  title="下一只股票 (→)"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            )}
 
-            <h3 className="font-bold text-slate-800 text-sm flex items-center gap-1.5">
-              <span>{assetName}</span>
-              <span className="text-xs font-normal text-slate-500">({assetCode})</span>
-              {displayIndustry && (
-                <span className="ml-1 px-2 py-0.5 rounded bg-emerald-50 text-[#4a7c59] text-xs font-bold border border-[#4a7c59]/30">
-                  行业: {displayIndustry}
-                </span>
-              )}
-            </h3>
+            {showAssetInfo && (
+              <h3 className="font-bold text-slate-800 text-sm flex items-center gap-1.5">
+                <button type="button" onClick={() => void copyStockText(assetName, '股票名称')} title="点击复制股票名称" className="hover:underline">{assetName}</button>
+                <button type="button" onClick={() => void copyStockText(assetCode, '股票代码')} title="点击复制股票代码" className="text-xs font-normal text-slate-500 hover:underline">({assetCode})</button>
+                {displayIndustry && (
+                  <span className="ml-1 px-2 py-0.5 rounded bg-emerald-50 text-[#4a7c59] text-xs font-bold border border-[#4a7c59]/30">
+                    {displayIndustry}
+                  </span>
+                )}
+              </h3>
+            )}
 
             {/* 周期 */}
             <div className="flex bg-slate-200/80 p-0.5 rounded ml-2">
@@ -681,18 +871,36 @@ export default function KLineModal({
             </div>
 
             {/* AI 分析池按钮 */}
-            <button
-              onClick={toggleAiPool}
-              className={`px-2.5 py-1 text-xs font-bold rounded-md transition flex items-center gap-1 shadow-xs ${
-                inAiPool
-                  ? 'bg-purple-600 text-white hover:bg-purple-700'
-                  : 'bg-white text-purple-700 hover:bg-purple-50 border border-purple-300'
-              }`}
-              title="加入/移出 AI 分析池 (快捷键: 空格 Space)"
-            >
-              <Star className={`w-3.5 h-3.5 ${inAiPool ? 'fill-white text-white' : 'text-purple-600'}`} />
-              <span>{inAiPool ? '已在 AI 分析池' : '+ AI 分析池'}</span>
-            </button>
+            {showAiPoolButton && (
+              <button
+                onClick={toggleAiPool}
+                className={`px-2.5 py-1 text-xs font-bold rounded-md transition flex items-center gap-1 shadow-xs ${
+                  inAiPool
+                    ? 'bg-purple-600 text-white hover:bg-purple-700'
+                    : 'bg-white text-purple-700 hover:bg-purple-50 border border-purple-300'
+                }`}
+              title="加入/移出 AI 分析池"
+              >
+                <Star className={`w-3.5 h-3.5 ${inAiPool ? 'fill-white text-white' : 'text-purple-600'}`} />
+                <span>{inAiPool ? '✓ AI' : '+ AI'}</span>
+              </button>
+            )}
+
+            {/* 自选股按钮 */}
+            {showWatchlistButton && (
+              <button
+                onClick={handleToggleWatchlist}
+                className={`px-2.5 py-1 text-xs font-bold rounded-md transition flex items-center gap-1 shadow-xs ${
+                  inWatchlist
+                    ? 'bg-amber-500 text-white hover:bg-amber-600'
+                    : 'bg-white text-amber-700 hover:bg-amber-50 border border-amber-300'
+                }`}
+                title="加入/移出自选股 (PostgreSQL 存储)"
+              >
+                <Star className={`w-3.5 h-3.5 ${inWatchlist ? 'fill-white text-white' : 'text-amber-500'}`} />
+                <span>{inWatchlist ? '✓ 自选' : '+ 自选'}</span>
+              </button>
+            )}
 
             {/* 入候选池按钮 */}
             {onToggleSelect && (
@@ -700,13 +908,13 @@ export default function KLineModal({
                 onClick={onToggleSelect}
                 className={`px-2.5 py-1 text-xs font-bold rounded-md transition flex items-center gap-1 shadow-xs ${
                   isSelected
-                    ? 'bg-amber-500 text-white hover:bg-amber-600'
+                    ? 'bg-emerald-600 text-white hover:bg-emerald-700'
                     : 'bg-white text-slate-700 hover:bg-emerald-50 hover:text-emerald-700 border border-slate-300'
                 }`}
                 title="入候选池 / 取消入池"
               >
-                <Star className={`w-3.5 h-3.5 ${isSelected ? 'fill-white text-white' : 'text-amber-500'}`} />
-                <span>{isSelected ? '已入池' : '入候选池'}</span>
+                <Star className={`w-3.5 h-3.5 ${isSelected ? 'fill-white text-white' : 'text-emerald-500'}`} />
+                <span>{isSelected ? '✓ 候选' : '+ 候选'}</span>
               </button>
             )}
 
@@ -825,7 +1033,7 @@ export default function KLineModal({
             </div>
           </div>
 
-          {/* 右区：划线多样式控制 + 图标工具 + 单线/全清删除 + 关闭 */}
+          {/* 右区：划线多样式控制 + 下拉图标工具 + 单线/全清删除 + 关闭 */}
           <div className="flex items-center gap-2">
             {/* 划线样式调色板与粗细Popover */}
             <div ref={stylePanelRef} className="relative flex items-center gap-1 bg-white border border-slate-200 px-1.5 py-0.5 rounded">
@@ -902,34 +1110,70 @@ export default function KLineModal({
               )}
             </div>
 
-            {/* 划线图标工具 */}
-            <div className="flex items-center gap-0.5">
-              {DRAWING_TOOLS.map((tool) => {
-                const IconComponent = tool.icon;
-                const isActive = activeTool === tool.key;
-                return (
-                  <button
-                    key={tool.key}
-                    onClick={() => handleSelectTool(tool.key)}
-                    title={tool.label}
-                    className={`p-1 rounded border transition flex items-center justify-center ${
-                      isActive
-                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
-                        : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100 hover:text-emerald-700'
-                    }`}
-                  >
-                    <IconComponent className="w-3.5 h-3.5" />
-                  </button>
-                );
-              })}
+            {/* 划线工具下拉选择 + 删除操作 */}
+            <div className="flex items-center gap-1">
+              <div ref={drawingDropdownRef} className="relative">
+                <button
+                  onClick={() => setShowDrawingDropdown(!showDrawingDropdown)}
+                  className={`px-2.5 py-1 text-xs font-bold rounded-md transition flex items-center gap-1 border shadow-xs ${
+                    activeTool
+                      ? 'bg-emerald-600 text-white border-emerald-600'
+                      : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100 hover:text-emerald-700'
+                  }`}
+                  title="选择划线工具 (下拉菜单)"
+                >
+                  {(() => {
+                    const activeObj = DRAWING_TOOLS.find((t) => t.key === activeTool);
+                    const ToolIcon = activeObj ? activeObj.icon : Slash;
+                    return (
+                      <>
+                        <ToolIcon className="w-3.5 h-3.5" />
+                        <span>{activeObj ? activeObj.label : '画线'}</span>
+                        <ChevronDown className="w-3 h-3 opacity-70" />
+                      </>
+                    );
+                  })()}
+                </button>
+
+                {showDrawingDropdown && (
+                  <div className="absolute top-8 right-0 z-30 w-36 p-1 bg-white rounded-lg shadow-xl border border-slate-200 space-y-0.5 text-xs select-none">
+                    <div className="px-2 py-1 text-[10px] font-bold text-slate-400 border-b border-slate-100 mb-0.5">
+                      画线工具菜单
+                    </div>
+                    {DRAWING_TOOLS.map((tool) => {
+                      const IconComponent = tool.icon;
+                      const isActive = activeTool === tool.key;
+                      return (
+                        <button
+                          key={tool.key}
+                          onClick={() => {
+                            handleSelectTool(tool.key);
+                            setShowDrawingDropdown(false);
+                          }}
+                          className={`w-full px-2 py-1.5 flex items-center gap-2 text-left rounded transition font-bold ${
+                            isActive
+                              ? 'bg-emerald-50 text-emerald-700'
+                              : 'text-slate-700 hover:bg-slate-100'
+                          }`}
+                        >
+                          <IconComponent className={`w-3.5 h-3.5 ${isActive ? 'text-emerald-600' : 'text-slate-500'}`} />
+                          <span>{tool.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
               {/* 删除选中线段 */}
               <button
                 onClick={handleRemoveSingleDrawing}
                 title="删除当前选中的线 (也可按 Delete/Backspace 键)"
-                className="p-1 text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded transition ml-1"
+                className="p-1 text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded transition"
               >
                 <Eraser className="w-3.5 h-3.5" />
               </button>
+
               {/* 全部清空 */}
               <button
                 onClick={handleClearDrawings}
@@ -944,15 +1188,16 @@ export default function KLineModal({
 
             <span className="text-[11px] font-bold text-slate-500">已划线: {drawingCount}</span>
 
-            {/* 显眼高亮右上角关闭按钮 (支持点击或 Esc 键) */}
-            <button
-              onClick={onClose}
-              title="关闭窗口 (快捷键: Esc)"
-              className="px-2.5 py-1 bg-rose-50 hover:bg-rose-600 hover:text-white border border-rose-200 text-rose-700 rounded-lg transition shadow-xs flex items-center gap-1 ml-2 font-bold text-xs"
-            >
-              <X className="w-4 h-4 stroke-[2.5]" />
-              <span>关闭 (Esc)</span>
-            </button>
+            {/* 纯图标右上角关闭按钮 (支持点击或 Esc 键) */}
+            {!embedded && (
+              <button
+                onClick={onClose}
+                title="关闭窗口 (快捷键: Esc)"
+                className="p-1.5 bg-slate-100 hover:bg-rose-600 hover:text-white border border-slate-200 text-slate-600 rounded-lg transition shadow-xs flex items-center justify-center ml-2"
+              >
+                <X className="w-4 h-4 stroke-[2.5]" />
+              </button>
+            )}
           </div>
         </div>
 
@@ -973,9 +1218,20 @@ export default function KLineModal({
               </div>
             </div>
           )}
-          <div ref={chartContainerRef} style={{ width: '100%', height: '100%' }} className="min-h-[620px]" />
+          <div
+            ref={chartContainerRef}
+            style={{ width: '100%', height: '100%' }}
+            className={`min-h-[620px] ${onPickPrice ? 'cursor-crosshair' : ''}`}
+            onClick={handleChartClick}
+          />
         </div>
       </div>
-    </div>
+    </>
   );
+
+  if (embedded) {
+    return <div className="relative flex h-full min-h-0 w-full">{chartPanel}</div>;
+  }
+
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-3 backdrop-blur-xs">{chartPanel}</div>;
 }

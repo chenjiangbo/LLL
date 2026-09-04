@@ -74,25 +74,84 @@ class PostgresMarketReviewStore:
                 )
                 """
             )
-            try:
-                conn.execute(
-                    """
-                    create table if not exists imported_market_reviews (
-                        trade_date text primary key,
-                        raw_content text not null,
-                        payload_json jsonb not null,
-                        created_at timestamptz not null,
-                        updated_at timestamptz not null
-                    )
-                    """
+            conn.execute(
+                """
+                create table if not exists imported_market_reviews (
+                    trade_date text primary key,
+                    raw_content text not null,
+                    payload_json jsonb not null,
+                    created_at timestamptz not null,
+                    updated_at timestamptz not null
                 )
-            except Exception:
-                pass
+                """
+            )
+            conn.execute(
+                """
+                create table if not exists imported_review_stock_mentions (
+                    trade_date text not null,
+                    asset_code text not null,
+                    asset_name text not null,
+                    mention_name text not null,
+                    canonical_theme text not null,
+                    theme_key text not null,
+                    concepts_json jsonb not null,
+                    story text not null,
+                    mention_role text not null,
+                    source_excerpt text not null,
+                    extraction_version text not null,
+                    created_at timestamptz not null,
+                    updated_at timestamptz not null,
+                    primary key(trade_date, asset_code)
+                )
+                """
+            )
+            # Keep the wording used in the review itself.  The asset-master name is
+            # still the canonical security identity; this field is solely for
+            # locating the exact wording in the rendered article.
+            conn.execute(
+                "alter table imported_review_stock_mentions add column if not exists mention_name text"
+            )
+            conn.execute(
+                "update imported_review_stock_mentions set mention_name = asset_name where mention_name is null"
+            )
+            # Historical records predate mention_name.  A leading C/N is a listing
+            # marker in the master name, not necessarily part of the wording in
+            # the review.  Only remove it when the remaining exact name is present
+            # in the already stored source excerpt.
+            conn.execute(
+                """
+                update imported_review_stock_mentions
+                set mention_name = substring(asset_name from 2)
+                where mention_name = asset_name
+                  and left(asset_name, 1) in ('C', 'N')
+                  and source_excerpt like '%%' || substring(asset_name from 2) || '%%'
+                """
+            )
+            conn.execute(
+                "alter table imported_review_stock_mentions alter column mention_name set not null"
+            )
+            conn.execute(
+                """
+                create table if not exists imported_review_stock_extraction_runs (
+                    trade_date text primary key,
+                    source_stock_count integer not null,
+                    resolved_stock_count integer not null,
+                    unresolved_stock_json jsonb not null,
+                    status text not null,
+                    extraction_version text not null,
+                    created_at timestamptz not null,
+                    updated_at timestamptz not null
+                )
+                """
+            )
             conn.execute(
                 "create index if not exists idx_raw_snapshots_trade_date on raw_snapshots(trade_date)"
             )
             conn.execute(
                 "create index if not exists idx_market_series_lookup on market_series(series_type, series_key, record_date)"
+            )
+            conn.execute(
+                "create index if not exists idx_review_stock_mentions_theme on imported_review_stock_mentions(trade_date, theme_key)"
             )
             conn.commit()
 
@@ -382,15 +441,94 @@ class PostgresMarketReviewStore:
             "updated_at": now.isoformat(),
         }
 
+    def replace_imported_review_stock_mentions(
+        self,
+        trade_date: str,
+        mentions: list[dict[str, Any]],
+        unresolved: list[dict[str, str]],
+        source_stock_count: int,
+        extraction_version: str,
+    ) -> dict[str, Any]:
+        """Replace one review's verified stock mentions and persist extraction quality."""
+        now = datetime.utcnow()
+        status = "COMPLETE" if not unresolved else "PARTIAL"
+        with self.connect() as conn:
+            conn.execute(
+                "delete from imported_review_stock_mentions where trade_date = %s",
+                (trade_date,),
+            )
+            for item in mentions:
+                conn.execute(
+                    """
+                    insert into imported_review_stock_mentions (
+                        trade_date, asset_code, asset_name, mention_name, canonical_theme, theme_key,
+                        concepts_json, story, mention_role, source_excerpt,
+                        extraction_version, created_at, updated_at
+                    ) values (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        trade_date,
+                        item["asset_code"],
+                        item["asset_name"],
+                        item["mention_name"],
+                        item["canonical_theme"],
+                        item["theme_key"],
+                        json_dump(item["concepts"]),
+                        item["story"],
+                        item["mention_role"],
+                        item["source_excerpt"],
+                        extraction_version,
+                        now,
+                        now,
+                    ),
+                )
+            conn.execute(
+                """
+                insert into imported_review_stock_extraction_runs (
+                    trade_date, source_stock_count, resolved_stock_count, unresolved_stock_json,
+                    status, extraction_version, created_at, updated_at
+                ) values (%s, %s, %s, %s::jsonb, %s, %s, %s, %s)
+                on conflict(trade_date) do update set
+                    source_stock_count = excluded.source_stock_count,
+                    resolved_stock_count = excluded.resolved_stock_count,
+                    unresolved_stock_json = excluded.unresolved_stock_json,
+                    status = excluded.status,
+                    extraction_version = excluded.extraction_version,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    trade_date,
+                    source_stock_count,
+                    len(mentions),
+                    json_dump(unresolved),
+                    status,
+                    extraction_version,
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+        return {
+            "status": status,
+            "source_stock_count": source_stock_count,
+            "resolved_stock_count": len(mentions),
+            "unresolved_stocks": unresolved,
+            "extraction_version": extraction_version,
+        }
+
     def load_imported_review(self, trade_date: str) -> dict[str, Any] | None:
+        norm_date = trade_date.replace("-", "").strip()
+        formatted_date = f"{norm_date[:4]}-{norm_date[4:6]}-{norm_date[6:]}" if len(norm_date) == 8 else trade_date
         with self.connect() as conn:
             row = conn.execute(
                 """
                 select trade_date, raw_content, payload_json, created_at, updated_at
                 from imported_market_reviews
-                where trade_date = %s
+                where trade_date = %s or trade_date = %s or trade_date = %s
+                order by updated_at desc
+                limit 1
                 """,
-                (trade_date,),
+                (trade_date, norm_date, formatted_date),
             ).fetchone()
         if row is None:
             return None
@@ -438,4 +576,3 @@ class PostgresMarketReviewStore:
                 (limit,),
             ).fetchall()
         return rows
-

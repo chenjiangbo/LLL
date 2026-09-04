@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import os
+import time
 from datetime import UTC, datetime
 from typing import Any
 
+from backend.screening.concept_filter import is_low_signal_ths_concept
 from backend.screening.storage import PostgresScreeningStore
+from backend.screening.tushare_errors import is_tushare_rate_limit_error
 
 
 def check_data_capabilities(store: PostgresScreeningStore | None = None) -> dict[str, Any]:
@@ -24,7 +27,7 @@ def check_data_capabilities(store: PostgresScreeningStore | None = None) -> dict
         "moneyflow_ths": "READY" if has_token else "PERMISSION_BLOCKED",
         "fina_mainbz_vip": "READY" if has_token else "PERMISSION_BLOCKED",
         "sw_industry": "READY",
-        "ai_web_search": "READY" if os.environ.get("GEMINI_API_KEY") or os.environ.get("OPENAI_API_KEY") else "CONFIG_REQUIRED",
+        "ai_web_search": "READY" if os.environ.get("DASHSCOPE_API_KEY") else "CONFIG_REQUIRED",
     }
 
 
@@ -32,28 +35,29 @@ def sync_ths_concepts(
     store: PostgresScreeningStore,
     as_of_date: str | None = None,
     force: bool = False,
+    progress_callback: Any | None = None,
 ) -> dict[str, Any]:
     """
     同步同花顺概念底库 (ths_index) 与板块成分 (ths_member)
-    支持月度断点自动补抓 (Catch-up) 机制。
+    同花顺概念板块属于低频变更数据，只要数据库中已有概念数据，每日行情同步将自动跳过。
+    仅在 force=True（后台手动刷新）或数据库概念库完全为空时才触发抓取。
     """
     snapshot_date = as_of_date or datetime.now(UTC).strftime("%Y%m%d")
     now = datetime.now(UTC)
     token = os.environ.get("TUSHARE_TOKEN", "").strip()
 
-    # 月度补抓校验: 如果当月已有快照且未强制同步，则跳过重复计算
-    month_prefix = snapshot_date[:6]
+    # 只要数据库中已有概念成分映射且未强制指定 force=True，则 0 秒直接跳过
     if not force:
         with store.connect() as conn:
             existing = conn.execute(
-                "select snapshot_date from ths_concept_member_snapshot where snapshot_date like %s limit 1",
-                (f"{month_prefix}%",),
+                "select snapshot_date from ths_concept_member_snapshot order by snapshot_date desc limit 1",
             ).fetchone()
-            if existing and existing["snapshot_date"] == snapshot_date:
+            if existing and existing.get("snapshot_date"):
+                latest_date = existing["snapshot_date"]
                 return {
                     "status": "SKIPPED",
-                    "snapshot_date": snapshot_date,
-                    "message": f"当月已有概念快照 ({existing['snapshot_date']})，无需重复抓取",
+                    "snapshot_date": latest_date,
+                    "message": f"数据库中已有同花顺概念映射 (快照日期: {latest_date})，自动跳过重复抓取。",
                 }
 
     fetched_concepts = []
@@ -76,61 +80,53 @@ def sync_ths_concepts(
                     for _, r in df_index.iterrows()
                 ]
 
-            # 2. 抓取候选股票的成分标签
-            with store.connect() as conn:
-                asset_rows = conn.execute(
-                    "select asset_code, name from screening_asset_master limit 200"
-                ).fetchall()
-                sample_codes = [r["asset_code"] for r in asset_rows] or ["600518.SH", "300759.SZ", "300308.SZ", "603881.SH"]
-
-            for code in sample_codes:
+            # 2. 遍历概念指数抓取成分股快照
+            # 必须同步完整同花顺板块成员。截断前 N 个会造成 CPO/CRO/存储芯片等后排概念成分缺失。
+            for idx, c in enumerate(fetched_concepts, start=1):
                 try:
-                    df_mem = pro.ths_member(con_code=code)
+                    df_mem = pro.ths_member(ts_code=c["ths_code"])
                     if not df_mem.empty:
                         for _, r in df_mem.iterrows():
                             fetched_members.append(
                                 {
-                                    "ths_code": r["ts_code"],
-                                    "ths_name": r.get("con_name", code),
-                                    "ths_type": "N",
-                                    "ts_code": code,
-                                    "stock_name": r.get("con_name", code),
+                                    "ths_code": c["ths_code"],
+                                    "ths_name": c["name"],
+                                    "ths_type": c.get("type", "N"),
+                                    "ts_code": r["con_code"],
+                                    "stock_name": r.get("con_name", r["con_code"]),
                                 }
                             )
                 except Exception as e_mem:
-                    print(f"[THS_SYNC_WARN] fetch ths_member for {code} failed: {e_mem}")
+                    if is_tushare_rate_limit_error(e_mem):
+                        raise RuntimeError(f"THS_MEMBER_RATE_LIMIT:{c['ths_code']}:{c['name']}:{e_mem}") from e_mem
+                    raise RuntimeError(f"THS_MEMBER_SYNC_FAILED:{c['ths_code']}:{c['name']}:{e_mem}") from e_mem
+                if progress_callback and idx % 20 == 0:
+                    progress_callback(idx, len(fetched_concepts), c['name'])
+                if idx % 100 == 0:
+                    print(f"[THS_SYNC] fetched {idx}/{len(fetched_concepts)} concepts, member_relations={len(fetched_members)}", flush=True)
+                time.sleep(0.08)
 
         except Exception as e:
-            print(f"[THS_SYNC_WARN] Tushare concept sync failed: {e}, falling back to built-in master")
+            raise RuntimeError(f"THS_CONCEPT_SYNC_FAILED:{e}") from e
 
-    # 如果 Tushare 接口返回为空，使用高可靠后备库
+    if not token:
+        raise RuntimeError("TUSHARE_TOKEN is required for THS concept sync")
+
+    # 如果 Tushare 接口返回为空，直接报错。概念底库是核心数据，不允许用内置样例兜底。
     if not fetched_concepts:
-        fetched_concepts = [
-            {"ths_code": "885500.TI", "name": "CRO", "type": "N"},
-            {"ths_code": "885501.TI", "name": "基因测序", "type": "N"},
-            {"ths_code": "885502.TI", "name": "智能医疗", "type": "N"},
-            {"ths_code": "885503.TI", "name": "AI智能体", "type": "N"},
-            {"ths_code": "885504.TI", "name": "创新药", "type": "N"},
-            {"ths_code": "885505.TI", "name": "中药", "type": "N"},
-            {"ths_code": "885506.TI", "name": "算力租赁", "type": "N"},
-            {"ths_code": "885507.TI", "name": "CPO概念", "type": "N"},
-            {"ths_code": "885508.TI", "name": "融资融券", "type": "S"},
-            {"ths_code": "885509.TI", "name": "深股通", "type": "S"},
-        ]
+        raise RuntimeError("THS_INDEX_EMPTY")
 
     if not fetched_members:
-        fetched_members = [
-            {"ths_code": "885500.TI", "ths_name": "CRO", "ths_type": "N", "ts_code": "600518.SH", "stock_name": "康美药业"},
-            {"ths_code": "885505.TI", "ths_name": "中药", "ths_type": "N", "ts_code": "600518.SH", "stock_name": "康美药业"},
-            {"ths_code": "885508.TI", "ths_name": "融资融券", "ths_type": "S", "ts_code": "600518.SH", "stock_name": "康美药业"},
-            {"ths_code": "885500.TI", "ths_name": "CRO", "ths_type": "N", "ts_code": "300759.SZ", "stock_name": "康龙化成"},
-            {"ths_code": "885504.TI", "ths_name": "创新药", "ths_type": "N", "ts_code": "300759.SZ", "stock_name": "康龙化成"},
-            {"ths_code": "885507.TI", "ths_name": "CPO概念", "ths_type": "N", "ts_code": "300308.SZ", "stock_name": "中际旭创"},
-            {"ths_code": "885506.TI", "ths_name": "算力租赁", "ths_type": "N", "ts_code": "603881.SH", "stock_name": "数据港"},
-        ]
+        raise RuntimeError("THS_MEMBER_EMPTY")
 
     with store.connect() as conn:
         with conn.cursor() as cur:
+            if force:
+                cur.execute(
+                    "delete from ths_concept_member_snapshot where snapshot_date = %s",
+                    (snapshot_date,),
+                )
+
             # 1. 写入 ths_index_master
             for c in fetched_concepts:
                 cur.execute(
@@ -213,16 +209,17 @@ def get_stock_ths_concepts(
                 "snapshot_date": None,
                 "temporal_status": "CURRENT_REFERENCE_ONLY",
                 "concepts": [],
-                "temporal_notice": "缺少该历史日期的 Point-in-Time 概念快照，未匹配到任何底库标签",
+                "temporal_notice": "当前日期前没有保存过同花顺标签快照，因此暂未匹配到标签",
             }
 
-        # 2. 查询快照中的概念
+        # 2. 查询快照中的概念 (关联 ths_index_master 获取真正的同花顺概念名称)
         rows = conn.execute(
             """
-            select ths_code, ths_name, ths_type, is_new
-            from ths_concept_member_snapshot
-            where snapshot_date = %s and ts_code = %s
-            order by ths_type asc, ths_name asc
+            select s.ths_code, coalesce(m.name, s.ths_name) as ths_name, s.ths_type, s.is_new
+            from ths_concept_member_snapshot s
+            left join ths_index_master m on s.ths_code = m.ths_code
+            where s.snapshot_date = %s and s.ts_code = %s
+            order by s.ths_type asc, ths_name asc
             """,
             (target_snap_date, ts_code),
         ).fetchall()
@@ -237,21 +234,25 @@ def get_stock_ths_concepts(
         "BB": "宽基指数",
     }
 
-    concepts = [
-        {
-            "ths_code": r["ths_code"],
-            "ths_name": r["ths_name"],
-            "raw_type": r["ths_type"],
-            "type_label": type_mapping.get(r["ths_type"], "其他板块"),
-            "is_new": r.get("is_new"),
-        }
-        for r in rows
-    ]
+    concepts = []
+    for r in rows:
+        ths_name = r["ths_name"]
+        if is_low_signal_ths_concept(ths_name):
+            continue
+        concepts.append(
+            {
+                "ths_code": r["ths_code"],
+                "ths_name": ths_name,
+                "raw_type": r["ths_type"],
+                "type_label": type_mapping.get(r["ths_type"], "其他板块"),
+                "is_new": r.get("is_new"),
+            }
+        )
 
     notice_map = {
-        "PIT_SAFE": "同花顺概念为该交易日精确 Point-in-Time 快照事实",
-        "SNAPSHOT_APPROX": f"使用最接近的同花顺概念快照 ({target_snap_date})",
-        "CURRENT_REFERENCE_ONLY": "当前同花顺概念仅供参考；缺少该历史日期的 Point-in-Time 成分快照",
+        "PIT_SAFE": "同花顺标签来自该交易日保存的快照",
+        "SNAPSHOT_APPROX": f"使用该日期前最近一次同花顺标签快照 ({target_snap_date})",
+        "CURRENT_REFERENCE_ONLY": "使用当前保存的同花顺标签，历史标签可能已有变化",
     }
 
     return {
@@ -262,3 +263,85 @@ def get_stock_ths_concepts(
         "concepts": concepts,
         "temporal_notice": notice_map.get(temporal_status, ""),
     }
+
+
+def get_batch_stock_ths_concepts(
+    store: PostgresScreeningStore,
+    ts_codes: list[str],
+    as_of_date: str,
+) -> dict[str, list[str]]:
+    """
+    批量查询指定股票列表的同花顺概念名称，用于选股列表展示。
+    """
+    if not ts_codes:
+        return {}
+
+    with store.connect() as conn:
+        snap_row = conn.execute(
+            """
+            select snapshot_date
+            from ths_concept_member_snapshot
+            where snapshot_date <= %s
+            order by snapshot_date desc limit 1
+            """,
+            (as_of_date,),
+        ).fetchone()
+
+        target_snap_date = snap_row["snapshot_date"] if snap_row else None
+        if not target_snap_date:
+            snap_row_latest = conn.execute(
+                "select snapshot_date from ths_concept_member_snapshot order by snapshot_date desc limit 1"
+            ).fetchone()
+            target_snap_date = snap_row_latest["snapshot_date"] if snap_row_latest else None
+
+        if not target_snap_date:
+            return {code: [] for code in ts_codes}
+
+        rows = conn.execute(
+            """
+            select s.ts_code, coalesce(m.name, s.ths_name) as ths_name
+            from ths_concept_member_snapshot s
+            left join ths_index_master m on s.ths_code = m.ths_code
+            where s.snapshot_date = %s and s.ts_code = any(%s)
+            order by s.ths_type asc, ths_name asc
+            """,
+            (target_snap_date, ts_codes),
+        ).fetchall()
+
+        result: dict[str, list[str]] = {code: [] for code in ts_codes}
+        for r in rows:
+            name = r["ths_name"]
+            code = r["ts_code"]
+            if name and not is_low_signal_ths_concept(name) and name not in result[code]:
+                result[code].append(name)
+
+        return result
+
+
+def get_all_ths_concepts(store: PostgresScreeningStore) -> list[str]:
+    """获取最新快照切片下所有可用的同花顺概念板块列表"""
+    with store.connect() as conn:
+        snap_row = conn.execute(
+            "select snapshot_date from ths_concept_member_snapshot order by snapshot_date desc limit 1"
+        ).fetchone()
+        target_snap_date = snap_row["snapshot_date"] if snap_row else None
+        if not target_snap_date:
+            return []
+
+        rows = conn.execute(
+            """
+            select distinct coalesce(m.name, s.ths_name) as ths_name
+            from ths_concept_member_snapshot s
+            left join ths_index_master m on s.ths_code = m.ths_code
+            where s.snapshot_date = %s
+            """,
+            (target_snap_date,),
+        ).fetchall()
+
+        concepts = []
+        for r in rows:
+            name = r["ths_name"]
+            if name and not is_low_signal_ths_concept(name):
+                concepts.append(name)
+        concepts.sort()
+        return concepts

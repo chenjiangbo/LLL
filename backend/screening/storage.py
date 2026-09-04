@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time as dtime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import psycopg
 from psycopg.rows import dict_row
 
+from backend.screening.concept_filter import is_low_signal_ths_concept
 from backend.screening.utils import json_dumps
 
 
@@ -76,8 +78,12 @@ class PostgresScreeningStore:
                 create table if not exists screening_daily_basic (
                     asset_code text not null,
                     trade_date text not null,
+                    total_share numeric,
+                    float_share numeric,
+                    free_share numeric,
                     turnover_rate numeric,
                     turnover_rate_f numeric,
+                    volume_ratio numeric,
                     total_mv numeric,
                     circ_mv numeric,
                     limit_status text,
@@ -87,6 +93,10 @@ class PostgresScreeningStore:
                 )
                 """
             )
+            conn.execute("alter table screening_daily_basic add column if not exists total_share numeric")
+            conn.execute("alter table screening_daily_basic add column if not exists float_share numeric")
+            conn.execute("alter table screening_daily_basic add column if not exists free_share numeric")
+            conn.execute("alter table screening_daily_basic add column if not exists volume_ratio numeric")
             conn.execute(
                 """
                 create table if not exists screening_weekly_bar (
@@ -161,14 +171,48 @@ class PostgresScreeningStore:
             )
             conn.execute(
                 """
-                create table if not exists screening_user_watchlist (
-                    asset_code text primary key,
-                    asset_type text not null,
-                    status text not null,
-                    note text,
-                    snooze_until text,
-                    updated_at timestamptz not null
+                create table if not exists screening_watchlist_groups (
+                    group_id bigserial primary key,
+                    group_name text not null,
+                    parent_id bigint references screening_watchlist_groups(group_id) on delete cascade,
+                    sort_order int default 0,
+                    created_at timestamptz not null default now()
                 )
+                """
+            )
+            conn.execute(
+                """
+                create table if not exists screening_user_watchlist (
+                    asset_code text not null,
+                    asset_type text not null default 'stock',
+                    group_id bigint references screening_watchlist_groups(group_id) on delete cascade,
+                    note text,
+                    source_type text not null default 'UNKNOWN',
+                    source_strategy text,
+                    source_stage text,
+                    source_snapshot_date text,
+                    source_recorded_at timestamptz,
+                    created_at timestamptz not null default now(),
+                    primary key (asset_code, group_id)
+                )
+                """
+            )
+            conn.execute("alter table screening_user_watchlist add column if not exists group_id bigint")
+            conn.execute("alter table screening_user_watchlist add column if not exists created_at timestamptz default now()")
+            conn.execute("alter table screening_user_watchlist add column if not exists source_type text not null default 'UNKNOWN'")
+            conn.execute("alter table screening_user_watchlist add column if not exists source_strategy text")
+            conn.execute("alter table screening_user_watchlist add column if not exists source_stage text")
+            conn.execute("alter table screening_user_watchlist add column if not exists source_snapshot_date text")
+            conn.execute("alter table screening_user_watchlist add column if not exists source_recorded_at timestamptz")
+            conn.execute(
+                """
+                update screening_user_watchlist
+                set source_type = 'UNKNOWN'
+                where source_recorded_at is null
+                  and source_type = 'MANUAL'
+                  and source_strategy is null
+                  and source_stage is null
+                  and source_snapshot_date is null
                 """
             )
             conn.execute(
@@ -182,6 +226,15 @@ class PostgresScreeningStore:
                     note text,
                     selected_at timestamptz not null,
                     primary key (trade_date, asset_code, pool)
+                )
+                """
+            )
+            conn.execute(
+                """
+                create table if not exists screening_ai_analysis_pool (
+                    asset_code text primary key,
+                    asset_type text not null default 'stock',
+                    created_at timestamptz not null default now()
                 )
                 """
             )
@@ -208,6 +261,37 @@ class PostgresScreeningStore:
             )
             conn.execute(
                 """
+                create table if not exists screening_data_management_config (
+                    config_id integer primary key default 1 check (config_id = 1),
+                    config_json jsonb not null,
+                    version integer not null default 1,
+                    updated_at timestamptz not null
+                )
+                """
+            )
+            conn.execute(
+                """
+                create table if not exists screening_data_task (
+                    task_id text primary key,
+                    task_type text not null,
+                    status text not null,
+                    progress integer not null default 0,
+                    stage_message text not null default '',
+                    trade_date text,
+                    summary_json jsonb not null default '{}'::jsonb,
+                    error_message text,
+                    cancel_requested boolean not null default false,
+                    started_at timestamptz,
+                    completed_at timestamptz,
+                    created_at timestamptz not null,
+                    updated_at timestamptz not null
+                )
+                """
+            )
+            conn.execute("alter table screening_data_task add column if not exists cancel_requested boolean not null default false")
+            conn.execute("create index if not exists idx_screening_data_task_created on screening_data_task(created_at desc)")
+            conn.execute(
+                """
                 create table if not exists screening_min_bar (
                     asset_code text not null,
                     asset_type text not null,
@@ -223,6 +307,32 @@ class PostgresScreeningStore:
                     updated_at timestamptz not null,
                     primary key (asset_code, trade_time, freq)
                 )
+                """
+            )
+            conn.execute(
+                """
+                create table if not exists screening_min_sync_status (
+                    asset_code text not null,
+                    trade_date text not null,
+                    freq text not null default '30min',
+                    expected_slots integer not null,
+                    actual_slots integer not null default 0,
+                    status text not null,
+                    attempt_count integer not null default 0,
+                    last_error text,
+                    updated_at timestamptz not null,
+                    primary key (asset_code, trade_date, freq)
+                )
+                """
+            )
+            # 历史版本把“当天无行情”记为 EMPTY，导致失败队列持续重试。
+            # 该状态在分钟线链路中表示证券当天没有有效交易数据，应归为正常的不可用行情状态。
+            conn.execute(
+                """
+                update screening_min_sync_status
+                set status = 'INACTIVE',
+                    last_error = coalesce(last_error, '当天无有效行情，可能停牌或已退市')
+                where status = 'EMPTY'
                 """
             )
             conn.execute(
@@ -255,6 +365,8 @@ class PostgresScreeningStore:
                 create table if not exists early_turn_run (
                     run_id text primary key,
                     trade_date text not null,
+                    run_name text,
+                    notes text,
                     config_version text not null,
                     started_at timestamptz not null,
                     finished_at timestamptz,
@@ -264,6 +376,8 @@ class PostgresScreeningStore:
                 )
                 """
             )
+            conn.execute("alter table early_turn_run add column if not exists run_name text")
+            conn.execute("alter table early_turn_run add column if not exists notes text")
             conn.execute(
                 """
                 create table if not exists early_turn_result (
@@ -382,6 +496,7 @@ class PostgresScreeningStore:
             conn.execute(
                 """
                 create table if not exists industry_membership_history (
+                    membership_key text,
                     ts_code text not null,
                     l1_code text,
                     l1_name text,
@@ -393,8 +508,43 @@ class PostgresScreeningStore:
                     out_date text,
                     source_version text not null,
                     updated_at timestamptz not null,
-                    primary key (ts_code, source_version)
+                    primary key (membership_key)
                 )
+                """
+            )
+            conn.execute("alter table industry_membership_history add column if not exists membership_key text")
+            conn.execute(
+                """
+                update industry_membership_history
+                set membership_key = md5(
+                    ts_code || '|' || coalesce(l3_code, '') || '|' ||
+                    coalesce(in_date, '') || '|' || coalesce(out_date, '') || '|' || source_version
+                )
+                where membership_key is null
+                """
+            )
+            conn.execute(
+                """
+                do $$
+                begin
+                    if exists (
+                        select 1
+                        from pg_constraint
+                        where conrelid = 'industry_membership_history'::regclass
+                          and conname = 'industry_membership_history_pkey'
+                          and pg_get_constraintdef(oid) <> 'PRIMARY KEY (membership_key)'
+                    ) then
+                        alter table industry_membership_history drop constraint industry_membership_history_pkey;
+                    end if;
+                    if not exists (
+                        select 1
+                        from pg_constraint
+                        where conrelid = 'industry_membership_history'::regclass
+                          and contype = 'p'
+                    ) then
+                        alter table industry_membership_history add primary key (membership_key);
+                    end if;
+                end $$;
                 """
             )
             conn.execute(
@@ -473,12 +623,48 @@ class PostgresScreeningStore:
                     forecast_p_change_max numeric,
                     forecast_net_profit_min numeric,
                     forecast_net_profit_max numeric,
+                    express_ann_date text,
+                    express_end_date text,
+                    express_revenue numeric,
+                    express_n_income numeric,
+                    express_yoy_net_profit numeric,
+                    express_summary text,
                     evidence_state text not null,
                     reason_json jsonb not null,
                     risk_flags_json jsonb not null,
                     data_version text not null default 'v1.0',
                     created_at timestamptz not null,
                     primary key (as_of_date, ts_code)
+                )
+                """
+            )
+            conn.execute("alter table company_evidence_snapshot add column if not exists express_ann_date text")
+            conn.execute("alter table company_evidence_snapshot add column if not exists express_end_date text")
+            conn.execute("alter table company_evidence_snapshot add column if not exists express_revenue numeric")
+            conn.execute("alter table company_evidence_snapshot add column if not exists express_n_income numeric")
+            conn.execute("alter table company_evidence_snapshot add column if not exists express_yoy_net_profit numeric")
+            conn.execute("alter table company_evidence_snapshot add column if not exists express_summary text")
+            conn.execute("alter table company_evidence_snapshot add column if not exists quarter_facts_json jsonb not null default '[]'::jsonb")
+            conn.execute("alter table company_evidence_snapshot add column if not exists fact_tags_json jsonb not null default '[]'::jsonb")
+            conn.execute("alter table company_evidence_snapshot add column if not exists data_quality_json jsonb not null default '{}'::jsonb")
+            conn.execute("alter table company_evidence_snapshot add column if not exists fundamental_filter_state text")
+            conn.execute("alter table company_evidence_snapshot add column if not exists fundamental_filter_reasons_json jsonb not null default '[]'::jsonb")
+            conn.execute(
+                """
+                create table if not exists market_financial_summary_latest (
+                    ts_code text primary key,
+                    latest_report_period text,
+                    revenue numeric,
+                    revenue_yoy numeric,
+                    parent_net_profit numeric,
+                    parent_net_profit_yoy numeric,
+                    operating_cashflow numeric,
+                    operating_cashflow_yoy numeric,
+                    forecast_type text,
+                    fact_tags_json jsonb not null,
+                    data_status text not null,
+                    source_updated_at timestamptz,
+                    generated_at timestamptz not null
                 )
                 """
             )
@@ -524,6 +710,8 @@ class PostgresScreeningStore:
                     as_of_date text not null,
                     ts_code text not null,
                     close numeric,
+                    total_share numeric,
+                    float_share numeric,
                     total_mv numeric,
                     circ_mv numeric,
                     free_share numeric,
@@ -544,6 +732,8 @@ class PostgresScreeningStore:
                 )
                 """
             )
+            conn.execute("alter table supply_profile_snapshot add column if not exists total_share numeric")
+            conn.execute("alter table supply_profile_snapshot add column if not exists float_share numeric")
             conn.execute(
                 """
                 create table if not exists ths_index_master (
@@ -591,6 +781,159 @@ class PostgresScreeningStore:
             )
             conn.execute(
                 """
+                create table if not exists stock_income_statement (
+                    ts_code text not null,
+                    end_date text not null,
+                    available_date text not null,
+                    ann_date text,
+                    f_ann_date text,
+                    total_revenue numeric,
+                    oper_cost numeric,
+                    n_income_attr_p numeric,
+                    update_flag text,
+                    raw_json jsonb not null,
+                    sync_time timestamptz not null,
+                    primary key (ts_code, end_date, available_date)
+                )
+                """
+            )
+            conn.execute("alter table stock_income_statement add column if not exists oper_cost numeric")
+            conn.execute(
+                """
+                create table if not exists stock_cashflow_statement (
+                    ts_code text not null,
+                    end_date text not null,
+                    available_date text not null,
+                    ann_date text,
+                    f_ann_date text,
+                    n_cashflow_act numeric,
+                    update_flag text,
+                    raw_json jsonb not null,
+                    sync_time timestamptz not null,
+                    primary key (ts_code, end_date, available_date)
+                )
+                """
+            )
+            conn.execute(
+                """
+                create table if not exists stock_fina_indicator (
+                    ts_code text not null,
+                    end_date text not null,
+                    available_date text not null,
+                    ann_date text,
+                    or_yoy numeric,
+                    op_yoy numeric,
+                    netprofit_yoy numeric,
+                    profit_dedt numeric,
+                    dt_netprofit_yoy numeric,
+                    grossprofit_margin numeric,
+                    raw_json jsonb not null,
+                    sync_time timestamptz not null,
+                    primary key (ts_code, end_date, available_date)
+                )
+                """
+            )
+            conn.execute("alter table stock_fina_indicator add column if not exists profit_dedt numeric")
+            conn.execute(
+                """
+                create table if not exists stock_forecast (
+                    ts_code text not null,
+                    end_date text,
+                    available_date text not null,
+                    ann_date text not null,
+                    type text,
+                    p_change_min numeric,
+                    p_change_max numeric,
+                    net_profit_min numeric,
+                    net_profit_max numeric,
+                    summary text,
+                    change_reason text,
+                    raw_json jsonb not null,
+                    sync_time timestamptz not null,
+                    primary key (ts_code, ann_date, available_date)
+                )
+                """
+            )
+            conn.execute(
+                """
+                create table if not exists stock_express (
+                    ts_code text not null,
+                    end_date text not null,
+                    available_date text not null,
+                    ann_date text not null,
+                    revenue numeric,
+                    operate_profit numeric,
+                    total_profit numeric,
+                    n_income numeric,
+                    total_assets numeric,
+                    total_hldr_eqy_exc_min_int numeric,
+                    diluted_eps numeric,
+                    diluted_roe numeric,
+                    yoy_net_profit numeric,
+                    bps numeric,
+                    open_net_assets numeric,
+                    open_bps numeric,
+                    perf_summary text,
+                    update_flag text,
+                    raw_json jsonb not null,
+                    sync_time timestamptz not null,
+                    primary key (ts_code, end_date, available_date)
+                )
+                """
+            )
+            conn.execute(
+                """
+                create table if not exists stock_share_float (
+                    ts_code text not null,
+                    ann_date text,
+                    available_date text,
+                    float_date text not null,
+                    float_share numeric,
+                    float_ratio numeric,
+                    holder_name text,
+                    share_type text,
+                    raw_json jsonb not null,
+                    sync_time timestamptz not null,
+                    primary key (ts_code, float_date, holder_name, share_type)
+                )
+                """
+            )
+            conn.execute(
+                """
+                create table if not exists stock_holder_trade (
+                    trade_key text primary key,
+                    ts_code text not null,
+                    ann_date text not null,
+                    holder_name text,
+                    holder_type text,
+                    in_de text,
+                    change_vol numeric,
+                    change_ratio numeric,
+                    after_share numeric,
+                    after_ratio numeric,
+                    avg_price numeric,
+                    total_share numeric,
+                    raw_json jsonb not null,
+                    sync_time timestamptz not null
+                )
+                """
+            )
+            conn.execute("alter table stock_holder_trade add column if not exists trade_key text")
+            conn.execute(
+                """
+                create table if not exists stock_event_sync_status (
+                    ts_code text not null,
+                    source_name text not null,
+                    status text not null,
+                    row_count integer not null default 0,
+                    message text,
+                    sync_time timestamptz not null,
+                    primary key (ts_code, source_name)
+                )
+                """
+            )
+            conn.execute(
+                """
                 create table if not exists ai_stock_research (
                     analysis_id text primary key,
                     ts_code text not null,
@@ -628,6 +971,11 @@ class PostgresScreeningStore:
                 )
                 """
             )
+            conn.execute("alter table ai_stock_research add column if not exists ai_usage_json jsonb")
+            conn.execute("alter table ai_stock_research add column if not exists ai_input_tokens integer")
+            conn.execute("alter table ai_stock_research add column if not exists ai_output_tokens integer")
+            conn.execute("alter table ai_stock_research add column if not exists ai_total_tokens integer")
+            conn.execute("alter table ai_stock_research add column if not exists ai_elapsed_ms integer")
 
             conn.execute("create index if not exists idx_cand_sec_date on candidate_secondary_snapshot(as_of_date)")
             conn.execute("create index if not exists idx_ths_member_snap_stock on ths_concept_member_snapshot(snapshot_date, ts_code)")
@@ -810,8 +1158,12 @@ class PostgresScreeningStore:
                 (
                     record["asset_code"],
                     record["trade_date"],
+                    _nullable_float(record.get("total_share")),
+                    _nullable_float(record.get("float_share")),
+                    _nullable_float(record.get("free_share")),
                     _nullable_float(record.get("turnover_rate")),
                     _nullable_float(record.get("turnover_rate_f")),
+                    _nullable_float(record.get("volume_ratio")),
                     _nullable_float(record.get("total_mv")),
                     _nullable_float(record.get("circ_mv")),
                     record.get("limit_status"),
@@ -824,13 +1176,18 @@ class PostgresScreeningStore:
                 cursor.executemany(
                     """
                     insert into screening_daily_basic (
-                        asset_code, trade_date, turnover_rate, turnover_rate_f, total_mv,
+                        asset_code, trade_date, total_share, float_share, free_share,
+                        turnover_rate, turnover_rate_f, volume_ratio, total_mv,
                         circ_mv, limit_status, raw_json, updated_at
                     )
-                    values (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+                    values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
                     on conflict(asset_code, trade_date) do update set
+                        total_share = excluded.total_share,
+                        float_share = excluded.float_share,
+                        free_share = excluded.free_share,
                         turnover_rate = excluded.turnover_rate,
                         turnover_rate_f = excluded.turnover_rate_f,
+                        volume_ratio = excluded.volume_ratio,
                         total_mv = excluded.total_mv,
                         circ_mv = excluded.circ_mv,
                         limit_status = excluded.limit_status,
@@ -839,6 +1196,404 @@ class PostgresScreeningStore:
                     """,
                     rows,
                 )
+            conn.commit()
+
+    def save_income_statements(self, df: pd.DataFrame) -> int:
+        now = _now()
+        rows = []
+        for record in df.to_dict(orient="records"):
+            available_date = _available_date(record)
+            if not available_date:
+                continue
+            rows.append((
+                str(record["ts_code"]),
+                str(record["end_date"]),
+                available_date,
+                _nullable_text(record.get("ann_date")),
+                _nullable_text(record.get("f_ann_date")),
+                _nullable_float(record.get("total_revenue")),
+                _nullable_float(record.get("oper_cost")),
+                _nullable_float(record.get("n_income_attr_p")),
+                _nullable_text(record.get("update_flag")),
+                json_dumps(record),
+                now,
+            ))
+        if not rows:
+            return 0
+        with self.connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.executemany(
+                    """
+                    insert into stock_income_statement (
+                        ts_code, end_date, available_date, ann_date, f_ann_date,
+                        total_revenue, oper_cost, n_income_attr_p, update_flag, raw_json, sync_time
+                    )
+                    values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+                    on conflict (ts_code, end_date, available_date) do update set
+                        ann_date = excluded.ann_date,
+                        f_ann_date = excluded.f_ann_date,
+                        total_revenue = excluded.total_revenue,
+                        oper_cost = excluded.oper_cost,
+                        n_income_attr_p = excluded.n_income_attr_p,
+                        update_flag = excluded.update_flag,
+                        raw_json = excluded.raw_json,
+                        sync_time = excluded.sync_time
+                    """,
+                    rows,
+                )
+            conn.commit()
+        return len(rows)
+
+    def save_cashflow_statements(self, df: pd.DataFrame) -> int:
+        now = _now()
+        rows = []
+        for record in df.to_dict(orient="records"):
+            available_date = _available_date(record)
+            if not available_date:
+                continue
+            rows.append((
+                str(record["ts_code"]),
+                str(record["end_date"]),
+                available_date,
+                _nullable_text(record.get("ann_date")),
+                _nullable_text(record.get("f_ann_date")),
+                _nullable_float(record.get("n_cashflow_act")),
+                _nullable_text(record.get("update_flag")),
+                json_dumps(record),
+                now,
+            ))
+        if not rows:
+            return 0
+        with self.connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.executemany(
+                    """
+                    insert into stock_cashflow_statement (
+                        ts_code, end_date, available_date, ann_date, f_ann_date,
+                        n_cashflow_act, update_flag, raw_json, sync_time
+                    )
+                    values (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+                    on conflict (ts_code, end_date, available_date) do update set
+                        ann_date = excluded.ann_date,
+                        f_ann_date = excluded.f_ann_date,
+                        n_cashflow_act = excluded.n_cashflow_act,
+                        update_flag = excluded.update_flag,
+                        raw_json = excluded.raw_json,
+                        sync_time = excluded.sync_time
+                    """,
+                    rows,
+                )
+            conn.commit()
+        return len(rows)
+
+    def save_fina_indicators(self, df: pd.DataFrame) -> int:
+        now = _now()
+        rows = []
+        for record in df.to_dict(orient="records"):
+            available_date = _available_date(record)
+            if not available_date:
+                continue
+            rows.append((
+                str(record["ts_code"]),
+                str(record["end_date"]),
+                available_date,
+                _nullable_text(record.get("ann_date")),
+                _nullable_float(record.get("or_yoy")),
+                _nullable_float(record.get("op_yoy")),
+                _nullable_float(record.get("netprofit_yoy")),
+                _nullable_float(record.get("profit_dedt")),
+                _nullable_float(record.get("dt_netprofit_yoy")),
+                _nullable_float(record.get("grossprofit_margin")),
+                json_dumps(record),
+                now,
+            ))
+        if not rows:
+            return 0
+        with self.connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.executemany(
+                    """
+                    insert into stock_fina_indicator (
+                        ts_code, end_date, available_date, ann_date, or_yoy, op_yoy,
+                        netprofit_yoy, profit_dedt, dt_netprofit_yoy, grossprofit_margin, raw_json, sync_time
+                    )
+                    values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+                    on conflict (ts_code, end_date, available_date) do update set
+                        ann_date = excluded.ann_date,
+                        or_yoy = excluded.or_yoy,
+                        op_yoy = excluded.op_yoy,
+                        netprofit_yoy = excluded.netprofit_yoy,
+                        profit_dedt = excluded.profit_dedt,
+                        dt_netprofit_yoy = excluded.dt_netprofit_yoy,
+                        grossprofit_margin = excluded.grossprofit_margin,
+                        raw_json = excluded.raw_json,
+                        sync_time = excluded.sync_time
+                    """,
+                    rows,
+                )
+            conn.commit()
+        return len(rows)
+
+    def save_forecasts(self, df: pd.DataFrame) -> int:
+        now = _now()
+        rows = []
+        for record in df.to_dict(orient="records"):
+            available_date = _available_date(record)
+            if not available_date:
+                continue
+            rows.append((
+                str(record["ts_code"]),
+                _nullable_text(record.get("end_date")),
+                available_date,
+                str(record["ann_date"]),
+                _nullable_text(record.get("type")),
+                _nullable_float(record.get("p_change_min")),
+                _nullable_float(record.get("p_change_max")),
+                _nullable_float(record.get("net_profit_min")),
+                _nullable_float(record.get("net_profit_max")),
+                _nullable_text(record.get("summary")),
+                _nullable_text(record.get("change_reason")),
+                json_dumps(record),
+                now,
+            ))
+        if not rows:
+            return 0
+        with self.connect() as conn:
+            with conn.cursor() as cursor:
+                cursor.executemany(
+                    """
+                    insert into stock_forecast (
+                        ts_code, end_date, available_date, ann_date, type,
+                        p_change_min, p_change_max, net_profit_min, net_profit_max,
+                        summary, change_reason, raw_json, sync_time
+                    )
+                    values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+                    on conflict (ts_code, ann_date, available_date) do update set
+                        end_date = excluded.end_date,
+                        type = excluded.type,
+                        p_change_min = excluded.p_change_min,
+                        p_change_max = excluded.p_change_max,
+                        net_profit_min = excluded.net_profit_min,
+                        net_profit_max = excluded.net_profit_max,
+                        summary = excluded.summary,
+                        change_reason = excluded.change_reason,
+                        raw_json = excluded.raw_json,
+                        sync_time = excluded.sync_time
+                    """,
+                    rows,
+                )
+            conn.commit()
+        return len(rows)
+
+    def save_express_reports(self, df: pd.DataFrame, ts_code: str) -> int:
+        now = _now()
+        rows = []
+        for record in df.to_dict(orient="records"):
+            available_date = _nullable_text(record.get("ann_date"))
+            end_date = _nullable_text(record.get("end_date"))
+            if not available_date or not end_date:
+                continue
+            rows.append((
+                str(record["ts_code"]),
+                end_date,
+                available_date,
+                available_date,
+                _nullable_float(record.get("revenue")),
+                _nullable_float(record.get("operate_profit")),
+                _nullable_float(record.get("total_profit")),
+                _nullable_float(record.get("n_income")),
+                _nullable_float(record.get("total_assets")),
+                _nullable_float(record.get("total_hldr_eqy_exc_min_int")),
+                _nullable_float(record.get("diluted_eps")),
+                _nullable_float(record.get("diluted_roe")),
+                _nullable_float(record.get("yoy_net_profit")),
+                _nullable_float(record.get("bps")),
+                _nullable_float(record.get("open_net_assets")),
+                _nullable_float(record.get("open_bps")),
+                _nullable_text(record.get("perf_summary")),
+                _nullable_text(record.get("update_flag")),
+                json_dumps(record),
+                now,
+            ))
+        with self.connect() as conn:
+            conn.execute("delete from stock_express where ts_code = %s", (ts_code,))
+            if rows:
+                with conn.cursor() as cursor:
+                    cursor.executemany(
+                        """
+                        insert into stock_express (
+                            ts_code, end_date, available_date, ann_date, revenue, operate_profit,
+                            total_profit, n_income, total_assets, total_hldr_eqy_exc_min_int,
+                            diluted_eps, diluted_roe, yoy_net_profit, bps, open_net_assets,
+                            open_bps, perf_summary, update_flag, raw_json, sync_time
+                        )
+                        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+                        on conflict (ts_code, end_date, available_date) do update set
+                            revenue = excluded.revenue,
+                            operate_profit = excluded.operate_profit,
+                            total_profit = excluded.total_profit,
+                            n_income = excluded.n_income,
+                            total_assets = excluded.total_assets,
+                            total_hldr_eqy_exc_min_int = excluded.total_hldr_eqy_exc_min_int,
+                            diluted_eps = excluded.diluted_eps,
+                            diluted_roe = excluded.diluted_roe,
+                            yoy_net_profit = excluded.yoy_net_profit,
+                            bps = excluded.bps,
+                            open_net_assets = excluded.open_net_assets,
+                            open_bps = excluded.open_bps,
+                            perf_summary = excluded.perf_summary,
+                            update_flag = excluded.update_flag,
+                            raw_json = excluded.raw_json,
+                            sync_time = excluded.sync_time
+                        """,
+                        rows,
+                    )
+            if rows:
+                self.save_event_sync_status(conn, ts_code, "express_vip", "PASS", len(rows), None, now)
+            conn.commit()
+        return len(rows)
+
+    def save_share_float_events(self, df: pd.DataFrame, ts_code: str) -> int:
+        now = _now()
+        rows = []
+        for record in df.to_dict(orient="records"):
+            float_date = _nullable_text(record.get("float_date"))
+            if not float_date:
+                continue
+            rows.append((
+                str(record["ts_code"]),
+                _nullable_text(record.get("ann_date")),
+                _nullable_text(record.get("ann_date")),
+                float_date,
+                _nullable_float(record.get("float_share")),
+                _nullable_float(record.get("float_ratio")),
+                _nullable_text(record.get("holder_name")) or "",
+                _nullable_text(record.get("share_type")) or "",
+                json_dumps(record),
+                now,
+            ))
+        with self.connect() as conn:
+            conn.execute("delete from stock_share_float where ts_code = %s", (ts_code,))
+            if rows:
+                with conn.cursor() as cursor:
+                    cursor.executemany(
+                        """
+                        insert into stock_share_float (
+                            ts_code, ann_date, available_date, float_date, float_share, float_ratio,
+                            holder_name, share_type, raw_json, sync_time
+                        )
+                        values (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+                        on conflict (ts_code, float_date, holder_name, share_type) do update set
+                            ann_date = excluded.ann_date,
+                            available_date = excluded.available_date,
+                            float_share = excluded.float_share,
+                            float_ratio = excluded.float_ratio,
+                            raw_json = excluded.raw_json,
+                            sync_time = excluded.sync_time
+                        """,
+                        rows,
+                    )
+            saved_count = conn.execute(
+                "select count(*) as count from stock_share_float where ts_code = %s",
+                (ts_code,),
+            ).fetchone()["count"]
+            self.save_event_sync_status(conn, ts_code, "share_float", "PASS", int(saved_count), None, now)
+            conn.commit()
+        return int(saved_count)
+
+    def save_holder_trades(self, df: pd.DataFrame, ts_code: str) -> int:
+        now = _now()
+        rows = []
+        for record in df.to_dict(orient="records"):
+            ann_date = _nullable_text(record.get("ann_date"))
+            if not ann_date:
+                continue
+            rows.append((
+                _holder_trade_key(record),
+                str(record["ts_code"]),
+                ann_date,
+                _nullable_text(record.get("holder_name")),
+                _nullable_text(record.get("holder_type")),
+                _nullable_text(record.get("in_de")),
+                _nullable_float(record.get("change_vol")),
+                _nullable_float(record.get("change_ratio")),
+                _nullable_float(record.get("after_share")),
+                _nullable_float(record.get("after_ratio")),
+                _nullable_float(record.get("avg_price")),
+                _nullable_float(record.get("total_share")),
+                json_dumps(record),
+                now,
+            ))
+        with self.connect() as conn:
+            conn.execute("delete from stock_holder_trade where ts_code = %s", (ts_code,))
+            if rows:
+                with conn.cursor() as cursor:
+                    cursor.executemany(
+                        """
+                        insert into stock_holder_trade (
+                            trade_key, ts_code, ann_date, holder_name, holder_type, in_de, change_vol,
+                            change_ratio, after_share, after_ratio, avg_price, total_share,
+                            raw_json, sync_time
+                        )
+                        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+                        on conflict (trade_key) do update set
+                            ts_code = excluded.ts_code,
+                            ann_date = excluded.ann_date,
+                            holder_name = excluded.holder_name,
+                            holder_type = excluded.holder_type,
+                            in_de = excluded.in_de,
+                            change_vol = excluded.change_vol,
+                            change_ratio = excluded.change_ratio,
+                            after_share = excluded.after_share,
+                            after_ratio = excluded.after_ratio,
+                            avg_price = excluded.avg_price,
+                            total_share = excluded.total_share,
+                            raw_json = excluded.raw_json,
+                            sync_time = excluded.sync_time
+                        """,
+                        rows,
+                    )
+            saved_count = conn.execute(
+                "select count(*) as count from stock_holder_trade where ts_code = %s",
+                (ts_code,),
+            ).fetchone()["count"]
+            self.save_event_sync_status(conn, ts_code, "stk_holdertrade", "PASS", int(saved_count), None, now)
+            conn.commit()
+        return int(saved_count)
+
+    def save_event_sync_status(
+        self,
+        conn: psycopg.Connection,
+        ts_code: str,
+        source_name: str,
+        status: str,
+        row_count: int,
+        message: str | None,
+        sync_time: datetime,
+    ) -> None:
+        conn.execute(
+            """
+            insert into stock_event_sync_status (ts_code, source_name, status, row_count, message, sync_time)
+            values (%s, %s, %s, %s, %s, %s)
+            on conflict (ts_code, source_name) do update set
+                status = excluded.status,
+                row_count = excluded.row_count,
+                message = excluded.message,
+                sync_time = excluded.sync_time
+            """,
+            (ts_code, source_name, status, row_count, message, sync_time),
+        )
+
+    def mark_event_sync_status(
+        self,
+        ts_code: str,
+        source_name: str,
+        status: str,
+        row_count: int = 0,
+        message: str | None = None,
+    ) -> None:
+        with self.connect() as conn:
+            self.save_event_sync_status(conn, ts_code, source_name, status, row_count, message, _now())
             conn.commit()
 
     def load_assets(self) -> pd.DataFrame:
@@ -963,7 +1718,7 @@ class PostgresScreeningStore:
         query_text: str | None = None,
         industry: str | None = None,
         only_selected: bool = False,
-        limit: int = 50,
+        limit: int | None = 50,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
         params: list[Any] = [trade_date, ruleset_version]
@@ -1367,6 +2122,282 @@ class PostgresScreeningStore:
             )
             conn.commit()
 
+    def get_data_management_config(self) -> dict[str, Any]:
+        defaults = {
+            "enabled": True,
+            "timezone": "Asia/Shanghai",
+            "trading_days_only": True,
+            "intraday_enabled": True,
+            "intraday_interval_minutes": 30,
+            "intraday_start_time": "09:30",
+            "intraday_end_time": "15:30",
+            "daily_enabled": True,
+            "daily_run_times": ["18:00"],
+            "concept_enabled": True,
+            "concept_interval_hours": 24,
+            "industry_enabled": True,
+            "industry_interval_hours": 24,
+            "quality_check_enabled": True,
+            "retry_attempts": 3,
+            "request_delay_seconds": 0.12,
+            "stock_30m_enabled": True,
+            "etf_30m_enabled": True,
+            "sync_log_retention_days": 30,
+            "sync_log_max_rows": 10000,
+        }
+        with self.connect() as conn:
+            row = conn.execute(
+                "select config_json, version, updated_at from screening_data_management_config where config_id = 1"
+            ).fetchone()
+        if not row:
+            return {"config": defaults, "version": 0, "updated_at": None}
+        config = {**defaults, **dict(row["config_json"] or {})}
+        return {"config": config, "version": row["version"], "updated_at": row["updated_at"]}
+
+    def save_data_management_config(self, config: dict[str, Any]) -> dict[str, Any]:
+        current = self.get_data_management_config()
+        version = int(current.get("version") or 0) + 1
+        now = _now()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                insert into screening_data_management_config (config_id, config_json, version, updated_at)
+                values (1, %s::jsonb, %s, %s)
+                on conflict (config_id) do update set
+                    config_json = excluded.config_json,
+                    version = excluded.version,
+                    updated_at = excluded.updated_at
+                """,
+                (json_dumps(config), version, now),
+            )
+            conn.commit()
+        return {"config": config, "version": version, "updated_at": now}
+
+    def create_data_task(self, task_id: str, task_type: str, trade_date: str | None = None) -> None:
+        now = _now()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                insert into screening_data_task
+                    (task_id, task_type, status, trade_date, created_at, updated_at)
+                values (%s, %s, 'QUEUED', %s, %s, %s)
+                """,
+                (task_id, task_type, trade_date, now, now),
+            )
+            conn.commit()
+
+    def update_data_task(self, task_id: str, **fields: Any) -> None:
+        allowed = {
+            "status", "progress", "stage_message", "trade_date", "summary_json",
+            "error_message", "started_at", "completed_at",
+        }
+        updates = [(key, value) for key, value in fields.items() if key in allowed]
+        if not updates:
+            return
+        assignments = ", ".join(f"{key} = %s::jsonb" if key == "summary_json" else f"{key} = %s" for key, _ in updates)
+        values = [json_dumps(value) if key == "summary_json" else value for key, value in updates]
+        values.extend([_now(), task_id])
+        with self.connect() as conn:
+            conn.execute(
+                f"update screening_data_task set {assignments}, updated_at = %s where task_id = %s",
+                values,
+            )
+            conn.commit()
+
+    def request_data_task_cancel(self, task_id: str) -> bool:
+        with self.connect() as conn:
+            row = conn.execute(
+                "update screening_data_task set cancel_requested = true, updated_at = %s where task_id = %s and status in ('QUEUED', 'RUNNING') returning task_id",
+                (_now(), task_id),
+            ).fetchone()
+            conn.commit()
+        return bool(row)
+
+    def is_data_task_cancel_requested(self, task_id: str) -> bool:
+        with self.connect() as conn:
+            row = conn.execute("select cancel_requested from screening_data_task where task_id = %s", (task_id,)).fetchone()
+        return bool(row and row["cancel_requested"])
+
+    def list_data_tasks(self, limit: int = 30) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                select task_id, task_type, status, progress, stage_message, trade_date,
+                       summary_json, error_message, cancel_requested, started_at, completed_at, created_at, updated_at
+                from screening_data_task
+                order by created_at desc
+                limit %s
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_failed_minute_items(self, trade_date: str | None = None, asset_type: str | None = None, limit: int | None = None, offset: int = 0, search: str | None = None) -> list[dict[str, Any]]:
+        clauses = ["s.status in ('FAILED', 'EMPTY', 'PARTIAL', 'PENDING')"]
+        params: list[Any] = []
+        if trade_date:
+            clauses.append("s.trade_date = %s"); params.append(trade_date)
+        if asset_type:
+            clauses.append("a.asset_type = %s"); params.append(asset_type)
+        if search:
+            clauses.append("(a.asset_code ilike %s or a.name ilike %s)"); params.extend([f"%{search}%", f"%{search}%"])
+        pagination = "" if limit is None else " limit %s offset %s"
+        query_params = params if limit is None else [*params, limit, offset]
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                select s.asset_code, a.name, a.asset_type, s.trade_date, s.expected_slots,
+                       s.actual_slots, s.status, s.attempt_count, s.last_error, s.updated_at
+                from screening_min_sync_status s
+                join screening_asset_master a on a.asset_code = s.asset_code
+                where {' and '.join(clauses)}
+                order by s.trade_date desc, s.asset_code
+                {pagination}
+                """,
+                query_params,
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def count_failed_minute_items(self, trade_date: str | None = None, asset_type: str | None = None, search: str | None = None) -> int:
+        clauses = ["s.status in ('FAILED', 'EMPTY', 'PARTIAL', 'PENDING')"]
+        params: list[Any] = []
+        if trade_date:
+            clauses.append("s.trade_date = %s"); params.append(trade_date)
+        if asset_type:
+            clauses.append("a.asset_type = %s"); params.append(asset_type)
+        if search:
+            clauses.append("(a.asset_code ilike %s or a.name ilike %s)"); params.extend([f"%{search}%", f"%{search}%"])
+        with self.connect() as conn:
+            row = conn.execute(
+                f"""
+                select count(*) as total
+                from screening_min_sync_status s
+                join screening_asset_master a on a.asset_code = s.asset_code
+                where {' and '.join(clauses)}
+                """,
+                params,
+            ).fetchone()
+        return int((row or {}).get("total") or 0)
+
+    def get_min_sync_status(self, asset_code: str, trade_date: str, freq: str = "30min") -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                select asset_code, trade_date, freq, expected_slots, actual_slots,
+                       status, attempt_count, last_error, updated_at
+                from screening_min_sync_status
+                where asset_code = %s and trade_date = %s and freq = %s
+                """,
+                (asset_code, trade_date, freq),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_sync_logs(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                select id, trade_date, sync_type, status, message, created_at
+                from screening_sync_log
+                order by created_at desc
+                limit %s
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def prune_sync_logs(self, retention_days: int, max_rows: int) -> dict[str, int]:
+        if retention_days < 1 or max_rows < 1:
+            raise ValueError("日志保留天数和最大条数必须大于 0")
+        with self.connect() as conn:
+            old_rows = conn.execute(
+                "delete from screening_sync_log where created_at < now() - (%s * interval '1 day')",
+                (retention_days,),
+            ).rowcount
+            overflow_rows = conn.execute(
+                """
+                delete from screening_sync_log
+                where id in (
+                    select id from screening_sync_log
+                    order by created_at desc
+                    offset %s
+                )
+                """,
+                (max_rows,),
+            ).rowcount
+            conn.commit()
+        return {"deleted_by_age": int(old_rows or 0), "deleted_by_count": int(overflow_rows or 0)}
+
+    def get_data_quality_report(self) -> dict[str, Any]:
+        """Return full-dataset coverage facts used by the data-management UI."""
+        with self.connect() as conn:
+            asset_rows = conn.execute(
+                "select asset_type, count(*) as count from screening_asset_master group by asset_type order by asset_type"
+            ).fetchall()
+            latest_daily = conn.execute(
+                """
+                select max(trade_date) as trade_date,
+                       count(*) filter (where asset_type = 'stock') as stock_rows,
+                       count(*) filter (where asset_type = 'etf') as etf_rows,
+                       count(distinct asset_code) filter (where asset_type = 'stock') as stock_assets,
+                       count(distinct asset_code) filter (where asset_type = 'etf') as etf_assets
+                from screening_daily_bar
+                where trade_date = (select max(trade_date) from screening_daily_bar)
+                """
+            ).fetchone()
+            latest_minute = conn.execute(
+                """
+                select max(substr(trade_time, 1, 10)) as trade_date,
+                       max(trade_time) as trade_time,
+                       count(*) as rows,
+                       count(distinct asset_code) as assets,
+                       count(distinct trade_time) as slots
+                from screening_min_bar
+                where freq = '30min'
+                """
+            ).fetchone()
+            failures = conn.execute(
+                """
+                select count(*) filter (where status in ('FAIL', 'FAILED')) as failed,
+                       count(*) as total
+                from screening_sync_log
+                """
+            ).fetchone()
+            min_status = conn.execute(
+                """
+                select status, count(*) as count
+                from screening_min_sync_status
+                where trade_date = (select max(trade_date) from screening_min_sync_status)
+                group by status
+                order by status
+                """
+            ).fetchall()
+
+        assets = {str(row["asset_type"]): int(row["count"] or 0) for row in asset_rows}
+        daily = dict(latest_daily or {})
+        minute = dict(latest_minute or {})
+        failures_data = dict(failures or {})
+        minute_status = {str(row["status"]): int(row["count"] or 0) for row in min_status}
+        issues: list[dict[str, Any]] = []
+        if not assets:
+            issues.append({"code": "ASSET_MASTER_EMPTY", "severity": "BLOCKING", "message": "证券主数据为空"})
+        if not daily.get("trade_date"):
+            issues.append({"code": "DAILY_DATA_EMPTY", "severity": "BLOCKING", "message": "日线行情为空"})
+        if not minute.get("trade_date"):
+            issues.append({"code": "MINUTE_DATA_EMPTY", "severity": "WARNING", "message": "30 分钟行情为空"})
+        if int(failures_data.get("failed") or 0) > 0:
+            issues.append({"code": "SYNC_FAILURES_EXIST", "severity": "WARNING", "message": f"同步日志中存在 {failures_data['failed']} 条失败记录"})
+        if minute_status.get("PARTIAL", 0) or minute_status.get("FAILED", 0) or minute_status.get("EMPTY", 0):
+            issues.append({"code": "MINUTE_COVERAGE_INCOMPLETE", "severity": "WARNING", "message": "最新分钟线批次存在未完成资产"})
+        return {
+            "status": "BLOCKING" if any(item["severity"] == "BLOCKING" for item in issues) else "WARNING" if issues else "READY",
+            "assets": assets,
+            "daily": daily,
+            "minute": minute,
+            "sync_logs": failures_data,
+            "minute_status": minute_status,
+            "issues": issues,
+        }
+
     def get_kline_bars(
         self, asset_code: str, period: str = "daily", adjust: str = "qfq"
     ) -> list[dict[str, Any]]:
@@ -1514,6 +2545,130 @@ class PostgresScreeningStore:
             )
         return result
 
+    def get_intraday_synthetic_daily_bar(
+        self,
+        asset_code: str,
+        adjust: str = "qfq",
+        now: datetime | None = None,
+    ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+        current = now or datetime.now(ZoneInfo("Asia/Shanghai"))
+        trade_date = current.strftime("%Y%m%d")
+        expected_slots = _completed_30m_slots(current.time())
+        is_weekday = current.weekday() < 5
+        is_after_close = current.time() >= dtime(15, 0)
+        meta: dict[str, Any] = {
+            "enabled": True,
+            "trade_date": trade_date,
+            "source": "intraday_30m_synthetic",
+            "status": "NOT_READY",
+            "is_weekday": is_weekday,
+            "is_after_close": is_after_close,
+            "expected_slots": expected_slots,
+            "present_slots": [],
+            "missing_slots": expected_slots,
+            "bar": None,
+        }
+        if not is_weekday:
+            meta["status"] = "NON_TRADING_DAY"
+            meta["missing_slots"] = []
+            return None, meta
+        if not expected_slots:
+            meta["status"] = "NO_COMPLETED_30M_SLOT"
+            return None, meta
+
+        with self.connect() as conn:
+            official = conn.execute(
+                """
+                select 1
+                from screening_daily_bar
+                where asset_code = %s and trade_date = %s
+                limit 1
+                """,
+                (asset_code, trade_date),
+            ).fetchone()
+            if official:
+                meta["status"] = "OFFICIAL_DAILY_EXISTS"
+                meta["missing_slots"] = []
+                return None, meta
+
+            rows = conn.execute(
+                """
+                select trade_time, open, high, low, close, vol, amount
+                from screening_min_bar
+                where asset_code = %s
+                  and freq = '30min'
+                  and trade_time >= %s
+                  and trade_time <= %s
+                order by trade_time asc
+                """,
+                (
+                    asset_code,
+                    f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:8]} 00:00:00",
+                    f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:8]} 23:59:59",
+                ),
+            ).fetchall()
+            adj_rows = conn.execute(
+                "select trade_date, adj_factor from screening_adj_factor where asset_code = %s order by trade_date asc",
+                (asset_code,),
+            ).fetchall()
+
+        by_slot: dict[str, Any] = {}
+        for row in rows:
+            slot = str(row["trade_time"])[11:16]
+            by_slot[slot] = row
+        present_slots = [slot for slot in expected_slots if slot in by_slot]
+        missing_slots = [slot for slot in expected_slots if slot not in by_slot]
+        meta["present_slots"] = present_slots
+        meta["missing_slots"] = missing_slots
+        if not present_slots:
+            meta["status"] = "INCOMPLETE_30M" if is_after_close else "INTRADAY_PARTIAL"
+            return None, meta
+        if missing_slots:
+            meta["status"] = "INCOMPLETE_30M" if is_after_close else "INTRADAY_PARTIAL"
+
+        completed_rows = [by_slot[slot] for slot in present_slots]
+        first = completed_rows[0]
+        last = completed_rows[-1]
+        op = float(first["open"])
+        hi = max(float(row["high"]) for row in completed_rows)
+        lo = min(float(row["low"]) for row in completed_rows)
+        cl = float(last["close"])
+        vol = sum(float(row["vol"]) for row in completed_rows)
+        amt = sum(float(row["amount"]) for row in completed_rows)
+
+        adjust_status = "none"
+        if adjust == "qfq":
+            # 当天官方复权因子通常尚未生成；用上一条已落库因子保持与历史 qfq 坐标一致。
+            latest_adj = float(adj_rows[-1]["adj_factor"]) if adj_rows else 1.0
+            if latest_adj > 0:
+                ratio = latest_adj / latest_adj
+                op = round(op * ratio, 2)
+                hi = round(hi * ratio, 2)
+                lo = round(lo * ratio, 2)
+                cl = round(cl * ratio, 2)
+                adjust_status = "estimated_with_latest_adj_factor"
+
+        dt = datetime.strptime(trade_date, "%Y%m%d").replace(tzinfo=UTC)
+        bar = {
+            "timestamp": int(dt.timestamp() * 1000),
+            "trade_date": trade_date,
+            "open": op,
+            "high": hi,
+            "low": lo,
+            "close": cl,
+            "volume": vol,
+            "turnover": amt,
+            "source": "intraday_30m_synthetic",
+            "is_synthetic": True,
+            "completed_30m_slots": expected_slots,
+            "last_30m_slot": expected_slots[-1],
+            "adjust_status": adjust_status,
+        }
+        meta["status"] = "READY"
+        meta["bar"] = bar
+        meta["adjust_status"] = adjust_status
+        return bar, meta
+
 
 
 
@@ -1625,6 +2780,75 @@ class PostgresScreeningStore:
                 row = cursor.fetchone()
                 return row["max_time"] if row and row.get("max_time") else None
 
+    def count_min_slots(self, asset_code: str, trade_date: str, freq: str = "30min") -> int:
+        normalized_date = f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:8]}"
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                select count(distinct trade_time) as slots
+                from screening_min_bar
+                where asset_code = %s and freq = %s
+                  and trade_time >= %s and trade_time < (%s::date + interval '1 day')::text
+                """,
+                (asset_code, freq, normalized_date, normalized_date),
+            ).fetchone()
+        return int((row or {}).get("slots") or 0)
+
+    def save_min_sync_status(
+        self,
+        asset_code: str,
+        trade_date: str,
+        expected_slots: int,
+        actual_slots: int,
+        status: str,
+        error: str | None = None,
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                insert into screening_min_sync_status
+                    (asset_code, trade_date, freq, expected_slots, actual_slots,
+                     status, attempt_count, last_error, updated_at)
+                values (%s, %s, '30min', %s, %s, %s, 1, %s, %s)
+                on conflict (asset_code, trade_date, freq) do update set
+                    expected_slots = excluded.expected_slots,
+                    actual_slots = excluded.actual_slots,
+                    status = excluded.status,
+                    attempt_count = screening_min_sync_status.attempt_count + 1,
+                    last_error = excluded.last_error,
+                    updated_at = excluded.updated_at
+                """,
+                (asset_code, trade_date, expected_slots, actual_slots, status, error, _now()),
+            )
+            conn.commit()
+
+    def validate_min_sync_date(self, trade_date: str, asset_type: str | None = None) -> dict[str, Any]:
+        clauses = ["a.asset_type = %s"] if asset_type else []
+        params: list[Any] = [trade_date] + ([asset_type] if asset_type else [])
+        where = "and " + " and ".join(clauses) if clauses else ""
+        with self.connect() as conn:
+            row = conn.execute(
+                f"""
+                select count(*) as total_assets,
+                       count(*) filter (where s.status = 'COMPLETE') as complete_assets,
+                       count(*) filter (where s.status = 'INACTIVE') as inactive_assets,
+                       count(*) filter (where s.status = 'PARTIAL') as partial_assets,
+                       count(*) filter (where s.status in ('FAILED', 'RATE_LIMITED', 'EMPTY')) as failed_assets,
+                       count(*) filter (where s.status = 'PENDING') as pending_assets
+                from screening_asset_master a
+                left join screening_min_sync_status s
+                  on s.asset_code = a.asset_code and s.trade_date = %s and s.freq = '30min'
+                where 1=1 {where}
+                """,
+                params,
+            ).fetchone()
+        result = dict(row or {})
+        result["complete"] = (
+            int(result.get("total_assets") or 0) > 0
+            and int(result.get("complete_assets") or 0) + int(result.get("inactive_assets") or 0) == int(result.get("total_assets") or 0)
+        )
+        return result
+
 
     # ── P1 审计骨架：screening_run ──────────────────────────────────────
     def create_screening_run(
@@ -1718,8 +2942,17 @@ class PostgresScreeningStore:
 
             max_min = conn.execute("select max(trade_time) as mt from screening_min_bar").fetchone()["mt"]
             max_candidate = conn.execute("select max(trade_date) as mc from screening_candidate_snapshot").fetchone()["mc"]
+
+        latest_min_date = str(max_min)[:10].replace("-", "") if max_min else None
+        latest_open_date = max(filter(None, (max_daily, latest_min_date)), default=None)
+
         return {
+            # 日线日期必须来自完整 screening_daily_bar，不能被分钟线日期冒充。
             "daily_market_date": max_daily or "未知",
+            "official_daily_date": max_daily or "未知",
+            # 对外“最新行情”可以使用当天已落库的 30 分钟数据；正式日线日期仍单独保留。
+            "latest_open_trade_date": latest_open_date or "未知",
+            "intraday_market_date": latest_min_date or "未知",
             "min_bar_time": max_min or "未知",
             "candidate_date": max_candidate or "未知",
             "financial_data_quarter": "2026Q2",
@@ -2074,6 +3307,7 @@ class PostgresScreeningStore:
         now = _now()
         rows = [
             (
+                _membership_key(item, source_version),
                 item["ts_code"],
                 item.get("l1_code"),
                 item.get("l1_name"),
@@ -2089,15 +3323,20 @@ class PostgresScreeningStore:
             for item in memberships
         ]
         with self.connect() as conn:
+            conn.execute(
+                "delete from industry_membership_history where source_version = %s",
+                (source_version,),
+            )
             with conn.cursor() as cursor:
                 cursor.executemany(
                     """
                     insert into industry_membership_history (
-                        ts_code, l1_code, l1_name, l2_code, l2_name, l3_code, l3_name,
+                        membership_key, ts_code, l1_code, l1_name, l2_code, l2_name, l3_code, l3_name,
                         in_date, out_date, source_version, updated_at
                     )
-                    values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    on conflict (ts_code, source_version) do update set
+                    values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    on conflict (membership_key) do update set
+                        ts_code = excluded.ts_code,
                         l1_code = excluded.l1_code, l1_name = excluded.l1_name,
                         l2_code = excluded.l2_code, l2_name = excluded.l2_name,
                         l3_code = excluded.l3_code, l3_name = excluded.l3_name,
@@ -2221,18 +3460,44 @@ class PostgresScreeningStore:
         self,
         run_id: str,
         trade_date: str,
-        config_version: str = "early_turn_v1.0",
+        config_version: str = "A_PRE_V2_20260828_V1",
+        run_name: str | None = None,
+        notes: str | None = None,
     ) -> None:
         with self.connect() as conn:
             conn.execute(
                 """
-                insert into early_turn_run (run_id, trade_date, config_version, started_at, status)
-                values (%s, %s, %s, %s, 'RUNNING')
+                insert into early_turn_run (run_id, trade_date, config_version, started_at, status, run_name, notes)
+                values (%s, %s, %s, %s, 'RUNNING', %s, %s)
                 on conflict (run_id) do nothing
                 """,
-                (run_id, trade_date, config_version, _now()),
+                (run_id, trade_date, config_version, _now(), run_name, notes),
             )
             conn.commit()
+
+    def reset_early_turn_run(self, run_id: str, trade_date: str, config_version: str, run_name: str | None = None, notes: str | None = None) -> list[str]:
+        """清空既有批次结果并将同一批次重置为运行中，返回原批次股票范围。"""
+        with self.connect() as conn:
+            codes = [r["ts_code"] for r in conn.execute(
+                "select distinct ts_code from early_turn_result where run_id = %s order by ts_code", (run_id,)
+            ).fetchall()]
+            existing = conn.execute("select run_id from early_turn_run where run_id = %s", (run_id,)).fetchone()
+            if not existing:
+                raise ValueError(f"early-turn run not found: {run_id}")
+            conn.execute("delete from early_turn_result where run_id = %s", (run_id,))
+            conn.execute(
+                """
+                update early_turn_run
+                set trade_date = %s, config_version = %s, started_at = %s,
+                    finished_at = null, status = 'RUNNING', summary_json = '{}'::jsonb,
+                    error_message = null,
+                    run_name = coalesce(%s, run_name), notes = coalesce(%s, notes)
+                where run_id = %s
+                """,
+                (trade_date, config_version, _now(), run_name, notes, run_id),
+            )
+            conn.commit()
+            return codes
 
     def finish_early_turn_run(
         self,
@@ -2260,8 +3525,74 @@ class PostgresScreeningStore:
             params.append(trade_date)
         query += " order by started_at desc limit 1"
         with self.connect() as conn:
+            conn.execute("alter table early_turn_result add column if not exists turn_episode_state text")
+            conn.execute("alter table early_turn_result add column if not exists signal_status text")
+            conn.execute("alter table early_turn_result add column if not exists entry_extension_state text")
+            conn.execute("alter table early_turn_result add column if not exists first_trigger_date text")
+            conn.execute("alter table early_turn_result add column if not exists first_trigger_close numeric")
+            conn.execute("alter table early_turn_result add column if not exists return_since_first_trigger numeric")
+            conn.execute("alter table early_turn_result add column if not exists structural_damage_flag boolean default false")
+
+            conn.execute(
+                """
+                create table if not exists early_turn_positive_sample (
+                    sample_id bigserial primary key,
+                    ts_code text not null,
+                    target_date text not null,
+                    sample_name text not null,
+                    note text,
+                    label_version text not null default 'v1.0',
+                    created_at timestamptz not null,
+                    unique (ts_code, target_date, label_version)
+                )
+                """
+            )
+            conn.execute("create index if not exists idx_early_turn_res_date on early_turn_result(trade_date)")
+            conn.execute("create index if not exists idx_early_turn_res_state on early_turn_result(run_id, state)")
             row = conn.execute(query, params).fetchone()
         return dict(row) if row else None
+
+    def get_all_early_turn_runs(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                select r.run_id, r.trade_date, r.run_name, r.notes, r.started_at, r.finished_at, r.status,
+                       count(res.ts_code) as candidate_count
+                from early_turn_run r
+                left join early_turn_result res on r.run_id = res.run_id
+                group by r.run_id, r.trade_date, r.run_name, r.notes, r.started_at, r.finished_at, r.status
+                order by r.started_at desc
+                limit %s
+                """,
+                (limit,),
+            ).fetchall()
+            return [
+                {
+                    "run_id": r["run_id"],
+                    "trade_date": r["trade_date"],
+                    "run_name": r.get("run_name") or f"选股记录 ({r['trade_date']})",
+                    "notes": r.get("notes") or "",
+                    "started_at": r["started_at"].isoformat() if r.get("started_at") else None,
+                    "status": r["status"],
+                    "candidate_count": r.get("candidate_count") or 0,
+                }
+                for r in rows
+            ]
+
+    def delete_early_turn_run(self, run_id: str) -> int:
+        """删除一个批次及其全部逐股技术快照，返回被删除的股票快照数量。"""
+        with self.connect() as conn:
+            existing = conn.execute(
+                "select run_id from early_turn_run where run_id = %s", (run_id,)
+            ).fetchone()
+            if not existing:
+                raise ValueError(f"early-turn run not found: {run_id}")
+            deleted_result_count = conn.execute(
+                "delete from early_turn_result where run_id = %s", (run_id,)
+            ).rowcount
+            conn.execute("delete from early_turn_run where run_id = %s", (run_id,))
+            conn.commit()
+            return int(deleted_result_count or 0)
 
     def save_early_turn_results(self, results: list[dict[str, Any]]) -> None:
         if not results:
@@ -2281,6 +3612,13 @@ class PostgresScreeningStore:
                 json_dumps(r.get("score_detail_json", {})),
                 json_dumps(r.get("reasons_json", [])),
                 r.get("first_selected_date"),
+                r.get("turn_episode_state", "PRE_FIRST_TURN"),
+                r.get("signal_status", r["state"]),
+                r.get("entry_extension_state", "NORMAL"),
+                r.get("first_trigger_date"),
+                r.get("first_trigger_close"),
+                r.get("return_since_first_trigger"),
+                r.get("structural_damage_flag", False),
                 now,
             )
             for r in results
@@ -2290,21 +3628,36 @@ class PostgresScreeningStore:
                 cursor.executemany(
                     """
                     insert into early_turn_result (
-                    run_id, ts_code, trade_date, total_score, state, background_type,
-                    selected, is_overextended, features_json, score_detail_json,
-                    reasons_json, first_selected_date, created_at
-                )
-                values (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s)
-                on conflict (run_id, ts_code) do update set
-                    total_score = excluded.total_score,
-                    state = excluded.state,
-                    background_type = excluded.background_type,
-                    selected = excluded.selected,
-                    is_overextended = excluded.is_overextended,
-                    features_json = excluded.features_json,
-                    score_detail_json = excluded.score_detail_json,
-                    reasons_json = excluded.reasons_json,
-                    first_selected_date = excluded.first_selected_date
+                        run_id, ts_code, trade_date, total_score, state, background_type,
+                        selected, is_overextended, features_json, score_detail_json,
+                        reasons_json, first_selected_date, turn_episode_state, signal_status,
+                        entry_extension_state, first_trigger_date, first_trigger_close,
+                        return_since_first_trigger, structural_damage_flag, created_at
+                    )
+                    values (
+                        %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s::jsonb, %s::jsonb,
+                        %s::jsonb, %s, %s, %s,
+                        %s, %s, %s,
+                        %s, %s, %s
+                    )
+                    on conflict (run_id, ts_code) do update set
+                        total_score = excluded.total_score,
+                        state = excluded.state,
+                        background_type = excluded.background_type,
+                        selected = excluded.selected,
+                        is_overextended = excluded.is_overextended,
+                        features_json = excluded.features_json,
+                        score_detail_json = excluded.score_detail_json,
+                        reasons_json = excluded.reasons_json,
+                        first_selected_date = excluded.first_selected_date,
+                        turn_episode_state = excluded.turn_episode_state,
+                        signal_status = excluded.signal_status,
+                        entry_extension_state = excluded.entry_extension_state,
+                        first_trigger_date = excluded.first_trigger_date,
+                        first_trigger_close = excluded.first_trigger_close,
+                        return_since_first_trigger = excluded.return_since_first_trigger,
+                        structural_damage_flag = excluded.structural_damage_flag
                 """,
                 rows,
             )
@@ -2318,55 +3671,137 @@ class PostgresScreeningStore:
         min_score: float | None = None,
         query_text: str | None = None,
         industry: str | None = None,
+        concept: str | None = None,
+        ts_codes: list[str] | None = None,
+        exclude_st: bool = False,
+        fundamental_state: str | None = None,
         limit: int = 50,
         offset: int = 0,
+        include_concept_counts: bool = False,
     ) -> dict[str, Any]:
         where_clauses = ["r.run_id = %s"]
         params: list[Any] = [run_id]
-
-        if state and state != "ALL":
-            where_clauses.append("r.state = %s")
-            params.append(state)
-        if background_type and background_type != "ALL":
-            where_clauses.append("r.background_type = %s")
-            params.append(background_type)
-        if min_score is not None:
-            where_clauses.append("r.total_score >= %s")
-            params.append(min_score)
-        if industry and industry != "ALL":
-            where_clauses.append("a.raw_json->>'industry' = %s")
-            params.append(industry)
-        if query_text:
-            where_clauses.append("(r.ts_code ilike %s or a.name ilike %s)")
-            q_param = f"%{query_text.strip()}%"
-            params.extend([q_param, q_param])
-
-        where_sql = " where " + " and ".join(where_clauses)
-
-        count_sql = f"""
-            select count(*) as cnt
-            from early_turn_result r
-            left join screening_asset_master a on a.asset_code = r.ts_code
-            {where_sql}
-        """
-
-        data_sql = f"""
-            select r.run_id, r.ts_code, r.trade_date, r.total_score, r.state,
-                   r.background_type, r.selected, r.is_overextended,
-                   r.features_json, r.score_detail_json, r.reasons_json,
-                   r.first_selected_date, a.name, a.asset_type,
-                   a.raw_json->>'industry' as industry,
-                   a.raw_json->>'main_business' as main_business
-            from early_turn_result r
-            left join screening_asset_master a on a.asset_code = r.ts_code
-            {where_sql}
-            order by r.total_score desc, r.ts_code asc
-            limit %s offset %s
-        """
+        concept_snapshot_date: str | None = None
 
         with self.connect() as conn:
+            run_row = conn.execute(
+                "select trade_date from early_turn_run where run_id = %s",
+                (run_id,),
+            ).fetchone()
+            run_trade_date = run_row["trade_date"] if run_row else None
+            if run_trade_date:
+                snap_row = conn.execute(
+                    """
+                    select snapshot_date
+                    from ths_concept_member_snapshot
+                    where snapshot_date <= %s
+                    order by snapshot_date desc
+                    limit 1
+                    """,
+                    (run_trade_date,),
+                ).fetchone()
+                concept_snapshot_date = snap_row["snapshot_date"] if snap_row else None
+            if not concept_snapshot_date:
+                snap_row = conn.execute(
+                    "select snapshot_date from ths_concept_member_snapshot order by snapshot_date desc limit 1"
+                ).fetchone()
+                concept_snapshot_date = snap_row["snapshot_date"] if snap_row else None
+
+            def add_base_filters(
+                clauses: list[str], values: list[Any], include_industry: bool = True,
+                include_concept: bool = True, include_fundamental: bool = True,
+            ) -> None:
+                # OUTSIDE_A_PRE 仅用于生命周期回放，不能进入用户侧的 A-Pre
+                # 股票列表、筛选计数或基本面研究范围。
+                clauses.append("r.state <> 'OUTSIDE_A_PRE'")
+                if state and state != "ALL":
+                    clauses.append("r.state = %s")
+                    values.append(state)
+                if background_type and background_type != "ALL":
+                    clauses.append("r.background_type = %s")
+                    values.append(background_type)
+                if min_score is not None:
+                    clauses.append("r.total_score >= %s")
+                    values.append(min_score)
+                if ts_codes is not None:
+                    clauses.append("r.ts_code = any(%s)")
+                    values.append(ts_codes)
+                if exclude_st:
+                    clauses.append("coalesce(a.name, '') not ilike 'ST%%' and coalesce(a.name, '') not ilike '*ST%%'")
+                if include_industry and industry and industry != "ALL":
+                    clauses.append("a.raw_json->>'industry' = %s")
+                    values.append(industry)
+                if query_text:
+                    clauses.append("(r.ts_code ilike %s or a.name ilike %s)")
+                    q_param = f"%{query_text.strip()}%"
+                    values.extend([q_param, q_param])
+                if include_concept and concept and concept != "ALL":
+                    if not concept_snapshot_date:
+                        clauses.append("false")
+                    else:
+                        clauses.append(
+                            """
+                            exists (
+                                select 1
+                                from ths_concept_member_snapshot cm
+                                left join ths_index_master im on im.ths_code = cm.ths_code
+                                where cm.snapshot_date = %s
+                                  and cm.ts_code = r.ts_code
+                                  and coalesce(im.name, cm.ths_name) = %s
+                            )
+                            """
+                        )
+                        values.extend([concept_snapshot_date, concept])
+                if include_fundamental and fundamental_state and fundamental_state != "ALL":
+                    if fundamental_state == "UNRESEARCHED":
+                        clauses.append("e.ts_code is null")
+                    else:
+                        clauses.append("e.fundamental_filter_state = %s")
+                        values.append(fundamental_state)
+
+            add_base_filters(where_clauses, params)
+
+            where_sql = " where " + " and ".join(where_clauses)
+
+            count_sql = f"""
+                select count(*) as cnt
+                from early_turn_result r
+                left join screening_asset_master a on a.asset_code = r.ts_code
+                left join early_turn_run er on er.run_id = r.run_id
+                left join company_evidence_snapshot e on e.as_of_date = er.trade_date and e.ts_code = r.ts_code
+                {where_sql}
+            """
+
+            pagination_sql = "limit %s offset %s" if limit is not None else ""
+            data_sql = f"""
+                select r.run_id, r.ts_code, r.trade_date, r.total_score, r.state,
+                       r.background_type, r.selected, r.is_overextended,
+                       r.features_json, r.score_detail_json, r.reasons_json,
+                       coalesce(
+                           r.first_selected_date,
+                           (select min(prev.trade_date) from early_turn_result prev
+                            where prev.ts_code = r.ts_code and prev.selected = true
+                              and prev.trade_date <= r.trade_date)
+                       ) as first_selected_date,
+                       r.turn_episode_state, r.signal_status,
+                       r.entry_extension_state, r.first_trigger_date, r.first_trigger_close,
+                       r.return_since_first_trigger, r.structural_damage_flag,
+                       e.fundamental_filter_state, e.fundamental_filter_reasons_json,
+                       a.name, a.asset_type,
+                       a.raw_json->>'industry' as industry,
+                       a.raw_json->>'main_business' as main_business
+                from early_turn_result r
+                left join screening_asset_master a on a.asset_code = r.ts_code
+                left join early_turn_run er on er.run_id = r.run_id
+                left join company_evidence_snapshot e on e.as_of_date = er.trade_date and e.ts_code = r.ts_code
+                {where_sql}
+                order by r.total_score desc, r.ts_code asc
+                {pagination_sql}
+            """
+
             total = conn.execute(count_sql, params).fetchone()["cnt"]
-            rows = conn.execute(data_sql, params + [limit, offset]).fetchall()
+            data_params = params + ([limit, offset] if limit is not None else [])
+            rows = conn.execute(data_sql, data_params).fetchall()
             
             # 基础 Counts 统计
             counts_row = conn.execute(
@@ -2380,22 +3815,10 @@ class PostgresScreeningStore:
             ).fetchall()
             counts = {r["state"]: r["cnt"] for r in counts_row}
 
-            # 行业分布 counts 统计 (忽略当前 industry 筛选，但保留 state/bg_type/min_score/query_text 筛选)
+            # 行业分布 counts 统计 (忽略当前 industry 筛选，但保留 state/bg_type/min_score/query_text/concept 筛选)
             ind_where_clauses = ["r.run_id = %s"]
             ind_params = [run_id]
-            if state and state != "ALL":
-                ind_where_clauses.append("r.state = %s")
-                ind_params.append(state)
-            if background_type and background_type != "ALL":
-                ind_where_clauses.append("r.background_type = %s")
-                ind_params.append(background_type)
-            if min_score is not None:
-                ind_where_clauses.append("r.total_score >= %s")
-                ind_params.append(min_score)
-            if query_text:
-                ind_where_clauses.append("(r.ts_code ilike %s or a.name ilike %s)")
-                q_param = f"%{query_text.strip()}%"
-                ind_params.extend([q_param, q_param])
+            add_base_filters(ind_where_clauses, ind_params, include_industry=False, include_concept=True)
                 
             ind_where_sql = " where " + " and ".join(ind_where_clauses)
             
@@ -2403,11 +3826,61 @@ class PostgresScreeningStore:
                 select a.raw_json->>'industry' as ind, count(*) as cnt
                 from early_turn_result r
                 left join screening_asset_master a on a.asset_code = r.ts_code
+                left join early_turn_run er on er.run_id = r.run_id
+                left join company_evidence_snapshot e on e.as_of_date = er.trade_date and e.ts_code = r.ts_code
                 {ind_where_sql}
                 group by ind
             """
             ind_rows = conn.execute(industry_sql, ind_params).fetchall()
             industry_counts = {r["ind"]: r["cnt"] for r in ind_rows if r["ind"]}
+
+            concept_counts: dict[str, int] = {}
+            if concept_snapshot_date:
+                concept_where_clauses = ["r.run_id = %s"]
+                concept_params: list[Any] = [run_id]
+                add_base_filters(concept_where_clauses, concept_params, include_industry=True, include_concept=False)
+                concept_where_sql = " where " + " and ".join(concept_where_clauses)
+                concept_rows = conn.execute(
+                    f"""
+                    select coalesce(im.name, cm.ths_name) as concept_name, count(r.ts_code) as cnt
+                    from early_turn_result r
+                    left join screening_asset_master a on a.asset_code = r.ts_code
+                    left join early_turn_run er on er.run_id = r.run_id
+                    left join company_evidence_snapshot e on e.as_of_date = er.trade_date and e.ts_code = r.ts_code
+                    join ths_concept_member_snapshot cm
+                      on cm.snapshot_date = %s and cm.ts_code = r.ts_code
+                    left join ths_index_master im on im.ths_code = cm.ths_code
+                    {concept_where_sql}
+                    group by concept_name
+                    order by cnt desc, concept_name asc
+                    """,
+                    [concept_snapshot_date] + concept_params,
+                ).fetchall()
+                concept_counts = {
+                    r["concept_name"]: r["cnt"]
+                    for r in concept_rows
+                    if r["concept_name"] and not is_low_signal_ths_concept(r["concept_name"])
+                }
+
+            fundamental_where_clauses = ["r.run_id = %s"]
+            fundamental_params: list[Any] = [run_id]
+            add_base_filters(
+                fundamental_where_clauses, fundamental_params,
+                include_industry=True, include_concept=True, include_fundamental=False,
+            )
+            fundamental_rows = conn.execute(
+                f"""
+                select coalesce(e.fundamental_filter_state, 'UNRESEARCHED') as filter_state, count(*) as cnt
+                from early_turn_result r
+                left join screening_asset_master a on a.asset_code = r.ts_code
+                left join early_turn_run er on er.run_id = r.run_id
+                left join company_evidence_snapshot e on e.as_of_date = er.trade_date and e.ts_code = r.ts_code
+                where {' and '.join(fundamental_where_clauses)}
+                group by coalesce(e.fundamental_filter_state, 'UNRESEARCHED')
+                """,
+                fundamental_params,
+            ).fetchall()
+            fundamental_counts = {row["filter_state"]: row["cnt"] for row in fundamental_rows}
 
         items = []
         for row in rows:
@@ -2419,6 +3892,9 @@ class PostgresScreeningStore:
             "total": total,
             "counts": counts,
             "industry_counts": industry_counts,
+            "concept_counts": concept_counts,
+            "fundamental_counts": fundamental_counts,
+            "concept_snapshot_date": concept_snapshot_date,
             "items": items,
             "limit": limit,
             "offset": offset,
@@ -2471,7 +3947,9 @@ class PostgresScreeningStore:
                             company_evidence_state = excluded.company_evidence_state,
                             leadership_state = excluded.leadership_state,
                             leadership_rank_value = excluded.leadership_rank_value,
-                            supply_profile_label = excluded.supply_profile_label
+                            supply_profile_label = excluded.supply_profile_label,
+                            calc_version = excluded.calc_version,
+                            created_at = excluded.created_at
                         """,
                         (
                             as_of_date,
@@ -2498,9 +3976,13 @@ class PostgresScreeningStore:
                             deducted_net_profit, deducted_net_profit_yoy, deducted_profit_state,
                             operating_cashflow, operating_cashflow_yoy, gross_margin, gross_margin_yoy_delta,
                             forecast_ann_date, forecast_type, forecast_p_change_min, forecast_p_change_max,
-                            forecast_net_profit_min, forecast_net_profit_max, evidence_state, reason_json,
-                            risk_flags_json, data_version, created_at
-                        ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s)
+                            forecast_net_profit_min, forecast_net_profit_max, express_ann_date, express_end_date,
+                            express_revenue, express_n_income, express_yoy_net_profit, express_summary,
+                            evidence_state, reason_json,
+                            risk_flags_json, quarter_facts_json, fact_tags_json, data_quality_json,
+                            fundamental_filter_state, fundamental_filter_reasons_json,
+                            data_version, created_at
+                        ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s::jsonb, %s, %s)
                         on conflict (as_of_date, ts_code) do update set
                             latest_report_period = excluded.latest_report_period,
                             latest_report_ann_date = excluded.latest_report_ann_date,
@@ -2522,9 +4004,22 @@ class PostgresScreeningStore:
                             forecast_p_change_max = excluded.forecast_p_change_max,
                             forecast_net_profit_min = excluded.forecast_net_profit_min,
                             forecast_net_profit_max = excluded.forecast_net_profit_max,
+                            express_ann_date = excluded.express_ann_date,
+                            express_end_date = excluded.express_end_date,
+                            express_revenue = excluded.express_revenue,
+                            express_n_income = excluded.express_n_income,
+                            express_yoy_net_profit = excluded.express_yoy_net_profit,
+                            express_summary = excluded.express_summary,
                             evidence_state = excluded.evidence_state,
                             reason_json = excluded.reason_json,
-                            risk_flags_json = excluded.risk_flags_json
+                            risk_flags_json = excluded.risk_flags_json,
+                            quarter_facts_json = excluded.quarter_facts_json,
+                            fact_tags_json = excluded.fact_tags_json,
+                            data_quality_json = excluded.data_quality_json,
+                            fundamental_filter_state = excluded.fundamental_filter_state,
+                            fundamental_filter_reasons_json = excluded.fundamental_filter_reasons_json,
+                            data_version = excluded.data_version,
+                            created_at = excluded.created_at
                         """,
                         (
                             as_of_date,
@@ -2549,9 +4044,20 @@ class PostgresScreeningStore:
                             r.get("forecast_p_change_max"),
                             r.get("forecast_net_profit_min"),
                             r.get("forecast_net_profit_max"),
+                            r.get("express_ann_date"),
+                            r.get("express_end_date"),
+                            r.get("express_revenue"),
+                            r.get("express_n_income"),
+                            r.get("express_yoy_net_profit"),
+                            r.get("express_summary"),
                             r.get("evidence_state", "UNKNOWN"),
                             json_dumps(r.get("reason_json", [])),
                             json_dumps(r.get("risk_flags_json", [])),
+                            json_dumps(r.get("quarter_facts_json", [])),
+                            json_dumps(r.get("fact_tags_json", [])),
+                            json_dumps(r.get("data_quality_json", {})),
+                            r.get("fundamental_filter_state"),
+                            json_dumps(r.get("fundamental_filter_reasons_json", [])),
                             r.get("data_version", "v1.0"),
                             now,
                         ),
@@ -2596,7 +4102,9 @@ class PostgresScreeningStore:
                             valid_component_count = excluded.valid_component_count,
                             leadership_rank_value = excluded.leadership_rank_value,
                             leadership_state = excluded.leadership_state,
-                            reason_json = excluded.reason_json
+                            reason_json = excluded.reason_json,
+                            calc_version = excluded.calc_version,
+                            created_at = excluded.created_at
                         """,
                         (
                             as_of_date,
@@ -2636,13 +4144,15 @@ class PostgresScreeningStore:
                     cur.execute(
                         """
                         insert into supply_profile_snapshot (
-                            as_of_date, ts_code, close, total_mv, circ_mv, free_share, free_float_mv,
+                            as_of_date, ts_code, close, total_share, float_share, total_mv, circ_mv, free_share, free_float_mv,
                             amount, amount_median_20, turnover_rate, turnover_rate_f, volume_ratio,
                             unlock_30d, unlock_60d, unlock_90d, recent_reduction_flag, supply_profile_label,
                             data_version, created_at
-                        ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         on conflict (as_of_date, ts_code) do update set
                             close = excluded.close,
+                            total_share = excluded.total_share,
+                            float_share = excluded.float_share,
                             total_mv = excluded.total_mv,
                             circ_mv = excluded.circ_mv,
                             free_share = excluded.free_share,
@@ -2656,12 +4166,16 @@ class PostgresScreeningStore:
                             unlock_60d = excluded.unlock_60d,
                             unlock_90d = excluded.unlock_90d,
                             recent_reduction_flag = excluded.recent_reduction_flag,
-                            supply_profile_label = excluded.supply_profile_label
+                            supply_profile_label = excluded.supply_profile_label,
+                            data_version = excluded.data_version,
+                            created_at = excluded.created_at
                         """,
                         (
                             as_of_date,
                             r["ts_code"],
                             r.get("close"),
+                            r.get("total_share"),
+                            r.get("float_share"),
                             r.get("total_mv"),
                             r.get("circ_mv"),
                             r.get("free_share"),
@@ -2674,7 +4188,7 @@ class PostgresScreeningStore:
                             r.get("unlock_30d"),
                             r.get("unlock_60d"),
                             r.get("unlock_90d"),
-                            r.get("recent_reduction_flag", False),
+                            r.get("recent_reduction_flag"),
                             r.get("supply_profile_label", "MID_CAP"),
                             r.get("data_version", "v1.0"),
                             now,
@@ -2684,38 +4198,402 @@ class PostgresScreeningStore:
 
     def get_candidate_secondary_list(self, as_of_date: str) -> list[dict[str, Any]]:
         query = """
-            select s.*, e.evidence_state, e.revenue_yoy, e.parent_net_profit_yoy, e.deducted_net_profit_yoy,
+            select s.as_of_date, s.ts_code, s.aprev2_score, s.aprev2_status, s.turn_type,
+                   s.company_evidence_state, coalesce(l.leadership_state, s.leadership_state) as leadership_state,
+                   s.supply_profile_label, s.calc_version, s.created_at,
+                   e.evidence_state, e.revenue_yoy, e.parent_net_profit_yoy, e.deducted_net_profit_yoy,
                    e.forecast_type, e.reason_json as evidence_reasons, e.risk_flags_json,
-                   l.leadership_state, l.leadership_rank_value, l.industry_rs_20_pct, l.up_capture_excess,
-                   l.down_defense_excess, l.participation_change, l.comparison_industry_name,
-                   p.free_float_mv, p.amount_median_20, p.turnover_rate_f, p.supply_profile_label,
+                   e.quarter_facts_json, e.fact_tags_json, e.data_quality_json,
+                   e.fundamental_filter_state, e.fundamental_filter_reasons_json,
+                   p.free_float_mv, p.amount_median_20, p.turnover_rate_f,
+                   p.unlock_30d, p.unlock_60d, p.unlock_90d, p.recent_reduction_flag,
+                   p.supply_profile_label,
                    a.name, a.raw_json->>'industry' as industry,
-                   ar.status as ai_status, ar.priority as ai_priority, ar.created_at as ai_created_at
+                   ar.status as ai_status, ar.priority as ai_priority, ar.created_at as ai_created_at,
+                   ar.ai_input_tokens, ar.ai_output_tokens, ar.ai_total_tokens, ar.ai_elapsed_ms,
+                   ar.web_search_used
             from candidate_secondary_snapshot s
             left join company_evidence_snapshot e on e.as_of_date = s.as_of_date and e.ts_code = s.ts_code
             left join relative_leadership_snapshot l on l.as_of_date = s.as_of_date and l.ts_code = s.ts_code
             left join supply_profile_snapshot p on p.as_of_date = s.as_of_date and p.ts_code = s.ts_code
             left join screening_asset_master a on a.asset_code = s.ts_code
-            left join ai_stock_research ar on ar.as_of_date = s.as_of_date and ar.ts_code = s.ts_code
+            left join lateral (
+                select * from ai_stock_research ar0
+                where ar0.as_of_date = s.as_of_date and ar0.ts_code = s.ts_code
+                order by ar0.created_at desc limit 1
+            ) ar on true
             where s.as_of_date = %s
-            order by s.aprev2_score desc, l.leadership_rank_value desc nulls last, s.ts_code asc
+            order by s.aprev2_score desc, s.ts_code asc
         """
         with self.connect() as conn:
             rows = conn.execute(query, (as_of_date,)).fetchall()
         return [dict(r) for r in rows]
 
+    def save_market_financial_summaries(self, rows: list[dict[str, Any]]) -> None:
+        if not rows:
+            return
+        now = _now()
+        with self.connect() as conn:
+            for row in rows:
+                conn.execute(
+                    """insert into market_financial_summary_latest (ts_code,latest_report_period,revenue,revenue_yoy,parent_net_profit,parent_net_profit_yoy,operating_cashflow,operating_cashflow_yoy,forecast_type,fact_tags_json,data_status,source_updated_at,generated_at)
+                    values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s)
+                    on conflict (ts_code) do update set latest_report_period=excluded.latest_report_period,revenue=excluded.revenue,revenue_yoy=excluded.revenue_yoy,parent_net_profit=excluded.parent_net_profit,parent_net_profit_yoy=excluded.parent_net_profit_yoy,operating_cashflow=excluded.operating_cashflow,operating_cashflow_yoy=excluded.operating_cashflow_yoy,forecast_type=excluded.forecast_type,fact_tags_json=excluded.fact_tags_json,data_status=excluded.data_status,source_updated_at=excluded.source_updated_at,generated_at=excluded.generated_at""",
+                    (row["ts_code"], row.get("latest_report_period"), row.get("revenue"), row.get("revenue_yoy"), row.get("parent_net_profit"), row.get("parent_net_profit_yoy"), row.get("operating_cashflow"), row.get("operating_cashflow_yoy"), row.get("forecast_type"), json_dumps(row.get("fact_tags") or []), row["data_status"], row.get("source_updated_at"), now),
+                )
+            conn.commit()
+
+    def get_market_financial_summaries(self, ts_codes: list[str]) -> dict[str, dict[str, Any]]:
+        if not ts_codes:
+            return {}
+        with self.connect() as conn:
+            rows = conn.execute("select * from market_financial_summary_latest where ts_code=any(%s)", (ts_codes,)).fetchall()
+        return {row["ts_code"]: dict(row) for row in rows}
+
+    def get_latest_financial_facts(self, ts_codes: list[str]) -> dict[str, dict[str, Any]]:
+        if not ts_codes:
+            return {}
+        query = """
+        with income as (select distinct on (ts_code) ts_code,end_date,total_revenue,n_income_attr_p from stock_income_statement where ts_code=any(%s) order by ts_code,end_date desc,available_date desc),
+        cash as (select distinct on (ts_code) ts_code,end_date,n_cashflow_act from stock_cashflow_statement where ts_code=any(%s) order by ts_code,end_date desc,available_date desc),
+        forecast as (select distinct on (ts_code) ts_code,type,p_change_min,p_change_max,net_profit_min,net_profit_max from stock_forecast where ts_code=any(%s) order by ts_code,available_date desc,end_date desc),
+        express as (select distinct on (ts_code) ts_code,end_date,revenue,n_income,yoy_net_profit from stock_express where ts_code=any(%s) order by ts_code,end_date desc,available_date desc)
+        select coalesce(i.ts_code,c.ts_code,f.ts_code,e.ts_code) as ts_code,i.end_date,i.total_revenue,i.n_income_attr_p,c.n_cashflow_act,f.type,f.p_change_min,f.p_change_max,f.net_profit_min,f.net_profit_max,e.revenue as express_revenue,e.n_income as express_net_profit,e.yoy_net_profit as express_net_profit_yoy
+        from income i full join cash c on c.ts_code=i.ts_code full join forecast f on f.ts_code=coalesce(i.ts_code,c.ts_code) full join express e on e.ts_code=coalesce(i.ts_code,c.ts_code,f.ts_code)
+        """
+        with self.connect() as conn:
+            rows = conn.execute(query, (ts_codes, ts_codes, ts_codes, ts_codes)).fetchall()
+        return {row["ts_code"]: dict(row) for row in rows}
+
+    def has_financial_data_for_stock(self, ts_code: str, as_of_date: str) -> bool:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                select exists (
+                    select 1 from stock_income_statement
+                    where ts_code = %s
+                      and available_date <= %s
+                      and (raw_json ? 'total_revenue' or raw_json ? 'revenue' or raw_json ? 'n_income_attr_p')
+                ) as has_income,
+                exists (
+                    select 1 from stock_event_sync_status
+                    where ts_code = %s and source_name = 'income_vip' and status = 'EMPTY'
+                ) as has_income_empty_sync,
+                exists (
+                    select 1 from stock_event_sync_status
+                    where ts_code = %s and source_name = 'cashflow_vip' and status in ('PASS', 'EMPTY')
+                ) as has_cashflow_sync,
+                exists (
+                    select 1 from stock_fina_indicator
+                    where ts_code = %s
+                      and available_date <= %s
+                ) as has_indicator,
+                exists (
+                    select 1 from stock_event_sync_status
+                    where ts_code = %s and source_name = 'fina_indicator_vip' and status = 'EMPTY'
+                ) as has_indicator_empty_sync,
+                exists (
+                    select 1 from stock_event_sync_status
+                    where ts_code = %s and source_name = 'forecast_vip' and status in ('PASS', 'EMPTY')
+                ) as has_forecast_sync,
+                exists (
+                    select 1 from stock_event_sync_status
+                    where ts_code = %s and source_name = 'express_vip' and status in ('PASS', 'EMPTY')
+                ) as has_express_sync
+                """,
+                (ts_code, as_of_date, ts_code, ts_code, ts_code, as_of_date, ts_code, ts_code, ts_code),
+            ).fetchone()
+        return bool(
+            row
+            and (row["has_income"] or row["has_income_empty_sync"])
+            and row["has_cashflow_sync"]
+            and (row["has_indicator"] or row["has_indicator_empty_sync"])
+            and row["has_forecast_sync"]
+            and row["has_express_sync"]
+        )
+
+    def has_supply_event_data_for_stock(self, ts_code: str) -> bool:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                select count(*) as source_count
+                from stock_event_sync_status
+                where ts_code = %s
+                  and source_name = any(%s)
+                  and status = 'PASS'
+                """,
+                (ts_code, ["share_float", "stk_holdertrade"]),
+            ).fetchone()
+        return int(row["source_count"] if row else 0) == 2
+
+    def has_daily_basic_extended(self, trade_date: str) -> bool:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                select exists (
+                    select 1
+                    from screening_daily_basic
+                    where trade_date = %s
+                      and free_share is not null
+                      and volume_ratio is not null
+                ) as has_extended
+                """,
+                (trade_date,),
+            ).fetchone()
+        return bool(row and row["has_extended"])
+
+    def has_industry_memberships(self, source_version: str) -> bool:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                select exists (
+                    select 1
+                    from industry_membership_history
+                    where source_version = %s
+                ) as has_memberships
+                """,
+                (source_version,),
+            ).fetchone()
+        return bool(row and row["has_memberships"])
+
+    def get_company_financial_pit(self, ts_code: str, as_of_date: str) -> dict[str, Any]:
+        with self.connect() as conn:
+            income = conn.execute(
+                """
+                select *
+                from stock_income_statement
+                where ts_code = %s and available_date <= %s
+                order by end_date desc, available_date desc
+                limit 1
+                """,
+                (ts_code, as_of_date),
+            ).fetchone()
+
+            prev_income = None
+            cashflow = None
+            prev_cashflow = None
+            indicator = None
+            express = conn.execute(
+                """
+                select *
+                from stock_express
+                where ts_code = %s and available_date <= %s
+                order by end_date desc, available_date desc
+                limit 1
+                """,
+                (ts_code, as_of_date),
+            ).fetchone()
+            forecast = conn.execute(
+                """
+                select *
+                from stock_forecast
+                where ts_code = %s and available_date <= %s
+                order by coalesce(end_date, '') desc, available_date desc
+                limit 1
+                """,
+                (ts_code, as_of_date),
+            ).fetchone()
+
+            if income:
+                prev_end_date = _previous_year_period(str(income["end_date"]))
+                prev_income = conn.execute(
+                    """
+                    select *
+                    from stock_income_statement
+                    where ts_code = %s and end_date = %s and available_date <= %s
+                    order by available_date desc
+                    limit 1
+                    """,
+                    (ts_code, prev_end_date, as_of_date),
+                ).fetchone()
+                cashflow = conn.execute(
+                    """
+                    select *
+                    from stock_cashflow_statement
+                    where ts_code = %s and end_date = %s and available_date <= %s
+                    order by available_date desc
+                    limit 1
+                    """,
+                    (ts_code, income["end_date"], as_of_date),
+                ).fetchone()
+                prev_cashflow = conn.execute(
+                    """
+                    select *
+                    from stock_cashflow_statement
+                    where ts_code = %s and end_date = %s and available_date <= %s
+                    order by available_date desc
+                    limit 1
+                    """,
+                    (ts_code, prev_end_date, as_of_date),
+                ).fetchone()
+                indicator = conn.execute(
+                    """
+                    select *
+                    from stock_fina_indicator
+                    where ts_code = %s and end_date = %s and available_date <= %s
+                    order by available_date desc
+                    limit 1
+                    """,
+                    (ts_code, income["end_date"], as_of_date),
+                ).fetchone()
+
+        return {
+            "income": dict(income) if income else None,
+            "prev_income": dict(prev_income) if prev_income else None,
+            "cashflow": dict(cashflow) if cashflow else None,
+            "prev_cashflow": dict(prev_cashflow) if prev_cashflow else None,
+            "indicator": dict(indicator) if indicator else None,
+            "forecast": dict(forecast) if forecast else None,
+            "express": dict(express) if express else None,
+        }
+
+    def get_company_financial_periods_pit(self, ts_code: str, as_of_date: str, limit: int = 12) -> dict[str, Any]:
+        """Return PIT financial rows by report period for cumulative-to-quarter reconstruction."""
+        with self.connect() as conn:
+            income_rows = conn.execute(
+                """
+                select distinct on (end_date) *
+                from stock_income_statement
+                where ts_code = %s and available_date <= %s
+                order by end_date desc, available_date desc
+                limit %s
+                """,
+                (ts_code, as_of_date, limit),
+            ).fetchall()
+            cashflow_rows = conn.execute(
+                """
+                select distinct on (end_date) *
+                from stock_cashflow_statement
+                where ts_code = %s and available_date <= %s
+                order by end_date desc, available_date desc
+                limit %s
+                """,
+                (ts_code, as_of_date, limit),
+            ).fetchall()
+            indicator_rows = conn.execute(
+                """
+                select distinct on (end_date) *
+                from stock_fina_indicator
+                where ts_code = %s and available_date <= %s
+                order by end_date desc, available_date desc
+                limit %s
+                """,
+                (ts_code, as_of_date, limit),
+            ).fetchall()
+            forecast = conn.execute(
+                """
+                select *
+                from stock_forecast
+                where ts_code = %s and available_date <= %s
+                order by coalesce(end_date, '') desc, available_date desc
+                limit 1
+                """,
+                (ts_code, as_of_date),
+            ).fetchone()
+            express = conn.execute(
+                """
+                select *
+                from stock_express
+                where ts_code = %s and available_date <= %s
+                order by end_date desc, available_date desc
+                limit 1
+                """,
+                (ts_code, as_of_date),
+            ).fetchone()
+
+        return {
+            "income_rows": [dict(r) for r in income_rows],
+            "cashflow_rows": [dict(r) for r in cashflow_rows],
+            "indicator_rows": [dict(r) for r in indicator_rows],
+            "forecast": dict(forecast) if forecast else None,
+            "express": dict(express) if express else None,
+        }
+
+    def get_supply_events_pit(self, ts_code: str, as_of_date: str) -> dict[str, Any]:
+        with self.connect() as conn:
+            share_sync = conn.execute(
+                """
+                select *
+                from stock_event_sync_status
+                where ts_code = %s and source_name = 'share_float' and status = 'PASS'
+                """,
+                (ts_code,),
+            ).fetchone()
+            holder_sync = conn.execute(
+                """
+                select *
+                from stock_event_sync_status
+                where ts_code = %s and source_name = 'stk_holdertrade' and status = 'PASS'
+                """,
+                (ts_code,),
+            ).fetchone()
+            unlock = conn.execute(
+                """
+                select
+                    coalesce(sum(float_ratio) filter (
+                        where to_date(float_date, 'YYYYMMDD') > to_date(%s, 'YYYYMMDD')
+                          and to_date(float_date, 'YYYYMMDD') <= to_date(%s, 'YYYYMMDD') + interval '30 days'
+                    ), 0) as unlock_30d,
+                    coalesce(sum(float_ratio) filter (
+                        where to_date(float_date, 'YYYYMMDD') > to_date(%s, 'YYYYMMDD')
+                          and to_date(float_date, 'YYYYMMDD') <= to_date(%s, 'YYYYMMDD') + interval '60 days'
+                    ), 0) as unlock_60d,
+                    coalesce(sum(float_ratio) filter (
+                        where to_date(float_date, 'YYYYMMDD') > to_date(%s, 'YYYYMMDD')
+                          and to_date(float_date, 'YYYYMMDD') <= to_date(%s, 'YYYYMMDD') + interval '90 days'
+                    ), 0) as unlock_90d
+                from stock_share_float
+                where ts_code = %s
+                  and (available_date is null or available_date <= %s)
+                  and float_date is not null
+                """,
+                (as_of_date, as_of_date, as_of_date, as_of_date, as_of_date, as_of_date, ts_code, as_of_date),
+            ).fetchone()
+            reduction = conn.execute(
+                """
+                select exists (
+                    select 1
+                    from stock_holder_trade
+                    where ts_code = %s
+                      and ann_date <= %s
+                      and to_date(ann_date, 'YYYYMMDD') >= to_date(%s, 'YYYYMMDD') - interval '180 days'
+                      and (
+                          in_de like '%%减%%'
+                          or change_vol < 0
+                          or change_ratio < 0
+                      )
+                ) as has_reduction
+                """,
+                (ts_code, as_of_date, as_of_date),
+            ).fetchone()
+        return {
+            "share_float_synced": bool(share_sync),
+            "holder_trade_synced": bool(holder_sync),
+            "unlock_30d": _nullable_float(unlock.get("unlock_30d")) if share_sync and unlock else None,
+            "unlock_60d": _nullable_float(unlock.get("unlock_60d")) if share_sync and unlock else None,
+            "unlock_90d": _nullable_float(unlock.get("unlock_90d")) if share_sync and unlock else None,
+            "recent_reduction_flag": bool(reduction and reduction["has_reduction"]) if holder_sync else None,
+        }
+
     def get_candidate_secondary_detail(self, as_of_date: str, ts_code: str) -> dict[str, Any] | None:
         query = """
-            select s.*, e.revenue, e.revenue_yoy, e.parent_net_profit, e.parent_net_profit_yoy, e.parent_profit_state,
+            select s.as_of_date, s.ts_code, s.aprev2_score, s.aprev2_status, s.turn_type,
+                   s.company_evidence_state, coalesce(l.leadership_state, s.leadership_state) as leadership_state,
+                   s.supply_profile_label, s.calc_version, s.created_at,
+                   e.latest_report_period, e.latest_report_ann_date,
+                   e.revenue, e.revenue_yoy, e.parent_net_profit, e.parent_net_profit_yoy, e.parent_profit_state,
                    e.deducted_net_profit, e.deducted_net_profit_yoy, e.deducted_profit_state, e.operating_cashflow,
                    e.operating_cashflow_yoy, e.gross_margin, e.gross_margin_yoy_delta, e.forecast_type, e.forecast_ann_date,
-                   e.forecast_p_change_min, e.forecast_p_change_max, e.reason_json as evidence_reasons, e.risk_flags_json,
-                   l.comparison_level, l.comparison_industry_name, l.comparison_universe_size, l.stock_ret_5, l.stock_ret_10,
-                   l.stock_ret_20, l.industry_rs_5_pct, l.industry_rs_10_pct, l.industry_rs_20_pct, l.up_event_count,
-                   l.up_capture_excess, l.down_event_count, l.down_defense_excess, l.participation_pct, l.participation_change,
-                   l.valid_component_count, l.leadership_rank_value, l.leadership_state, l.reason_json as leadership_reasons,
-                   p.close, p.total_mv, p.circ_mv, p.free_share, p.free_float_mv, p.amount, p.amount_median_20, p.turnover_rate,
-                   p.turnover_rate_f, p.volume_ratio, p.supply_profile_label,
+                   e.forecast_p_change_min, e.forecast_p_change_max, e.forecast_net_profit_min, e.forecast_net_profit_max,
+                   e.express_ann_date, e.express_end_date, e.express_revenue, e.express_n_income,
+                   e.express_yoy_net_profit, e.express_summary,
+                   e.reason_json as evidence_reasons, e.risk_flags_json,
+                   e.quarter_facts_json, e.fact_tags_json, e.data_quality_json,
+                   e.fundamental_filter_state, e.fundamental_filter_reasons_json,
+                   l.reason_json as leadership_reasons,
+                   p.close, p.total_share, p.float_share, p.total_mv, p.circ_mv, p.free_share, p.free_float_mv, p.amount, p.amount_median_20, p.turnover_rate,
+                   p.turnover_rate_f, p.volume_ratio, p.unlock_30d, p.unlock_60d, p.unlock_90d, p.recent_reduction_flag,
+                   p.supply_profile_label,
                    a.name, a.raw_json->>'industry' as industry, a.raw_json->>'main_business' as main_business
             from candidate_secondary_snapshot s
             left join company_evidence_snapshot e on e.as_of_date = s.as_of_date and e.ts_code = s.ts_code
@@ -2738,6 +4616,60 @@ def _nullable_float(value: Any) -> float | None:
     if value is None or pd.isna(value):
         return None
     return float(value)
+
+
+def _nullable_text(value: Any) -> str | None:
+    if value is None or pd.isna(value):
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _available_date(record: dict[str, Any]) -> str | None:
+    return _nullable_text(record.get("f_ann_date")) or _nullable_text(record.get("ann_date"))
+
+
+def _previous_year_period(end_date: str | None) -> str | None:
+    if not end_date or len(end_date) != 8 or not end_date[:4].isdigit():
+        return None
+    return f"{int(end_date[:4]) - 1}{end_date[4:]}"
+
+
+def _membership_key(item: dict[str, Any], source_version: str) -> str:
+    parts = [
+        str(item.get("ts_code") or ""),
+        str(item.get("l3_code") or item.get("l2_code") or item.get("l1_code") or ""),
+        str(item.get("in_date") or ""),
+        str(item.get("out_date") or ""),
+        source_version,
+    ]
+    return "|".join(parts)
+
+
+def _holder_trade_key(record: dict[str, Any]) -> str:
+    parts = [
+        str(record.get("ts_code") or ""),
+        str(record.get("ann_date") or ""),
+        str(record.get("holder_name") or ""),
+        str(record.get("in_de") or ""),
+        str(record.get("change_vol") or ""),
+        str(record.get("change_ratio") or ""),
+    ]
+    return "|".join(parts)
+
+
+def _completed_30m_slots(current_time: dtime) -> list[str]:
+    slots = [
+        ("10:00", dtime(10, 0)),
+        ("10:30", dtime(10, 30)),
+        ("11:00", dtime(11, 0)),
+        ("11:30", dtime(11, 30)),
+        ("13:30", dtime(13, 30)),
+        ("14:00", dtime(14, 0)),
+        ("14:30", dtime(14, 30)),
+        ("15:00", dtime(15, 0)),
+    ]
+    return [label for label, end_time in slots if current_time >= end_time]
 
 
 def _candidate_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -2779,3 +4711,386 @@ def _candidate_row(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# Watchlist Management Extensions for PostgresScreeningStore
+def get_watchlist_groups(self) -> list[dict[str, Any]]:
+    with self.connect() as conn:
+        rows = conn.execute(
+            """
+            select group_id, group_name, parent_id, sort_order, created_at
+            from screening_watchlist_groups
+            order by parent_id nulls first, sort_order asc, group_id asc
+            """
+        ).fetchall()
+        return [
+            {
+                "group_id": r["group_id"],
+                "group_name": r["group_name"],
+                "parent_id": r["parent_id"],
+                "sort_order": r["sort_order"],
+                "created_at": r["created_at"].isoformat() if r.get("created_at") else None,
+            }
+            for r in rows
+        ]
+
+def get_watchlist_group_nodes(self) -> list[dict[str, Any]]:
+    """Return editable manual groups plus read-only industry groups derived from watchlist data."""
+    with self.connect() as conn:
+        manual_rows = conn.execute(
+            """
+            select group_id, group_name, parent_id, sort_order, created_at
+            from screening_watchlist_groups
+            order by parent_id nulls first, sort_order asc, group_id asc
+            """
+        ).fetchall()
+        industry_rows = conn.execute(
+            """
+            select coalesce(nullif(trim(m.raw_json->>'industry'), ''), '未分类') as industry,
+                   count(distinct w.asset_code) as stock_count
+            from screening_user_watchlist w
+            left join screening_asset_master m on m.asset_code = w.asset_code
+            group by coalesce(nullif(trim(m.raw_json->>'industry'), ''), '未分类')
+            order by industry
+            """
+        ).fetchall()
+        nodes = [
+            {
+                "group_id": r["group_id"],
+                "group_key": f"manual:{r['group_id']}",
+                "group_name": r["group_name"],
+                "group_type": "manual",
+                "parent_id": r["parent_id"],
+                "sort_order": r["sort_order"],
+                "created_at": r["created_at"].isoformat() if r.get("created_at") else None,
+            }
+            for r in manual_rows
+        ]
+        nodes.extend(
+            {
+                "group_id": None,
+                "group_key": f"industry:{r['industry']}",
+                "group_name": r["industry"],
+                "group_type": "industry",
+                "parent_id": None,
+                "sort_order": 0,
+                "stock_count": int(r["stock_count"]),
+            }
+            for r in industry_rows
+        )
+        return nodes
+
+def create_watchlist_group(self, group_name: str, parent_id: int | None = None) -> dict[str, Any]:
+    with self.connect() as conn:
+        row = conn.execute(
+            """
+            insert into screening_watchlist_groups (group_name, parent_id, created_at)
+            values (%s, %s, now())
+            returning group_id, group_name, parent_id, sort_order, created_at
+            """,
+            (group_name, parent_id),
+        ).fetchone()
+        conn.commit()
+        return {
+            "group_id": row["group_id"],
+            "group_name": row["group_name"],
+            "parent_id": row["parent_id"],
+            "sort_order": row["sort_order"],
+            "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
+        }
+
+def update_watchlist_group(self, group_id: int, group_name: str) -> bool:
+    with self.connect() as conn:
+        cur = conn.execute(
+            "update screening_watchlist_groups set group_name = %s where group_id = %s",
+            (group_name, group_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+def delete_watchlist_group(self, group_id: int) -> bool:
+    with self.connect() as conn:
+        cur = conn.execute("delete from screening_watchlist_groups where group_id = %s", (group_id,))
+        conn.commit()
+        return cur.rowcount > 0
+
+def get_watchlist_stocks(self, group_id: int | None = None) -> list[dict[str, Any]]:
+    with self.connect() as conn:
+        if group_id is not None:
+            rows = conn.execute(
+                """
+                select w.asset_code, w.group_id, w.created_at, m.name, m.raw_json->>'industry' as industry
+                from screening_user_watchlist w
+                left join screening_asset_master m on w.asset_code = m.asset_code
+                where w.group_id = %s
+                order by w.created_at desc
+                """,
+                (group_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                select distinct on (w.asset_code) w.asset_code, w.group_id, w.created_at, m.name, m.raw_json->>'industry' as industry
+                from screening_user_watchlist w
+                left join screening_asset_master m on w.asset_code = m.asset_code
+                order by w.asset_code, w.created_at desc
+                """
+            ).fetchall()
+        return [
+            {
+                "asset_code": r["asset_code"],
+                "group_id": r["group_id"],
+                "name": r.get("name") or r["asset_code"],
+                "industry": r.get("industry") or "A股",
+                "created_at": r["created_at"].isoformat() if r.get("created_at") else None,
+            }
+            for r in rows
+        ]
+
+def get_watchlist_stocks_by_group_key(self, group_key: str | None = None) -> list[dict[str, Any]]:
+    if not group_key:
+        return self.get_watchlist_stocks()
+    if group_key.startswith("manual:"):
+        try:
+            return self.get_watchlist_stocks(int(group_key.split(":", 1)[1]))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("invalid manual watchlist group key") from exc
+    if group_key.startswith("industry:"):
+        industry = group_key.split(":", 1)[1]
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                select distinct on (w.asset_code) w.asset_code, w.group_id, w.created_at,
+                       m.name, coalesce(nullif(trim(m.raw_json->>'industry'), ''), '未分类') as industry
+                from screening_user_watchlist w
+                left join screening_asset_master m on m.asset_code = w.asset_code
+                where coalesce(nullif(trim(m.raw_json->>'industry'), ''), '未分类') = %s
+                order by w.asset_code, w.created_at desc
+                """,
+                (industry,),
+            ).fetchall()
+            return [
+                {
+                    "asset_code": r["asset_code"],
+                    "group_id": r["group_id"],
+                    "name": r.get("name") or r["asset_code"],
+                    "industry": r.get("industry") or "未分类",
+                    "created_at": r["created_at"].isoformat() if r.get("created_at") else None,
+                }
+                for r in rows
+            ]
+    raise ValueError("unsupported watchlist group key")
+
+def get_watchlist_stocks_with_research(self, group_key: str | None = None) -> list[dict[str, Any]]:
+    """Return the selected watchlist scope together with its latest available research snapshots.
+
+    A watchlist is independent from an A-PreV2 batch, so every stock can have a
+    different latest research date.  The lateral joins deliberately select the
+    complete latest snapshot for each stock instead of assuming the latest
+    market-wide batch covered every watchlist member.
+    """
+    base_params: list[Any] = []
+    if not group_key:
+        base_sql = """
+            select distinct on (w.asset_code)
+                   w.asset_code, w.group_id, w.created_at, w.source_type, w.source_strategy, w.source_stage, w.source_snapshot_date,
+                   m.name, coalesce(nullif(trim(m.raw_json->>'industry'), ''), '未分类') as industry
+            from screening_user_watchlist w
+            left join screening_asset_master m on m.asset_code = w.asset_code
+            order by w.asset_code, w.created_at desc
+        """
+    elif group_key.startswith("manual:"):
+        try:
+            group_id = int(group_key.split(":", 1)[1])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("invalid manual watchlist group key") from exc
+        base_sql = """
+            select w.asset_code, w.group_id, w.created_at, w.source_type, w.source_strategy, w.source_stage, w.source_snapshot_date,
+                   m.name, coalesce(nullif(trim(m.raw_json->>'industry'), ''), '未分类') as industry
+            from screening_user_watchlist w
+            left join screening_asset_master m on m.asset_code = w.asset_code
+            where w.group_id = %s
+        """
+        base_params.append(group_id)
+    elif group_key.startswith("industry:"):
+        industry = group_key.split(":", 1)[1]
+        base_sql = """
+            select distinct on (w.asset_code)
+                   w.asset_code, w.group_id, w.created_at, w.source_type, w.source_strategy, w.source_stage, w.source_snapshot_date,
+                   m.name, coalesce(nullif(trim(m.raw_json->>'industry'), ''), '未分类') as industry
+            from screening_user_watchlist w
+            left join screening_asset_master m on m.asset_code = w.asset_code
+            where coalesce(nullif(trim(m.raw_json->>'industry'), ''), '未分类') = %s
+            order by w.asset_code, w.created_at desc
+        """
+        base_params.append(industry)
+    else:
+        raise ValueError("unsupported watchlist group key")
+
+    query = f"""
+        with watchlist_scope as ({base_sql})
+        select w.asset_code, w.group_id, w.created_at, w.source_type, w.source_strategy, w.source_stage, w.source_snapshot_date, w.name, w.industry,
+               s.as_of_date as research_as_of_date,
+               s.aprev2_score, s.aprev2_status, s.turn_type,
+               e.evidence_state, e.fundamental_filter_state, e.latest_report_period,
+               e.revenue_yoy, e.parent_net_profit_yoy, e.operating_cashflow_yoy,
+               e.forecast_type, e.fact_tags_json, e.risk_flags_json,
+               ar.as_of_date as ai_as_of_date, ar.status as ai_status,
+               ar.priority as ai_priority, ar.created_at as ai_created_at,
+               ar.ai_total_tokens, ar.ai_elapsed_ms, ar.web_search_used
+        from watchlist_scope w
+        left join lateral (
+            select *
+            from candidate_secondary_snapshot s0
+            where s0.ts_code = w.asset_code
+            order by s0.as_of_date desc, s0.created_at desc
+            limit 1
+        ) s on true
+        left join company_evidence_snapshot e
+            on e.as_of_date = s.as_of_date and e.ts_code = s.ts_code
+        left join lateral (
+            select *
+            from ai_stock_research ar0
+            where ar0.ts_code = w.asset_code
+            order by ar0.created_at desc
+            limit 1
+        ) ar on true
+        order by w.created_at desc, w.asset_code asc
+    """
+    with self.connect() as conn:
+        rows = conn.execute(query, base_params).fetchall()
+    return [dict(row) for row in rows]
+
+def toggle_watchlist_stock(self, asset_code: str, group_id: int | None = None, source: dict[str, Any] | None = None) -> bool:
+    clean_code = asset_code.strip().upper()
+    source = source or {"type": "MANUAL"}
+    source_type = str(source.get("type") or "MANUAL").upper()
+    if source_type not in {"MANUAL", "STRATEGY"}:
+        raise ValueError("invalid watchlist source type")
+    strategy = str(source.get("strategy") or "").strip() or None
+    stage = str(source.get("stage") or "").strip() or None
+    snapshot_date = str(source.get("snapshot_date") or "").strip() or None
+    if source_type == "STRATEGY" and (not strategy or not stage or not snapshot_date):
+        raise ValueError("strategy source requires strategy, stage and snapshot_date")
+    with self.connect() as conn:
+        # Check if code is already in watchlist
+        if group_id is not None:
+            existing = conn.execute(
+                "select 1 from screening_user_watchlist where asset_code = %s and group_id = %s",
+                (clean_code, group_id),
+            ).fetchone()
+        else:
+            existing = conn.execute(
+                "select 1 from screening_user_watchlist where asset_code = %s",
+                (clean_code,),
+            ).fetchone()
+        
+        if existing:
+            if group_id is not None:
+                conn.execute(
+                    "delete from screening_user_watchlist where asset_code = %s and group_id = %s",
+                    (clean_code, group_id),
+                )
+            else:
+                conn.execute(
+                    "delete from screening_user_watchlist where asset_code = %s",
+                    (clean_code,),
+                )
+            conn.commit()
+            return False
+        else:
+            conn.execute(
+                """
+                insert into screening_user_watchlist
+                    (asset_code, asset_type, group_id, source_type, source_strategy, source_stage, source_snapshot_date, source_recorded_at, created_at)
+                values (%s, 'stock', %s, %s, %s, %s, %s, now(), now()) on conflict do nothing
+                """,
+                (clean_code, group_id, source_type, strategy, stage, snapshot_date),
+            )
+            conn.commit()
+            return True
+
+def get_watchlist_code_set(self) -> set[str]:
+    with self.connect() as conn:
+        rows = conn.execute("select distinct asset_code from screening_user_watchlist").fetchall()
+        return {r["asset_code"] for r in rows}
+
+def get_ai_analysis_pool(self) -> list[dict[str, Any]]:
+    with self.connect() as conn:
+        rows = conn.execute(
+            """
+            with pool_scope as (
+                select p.asset_code, p.created_at, m.name,
+                       coalesce(nullif(trim(m.raw_json->>'industry'), ''), '未分类') as industry
+                from screening_ai_analysis_pool p
+                left join screening_asset_master m on m.asset_code = p.asset_code
+            )
+            select p.asset_code, p.created_at, p.name, p.industry,
+                   s.as_of_date as research_as_of_date,
+                   s.aprev2_score, s.aprev2_status, s.turn_type,
+                   e.evidence_state, e.fundamental_filter_state, e.latest_report_period,
+                   e.revenue_yoy, e.parent_net_profit_yoy, e.operating_cashflow_yoy,
+                   e.forecast_type, e.fact_tags_json, e.risk_flags_json,
+                   ar.as_of_date as ai_as_of_date, ar.status as ai_status,
+                   ar.priority as ai_priority, ar.created_at as ai_created_at,
+                   ar.ai_total_tokens, ar.ai_elapsed_ms, ar.web_search_used
+            from pool_scope p
+            left join lateral (
+                select * from candidate_secondary_snapshot s0
+                where s0.ts_code = p.asset_code
+                order by s0.as_of_date desc, s0.created_at desc
+                limit 1
+            ) s on true
+            left join company_evidence_snapshot e
+                on e.as_of_date = s.as_of_date and e.ts_code = s.ts_code
+            left join lateral (
+                select * from ai_stock_research ar0
+                where ar0.ts_code = p.asset_code
+                order by ar0.created_at desc
+                limit 1
+            ) ar on true
+            order by p.created_at desc, p.asset_code
+            """
+        ).fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["name"] = item.get("name") or item["asset_code"]
+            item["industry"] = item.get("industry") or "未分类"
+            item["created_at"] = item["created_at"].isoformat() if item.get("created_at") else None
+            result.append(item)
+        return result
+
+def toggle_ai_analysis_pool(self, asset_code: str) -> bool:
+    clean_code = asset_code.strip().upper()
+    with self.connect() as conn:
+        existing = conn.execute("select 1 from screening_ai_analysis_pool where asset_code = %s", (clean_code,)).fetchone()
+        if existing:
+            conn.execute("delete from screening_ai_analysis_pool where asset_code = %s", (clean_code,))
+            added = False
+        else:
+            conn.execute("insert into screening_ai_analysis_pool (asset_code) values (%s)", (clean_code,))
+            added = True
+        conn.commit()
+        return added
+
+def replace_ai_analysis_pool(self, asset_codes: list[str]) -> list[dict[str, Any]]:
+    clean_codes = sorted({str(code).strip().upper() for code in asset_codes if str(code).strip()})
+    with self.connect() as conn:
+        conn.execute("delete from screening_ai_analysis_pool")
+        if clean_codes:
+            conn.executemany("insert into screening_ai_analysis_pool (asset_code) values (%s)", [(code,) for code in clean_codes])
+        conn.commit()
+    return self.get_ai_analysis_pool()
+
+PostgresScreeningStore.get_watchlist_groups = get_watchlist_groups
+PostgresScreeningStore.get_watchlist_group_nodes = get_watchlist_group_nodes
+PostgresScreeningStore.create_watchlist_group = create_watchlist_group
+PostgresScreeningStore.update_watchlist_group = update_watchlist_group
+PostgresScreeningStore.delete_watchlist_group = delete_watchlist_group
+PostgresScreeningStore.get_watchlist_stocks = get_watchlist_stocks
+PostgresScreeningStore.get_watchlist_stocks_by_group_key = get_watchlist_stocks_by_group_key
+PostgresScreeningStore.get_watchlist_stocks_with_research = get_watchlist_stocks_with_research
+PostgresScreeningStore.toggle_watchlist_stock = toggle_watchlist_stock
+PostgresScreeningStore.get_watchlist_code_set = get_watchlist_code_set
+PostgresScreeningStore.get_ai_analysis_pool = get_ai_analysis_pool
+PostgresScreeningStore.toggle_ai_analysis_pool = toggle_ai_analysis_pool
+PostgresScreeningStore.replace_ai_analysis_pool = replace_ai_analysis_pool

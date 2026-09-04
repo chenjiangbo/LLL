@@ -19,6 +19,7 @@ from typing import Any
 import pandas as pd
 
 from backend.screening.storage import PostgresScreeningStore
+from backend.screening.tushare_errors import is_tushare_rate_limit_error
 
 logger = logging.getLogger(__name__)
 
@@ -38,11 +39,16 @@ class IndustrySyncService:
         """
         logger.info("同步申万行业分类树（index_classify）...")
         # 申万一级
-        df_l1 = self.ts_api.index_classify(level="L1", src="SW2021")
-        # 申万二级
-        df_l2 = self.ts_api.index_classify(level="L2", src="SW2021")
-        # 申万三级
-        df_l3 = self.ts_api.index_classify(level="L3", src="SW2021")
+        try:
+            df_l1 = self.ts_api.index_classify(level="L1", src="SW2021")
+            # 申万二级
+            df_l2 = self.ts_api.index_classify(level="L2", src="SW2021")
+            # 申万三级
+            df_l3 = self.ts_api.index_classify(level="L3", src="SW2021")
+        except Exception as exc:
+            if is_tushare_rate_limit_error(exc):
+                raise RuntimeError(f"TUSHARE_RATE_LIMIT:index_classify:{exc}") from exc
+            raise
 
         return {
             "l1_count": len(df_l1) if df_l1 is not None else 0,
@@ -62,9 +68,14 @@ class IndustrySyncService:
         logger.info("同步申万行业成分历史（index_member_all）...")
 
         # 获取各级行业代码映射
-        df_l1 = self.ts_api.index_classify(level="L1", src="SW2021")
-        df_l2 = self.ts_api.index_classify(level="L2", src="SW2021")
-        df_l3 = self.ts_api.index_classify(level="L3", src="SW2021")
+        try:
+            df_l1 = self.ts_api.index_classify(level="L1", src="SW2021")
+            df_l2 = self.ts_api.index_classify(level="L2", src="SW2021")
+            df_l3 = self.ts_api.index_classify(level="L3", src="SW2021")
+        except Exception as exc:
+            if is_tushare_rate_limit_error(exc):
+                raise RuntimeError(f"TUSHARE_RATE_LIMIT:index_classify:{exc}") from exc
+            raise
 
         # 构建 index_code -> (level, name, parent) 映射
         industry_meta: dict[str, dict[str, Any]] = {}
@@ -86,55 +97,43 @@ class IndustrySyncService:
                     "parent": str(row.get("parent_code", "")),
                 }
 
-        # 获取申万三级成分历史（包含 in/out date）
-        # 按三级行业逐个拉取（Tushare 接口限制）
-        l3_codes = [k for k, v in industry_meta.items() if v.get("level") == 3]
-        if not l3_codes:
-            # 兜底：直接拉全量
-            df_members = self.ts_api.index_member_all(src="SW2021")
+        frames = []
+        offset = 0
+        limit = 3000
+        while True:
+            try:
+                df_members = self.ts_api.index_member_all(limit=limit, offset=offset)
+            except Exception as exc:
+                if is_tushare_rate_limit_error(exc):
+                    raise RuntimeError(f"TUSHARE_RATE_LIMIT:index_member_all:{exc}") from exc
+                raise
             if df_members is None or df_members.empty:
-                logger.warning("index_member_all 返回空，跳过")
-                return {"synced": 0}
-            all_members = df_members
-        else:
-            frames = []
-            for l3_code in l3_codes:
-                try:
-                    df = self.ts_api.index_member_all(index_code=l3_code)
-                    if df is not None and not df.empty:
-                        df["l3_index_code"] = l3_code
-                        frames.append(df)
-                except Exception as e:
-                    logger.warning(f"index_member_all({l3_code}) 失败: {e}")
-            if not frames:
-                logger.warning("所有三级行业成分拉取失败，跳过")
-                return {"synced": 0}
-            all_members = pd.concat(frames, ignore_index=True)
+                break
+            frames.append(df_members)
+            if len(df_members) < limit:
+                break
+            offset += limit
+        if not frames:
+            raise RuntimeError("index_member_all returned empty data")
+        all_members = pd.concat(frames, ignore_index=True).drop_duplicates()
 
         # 构建归属记录（每只股票取最新/最相关的三级归属）
         memberships: list[dict[str, Any]] = []
         for _, row in all_members.iterrows():
-            ts_code = str(row.get("con_code", "")).strip()
+            ts_code = str(row.get("ts_code", "") or row.get("con_code", "")).strip()
             if not ts_code:
                 continue
 
-            l3_code = str(row.get("l3_index_code", row.get("index_code", ""))).strip()
-            l3_info = industry_meta.get(l3_code, {})
-            l2_code = str(l3_info.get("parent", "")).strip()
-            l2_info = industry_meta.get(l2_code, {})
-            l1_code = str(l2_info.get("parent", "")).strip()
-            l1_info = industry_meta.get(l1_code, {})
-
             memberships.append({
                 "ts_code":  ts_code,
-                "l1_code":  l1_code or None,
-                "l1_name":  l1_info.get("name") or None,
-                "l2_code":  l2_code or None,
-                "l2_name":  l2_info.get("name") or None,
-                "l3_code":  l3_code or None,
-                "l3_name":  l3_info.get("name") or None,
-                "in_date":  str(row.get("in_date", "") or "").strip() or None,
-                "out_date": str(row.get("out_date", "") or "").strip() or None,
+                "l1_code":  _clean_text(row.get("l1_code")),
+                "l1_name":  _clean_text(row.get("l1_name")),
+                "l2_code":  _clean_text(row.get("l2_code")),
+                "l2_name":  _clean_text(row.get("l2_name")),
+                "l3_code":  _clean_text(row.get("l3_code")),
+                "l3_name":  _clean_text(row.get("l3_name")),
+                "in_date":  _clean_text(row.get("in_date")),
+                "out_date": _clean_text(row.get("out_date")),
             })
 
         if memberships:
@@ -279,6 +278,15 @@ def _safe_float(val: Any) -> float | None:
         return float(val)
     except (ValueError, TypeError):
         return None
+
+
+def _clean_text(val: Any) -> str | None:
+    if val is None or pd.isna(val):
+        return None
+    text = str(val).strip()
+    if not text or text.lower() == "nan":
+        return None
+    return text
 
 
 def _simple_trend_score(ret_1d: float | None, up_ratio: float | None = None) -> float:

@@ -14,6 +14,10 @@ def test_early_turn_engine_calculation():
         "ma30": 10.1,
         "ma60": 9.8,
         "atr20": 0.3,
+        "order_score": 3.0,
+        "retake_count": 4,
+        "days_retake_3ma": 1,
+        "turn_episode_state": "FIRST_TURN_WINDOW",
         "ma20_slope_10": -0.01,
         "cross_pair_count_10d": 4,
         "cross_event_count_10d": 6,
@@ -31,7 +35,9 @@ def test_early_turn_engine_calculation():
 
     assert res["ts_code"] == "600683.SH"
     assert res["total_score"] >= 65.0
-    assert res["state"] in ("EARLY_TURN", "PRE_READY")
+    assert res["state"] == "FIRST_TURN_WINDOW"
+    assert res["turn_episode_state"] == "FIRST_TURN_WINDOW"
+    assert res["entry_extension_state"] == "NORMAL"
     assert res["is_overextended"] is False
     assert "compression" in res["score_detail_json"]
     assert "knot" in res["score_detail_json"]

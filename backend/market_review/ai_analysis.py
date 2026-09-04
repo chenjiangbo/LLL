@@ -2,23 +2,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+import httpx
 import time
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from google import genai
-from google.auth.exceptions import GoogleAuthError
-from google.genai import types
-from google.oauth2 import service_account
+from openai import OpenAI
 from pydantic import BaseModel, Field, ValidationError
 
-from backend.market_review.config import VertexConfig
+from backend.market_review.config import QwenConfig
 from backend.market_review.errors import MarketReviewError
 from backend.market_review.json_utils import jsonable
 from backend.market_review.postgres_storage import PostgresMarketReviewStore
 
 
-_SCOPES = ("https://www.googleapis.com/auth/cloud-platform",)
 _PROMPT_VERSION = "market-review-v0.3"
 
 
@@ -136,14 +133,16 @@ class AIImportedReviewPayload(BaseModel):
 
 def _extract_json_object(text: str) -> dict[str, Any]:
     content = (text or "").strip()
+    if content.startswith("```json") and content.endswith("```"):
+        content = content[7:-3].strip()
     if not content:
-        raise MarketReviewError("Vertex returned empty content")
+        raise MarketReviewError("百炼未返回内容")
     try:
         value = json.loads(content)
     except json.JSONDecodeError as exc:
-        raise MarketReviewError(f"Vertex did not return valid JSON: {exc}") from exc
+        raise MarketReviewError(f"百炼未返回有效 JSON: {exc}") from exc
     if not isinstance(value, dict):
-        raise MarketReviewError("Vertex JSON response must be an object")
+        raise MarketReviewError("百炼 JSON 必须是对象")
     return value
 
 
@@ -161,6 +160,7 @@ def _is_retryable(exc: Exception) -> bool:
             "timed out",
             "ECONNRESET",
             "Connection reset by peer",
+            "Server disconnected",
         )
     )
 
@@ -256,7 +256,7 @@ class MarketReviewAI:
         force: bool = False,
     ) -> dict[str, Any]:
         try:
-            config = VertexConfig.from_env()
+            config = QwenConfig.from_env()
         except ValueError as exc:
             raise MarketReviewError(str(exc)) from exc
         payload = _analysis_input(report, report_type)
@@ -295,22 +295,15 @@ class MarketReviewAI:
 
     def _invoke(
         self,
-        config: VertexConfig,
+        config: QwenConfig,
         payload: dict[str, Any],
         report_type: str,
     ) -> dict[str, Any]:
-        try:
-            credentials = service_account.Credentials.from_service_account_file(
-                str(config.credentials_path), scopes=list(_SCOPES)
-            )
-            client = genai.Client(
-                vertexai=True,
-                project=config.project,
-                location=config.location,
-                credentials=credentials,
-            )
-        except (GoogleAuthError, ValueError, OSError) as exc:
-            raise MarketReviewError(f"failed to initialize Vertex client: {exc}") from exc
+        client = OpenAI(
+            api_key=config.api_key,
+            base_url=config.base_url,
+            timeout=httpx.Timeout(connect=15.0, read=180.0, write=60.0, pool=60.0),
+        )
 
         system_prompt = (
             "你是一名谨慎、注重证据的A股市场复盘分析助手。输入结构化数据是唯一事实来源。"
@@ -337,34 +330,28 @@ class MarketReviewAI:
             "full_review必须与结构化字段一致。\n\n"
             + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         )
-        generation_config = types.GenerateContentConfig(
-            system_instruction=system_prompt,
-            temperature=0.2,
-            response_mime_type="application/json",
-            response_schema=AIReviewPayload,
-        )
-
         last_error: Exception | None = None
         for attempt, delay in enumerate((1.0, 2.0, 4.0), start=1):
             try:
-                response = client.models.generate_content(
+                response = client.responses.create(
                     model=config.model,
-                    contents=[{"role": "user", "parts": [{"text": user_prompt}]}],
-                    config=generation_config,
+                    instructions=system_prompt + "\n只输出符合指定 JSON 结构的对象，不要输出 Markdown 或解释。",
+                    input=user_prompt,
+                    reasoning={"effort": "none"},
                 )
-                raw = _extract_json_object((response.text or "").strip())
+                raw = _extract_json_object(str(getattr(response, "output_text", "") or "").strip())
                 try:
                     return AIReviewPayload.model_validate(raw).model_dump()
                 except ValidationError as exc:
-                    raise MarketReviewError(f"Vertex response schema validation failed: {exc}") from exc
+                    raise MarketReviewError(f"百炼响应结构校验失败: {exc}") from exc
             except MarketReviewError:
                 raise
             except Exception as exc:
                 last_error = exc
                 if not _is_retryable(exc) or attempt == 3:
-                    raise MarketReviewError(f"Vertex request failed: {exc}") from exc
+                    raise MarketReviewError(f"百炼请求失败: {exc}") from exc
                 time.sleep(delay)
-        raise MarketReviewError(f"Vertex request failed: {last_error}")
+        raise MarketReviewError(f"百炼请求失败: {last_error}")
 
     def parse_imported_review(
         self,
@@ -372,22 +359,15 @@ class MarketReviewAI:
         trade_date: str | None = None,
     ) -> dict[str, Any]:
         try:
-            config = VertexConfig.from_env()
+            config = QwenConfig.from_env()
         except ValueError as exc:
             raise MarketReviewError(str(exc)) from exc
 
-        try:
-            credentials = service_account.Credentials.from_service_account_file(
-                str(config.credentials_path), scopes=list(_SCOPES)
-            )
-            client = genai.Client(
-                vertexai=True,
-                project=config.project,
-                location=config.location,
-                credentials=credentials,
-            )
-        except (GoogleAuthError, ValueError, OSError) as exc:
-            raise MarketReviewError(f"failed to initialize Vertex client: {exc}") from exc
+        client = OpenAI(
+            api_key=config.api_key,
+            base_url=config.base_url,
+            timeout=httpx.Timeout(connect=15.0, read=180.0, write=60.0, pool=60.0),
+        )
 
         system_prompt = (
             "你是一名顶级的A股复盘分析专家和结构化数据提炼助手。用户会提供一篇手动导入的每日A股复盘文章。\n"
@@ -412,35 +392,28 @@ class MarketReviewAI:
             f"【复盘文章全文内容】:\n{content}"
         )
 
-        generation_config = types.GenerateContentConfig(
-            system_instruction=system_prompt,
-            temperature=0.1,
-            response_mime_type="application/json",
-            response_schema=AIImportedReviewPayload,
-        )
-
         last_error: Exception | None = None
         for attempt, delay in enumerate((1.0, 2.0, 4.0), start=1):
             try:
-                response = client.models.generate_content(
+                response = client.responses.create(
                     model=config.model,
-                    contents=[{"role": "user", "parts": [{"text": user_prompt}]}],
-                    config=generation_config,
+                    instructions=system_prompt + "\n只输出符合指定 JSON 结构的对象，不要输出 Markdown 或解释。",
+                    input=user_prompt,
+                    reasoning={"effort": "none"},
                 )
-                raw = _extract_json_object((response.text or "").strip())
+                raw = _extract_json_object(str(getattr(response, "output_text", "") or "").strip())
                 try:
                     validated = AIImportedReviewPayload.model_validate(raw).model_dump()
                     if trade_date and validated.get("trade_date") != trade_date:
                         validated["trade_date"] = trade_date
                     return validated
                 except ValidationError as exc:
-                    raise MarketReviewError(f"Vertex import parsing response validation failed: {exc}") from exc
+                    raise MarketReviewError(f"百炼导入解析结构校验失败: {exc}") from exc
             except MarketReviewError:
                 raise
             except Exception as exc:
                 last_error = exc
                 if not _is_retryable(exc) or attempt == 3:
-                    raise MarketReviewError(f"Vertex import request failed: {exc}") from exc
+                    raise MarketReviewError(f"百炼导入解析请求失败: {exc}") from exc
                 time.sleep(delay)
-        raise MarketReviewError(f"Vertex request failed: {last_error}")
-
+        raise MarketReviewError(f"百炼导入解析请求失败: {last_error}")

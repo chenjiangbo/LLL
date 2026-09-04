@@ -1,0 +1,1 @@
+=== GM.API READONLY RAW REPR ===\naccount_status={'state': 3, 'error': {'code': 0, 'type': '', 'info': ''}}\n

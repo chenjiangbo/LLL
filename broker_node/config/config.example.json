@@ -1,0 +1,41 @@
+{
+  "node_id": "guotou-win-01",
+  "broker_account_key": "guotou_sim_01",
+  "account_mode": "SIM",
+  "expected_broker_account_id": "",
+  "gm": {
+    "strategy_id": "",
+    "token_env": "GM_API_TOKEN"
+  },
+  "api": {
+    "host": "0.0.0.0",
+    "port": 18731,
+    "token_env": "BROKER_NODE_API_TOKEN"
+  },
+  "runtime": {
+    "durable_db": "D:\\QMT\\workspace\\broker_node\\runtime\\broker_node.sqlite3",
+    "quote_cache_db": "D:\\QMT\\workspace\\broker_node\\runtime\\quote_cache.sqlite3",
+    "log_dir": "D:\\QMT\\logs\\broker_node"
+  },
+  "sync": {
+    "command_poll_interval_ms": 200,
+    "unfinished_order_sync_seconds": 5,
+    "account_position_sync_seconds": 15,
+    "full_reconcile_seconds": 60,
+    "agent_offline_seconds": 5
+  },
+  "execution_quote": {
+    "enabled": true,
+    "quote_flush_interval_ms": 200,
+    "subscription_lease_seconds": 120,
+    "freshness_ms": 3000
+  },
+  "safety": {
+    "start_paused": true,
+    "allow_live_orders": false,
+    "max_single_order_notional": null,
+    "max_single_order_quantity": null,
+    "allowed_exchanges": ["SH", "SZ"],
+    "allowed_security_types": ["STOCK", "ETF"]
+  }
+}

@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN"><head><meta charset="utf-8"/><meta content="width=device-width, initial-scale=1.0" name="viewport"/><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/><style>@layer base{html,body{margin:0;padding:0;}body{overscroll-behavior:none;}main>:first-child{margin-top:0!important;}main>:last-child{margin-bottom:0!important;}}::-webkit-scrollbar{display:none;}</style><script src="https://cdn.tailwindcss.com"></script><script id="tailwind-config">tailwind.config = {
+    darkMode: "class",
+    theme: {
+      extend: {
+        "colors": {
+                "background": "#fbf9f3",
+                "on-secondary-fixed": "#3f0016",
+                "on-primary-fixed": "#002111",
+                "primary-fixed": "#c0edce",
+                "tertiary-fixed": "#dae3ee",
+                "on-tertiary-container": "#d8e1eb",
+                "surface-container-lowest": "#ffffff",
+                "on-tertiary-fixed": "#141d24",
+                "tertiary-container": "#5b646d",
+                "secondary-container": "#ff7797",
+                "on-surface-variant": "#414943",
+                "tertiary-fixed-dim": "#bec7d1",
+                "surface-variant": "#e4e2dd",
+                "surface-tint": "#3e674e",
+                "on-secondary-fixed-variant": "#88193d",
+                "on-primary-container": "#beebcc",
+                "surface-bright": "#fbf9f3",
+                "inverse-primary": "#a4d1b3",
+                "surface-dim": "#dcdad4",
+                "surface-container-highest": "#e4e2dd",
+                "surface-container": "#f0eee8",
+                "surface-container-high": "#eae8e2",
+                "primary-fixed-dim": "#a4d1b3",
+                "outline-variant": "#c1c8c1",
+                "secondary-fixed-dim": "#ffb2bf",
+                "outline": "#717972",
+                "tertiary": "#434c54",
+                "on-primary": "#ffffff",
+                "surface-container-low": "#f5f3ed",
+                "on-secondary": "#ffffff",
+                "secondary": "#a73354",
+                "secondary-fixed": "#ffd9de",
+                "on-background": "#1b1c18",
+                "on-secondary-container": "#750630",
+                "on-error-container": "#93000a",
+                "on-tertiary": "#ffffff",
+                "on-error": "#ffffff",
+                "primary": "#2b543c",
+                "on-tertiary-fixed-variant": "#3f4850",
+                "error-container": "#ffdad6",
+                "on-surface": "#1b1c18",
+                "on-primary-fixed-variant": "#264f38",
+                "surface": "#fbf9f3",
+                "inverse-on-surface": "#f3f1eb",
+                "error": "#ba1a1a",
+                "inverse-surface": "#30312d",
+                "primary-container": "#436c53"
+        },
+        "borderRadius": {
+                "DEFAULT": "0.25rem",
+                "lg": "0.5rem",
+                "xl": "0.75rem",
+                "full": "9999px"
+        },
+        "spacing": {
+                "space-base": "1rem",
+                "table-cell-px": "0.75rem",
+                "space-lg": "1.25rem",
+                "space-md": "0.75rem",
+                "table-cell-py": "0.625rem",
+                "space-2xs": "0.125rem",
+                "space-2xl": "2rem",
+                "space-xs": "0.25rem",
+                "space-xl": "1.5rem",
+                "space-sm": "0.5rem",
+                "container-padding": "1.25rem"
+        },
+        "fontFamily": {
+                "body-md": [
+                        "inter"
+                ],
+                "label-badge": [
+                        "inter"
+                ],
+                "headline-lg": [
+                        "inter"
+                ],
+                "headline-md": [
+                        "inter"
+                ],
+                "body-sm": [
+                        "inter"
+                ],
+                "display-hero": [
+                        "inter"
+                ],
+                "tabular-metric-lg": [
+                        "inter"
+                ],
+                "label-micro": [
+                        "inter"
+                ],
+                "body-lg": [
+                        "inter"
+                ],
+                "tabular-metric-md": [
+                        "inter"
+                ]
+        },
+        "fontSize": {
+                "body-md": [
+                        "13px",
+                        {
+                                "lineHeight": "18px",
+                                "fontWeight": "400"
+                        }
+                ],
+                "label-badge": [
+                        "11px",
+                        {
+                                "lineHeight": "14px",
+                                "fontWeight": "500"
+                        }
+                ],
+                "headline-lg": [
+                        "22px",
+                        {
+                                "lineHeight": "28px",
+                                "letterSpacing": "-0.01em",
+                                "fontWeight": "600"
+                        }
+                ],
+                "headline-md": [
+                        "16px",
+                        {
+                                "lineHeight": "22px",
+                                "fontWeight": "600"
+                        }
+                ],
+                "body-sm": [
+                        "12px",
+                        {
+                                "lineHeight": "16px",
+                                "fontWeight": "400"
+                        }
+                ],
+                "display-hero": [
+                        "30px",
+                        {
+                                "lineHeight": "36px",
+                                "letterSpacing": "-0.02em",
+                                "fontWeight": "700"
+                        }
+                ],
+                "tabular-metric-lg": [
+                        "28px",
+                        {
+                                "lineHeight": "32px",
+                                "letterSpacing": "-0.01em",
+                                "fontWeight": "700"
+                        }
+                ],
+                "label-micro": [
+                        "10px",
+                        {
+                                "lineHeight": "12px",
+                                "fontWeight": "400"
+                        }
+                ],
+                "body-lg": [
+                        "14px",
+                        {
+                                "lineHeight": "20px",
+                                "fontWeight": "500"
+                        }
+                ],
+                "tabular-metric-md": [
+                        "15px",
+                        {
+                                "lineHeight": "20px",
+                                "fontWeight": "600"
+                        }
+                ]
+        }
+},
+    },
+  }</script></head><body class="bg-surface-container-low font-body-md text-body-md text-on-surface"><header class="fixed top-0 w-full z-50 bg-surface shadow-[0_1px_8px_rgba(0,0,0,0.04)]"><div class="h-14 w-full px-container-padding flex items-center justify-between"><div class="flex items-center gap-space-xl"><div class="flex items-center gap-space-sm"><div class="w-7 h-7 rounded-lg bg-primary-container flex items-center justify-center"><span class="material-symbols-outlined text-on-primary text-[18px]">show_chart</span></div><div class="flex flex-col"><span class="font-headline-md text-headline-md tracking-tight text-on-surface">LLL 交易研究</span></div></div><nav class="hidden lg:flex items-center gap-space-xs" data-active-classes="bg-primary-container text-on-primary rounded-lg font-body-lg text-body-lg px-space-md py-space-xs shadow-sm"><a class="text-on-surface-variant hover:text-on-surface px-space-md py-space-xs font-body-lg text-body-lg transition-colors" data-path="a-share-quotes" href="#">A股行情</a><a class="text-on-surface-variant hover:text-on-surface px-space-md py-space-xs font-body-lg text-body-lg transition-colors" data-path="market-review" href="#">复盘</a><a class="text-on-surface-variant hover:text-on-surface px-space-md py-space-xs font-body-lg text-body-lg transition-colors" data-path="automated-stock-screener" href="#">自动选股</a><a class="text-on-surface-variant hover:text-on-surface px-space-md py-space-xs font-body-lg text-body-lg transition-colors" data-path="market-technical-classification" href="#">全市技术分类</a><a class="text-on-surface-variant hover:text-on-surface px-space-md py-space-xs font-body-lg text-body-lg transition-colors" data-path="watchlist" href="#">自选股</a><a aria-current="page" class="transition-colors bg-primary-container text-on-primary rounded-lg font-body-lg text-body-lg px-space-md py-space-xs shadow-sm" data-path="trading-detail" href="#">交易系统</a></nav></div><div class="flex items-center gap-space-sm"><button class="w-8 h-8 rounded-full bg-surface-container-lowest flex items-center justify-center text-on-surface-variant hover:text-on-surface shadow-[0_1px_4px_rgba(0,0,0,0.03)] transition-colors" type="button"><span class="material-symbols-outlined text-[18px]">refresh</span></button><button class="w-8 h-8 rounded-full bg-surface-container-lowest flex items-center justify-center text-on-surface-variant hover:text-on-surface shadow-[0_1px_4px_rgba(0,0,0,0.03)] transition-colors" type="button"><span class="material-symbols-outlined text-[18px]">light_mode</span></button><div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center"><span class="material-symbols-outlined text-on-primary text-[18px]">person</span></div></div></div></header><aside class="fixed left-0 top-14 h-[calc(100vh-3.5rem)] w-56 bg-surface-container-low z-40 flex flex-col py-space-md px-space-sm shadow-[1px_0_8px_rgba(0,0,0,0.02)]"><div class="px-space-md pb-space-sm pt-space-xs flex items-center justify-between"><span class="font-label-badge text-label-badge uppercase tracking-wider text-on-surface-variant">交易系统模块</span><span class="material-symbols-outlined text-on-surface-variant text-[16px]">tune</span></div><nav class="flex-1 flex flex-col gap-space-2xs" data-active-classes="bg-surface-container-lowest text-primary font-headline-md font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.04)]"><a class="flex items-center px-space-md py-space-sm rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface font-body-lg text-body-lg transition-all" data-path="trading-overview" href="#"><span class="material-symbols-outlined mr-space-sm text-[20px]">grid_view</span>交易总览</a><a aria-current="page" class="flex items-center px-space-md py-space-sm rounded-lg transition-all bg-surface-container-lowest text-primary font-headline-md font-semibold shadow-[0_1px_3px_rgba(0,0,0,0.04)]" data-path="trading-detail" href="#"><span class="material-symbols-outlined mr-space-sm text-[20px]">candlestick_chart</span>交易</a><a class="flex items-center px-space-md py-space-sm rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface font-body-lg text-body-lg transition-all" data-path="trade-execution" href="#"><span class="material-symbols-outlined mr-space-sm text-[20px]">bolt</span>交易执行</a><a class="flex items-center px-space-md py-space-sm rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface font-body-lg text-body-lg transition-all" data-path="orders" href="#"><span class="material-symbols-outlined mr-space-sm text-[20px]">receipt_long</span>订单</a><a class="flex items-center px-space-md py-space-sm rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface font-body-lg text-body-lg transition-all" data-path="positions" href="#"><span class="material-symbols-outlined mr-space-sm text-[20px]">account_balance_wallet</span>持仓</a></nav><div class="p-space-sm rounded-lg bg-surface-container mt-auto flex items-center justify-between"><div class="flex items-center gap-space-xs"><span class="w-2 h-2 rounded-full bg-primary"></span><span class="font-label-micro text-label-micro text-on-surface-variant">交易网关已连接</span></div><span class="font-label-micro text-label-micro text-primary font-medium">正常</span></div></aside><div class="pl-56"><main class="relative pt-14 bg-surface-container-low min-h-screen px-container-padding py-space-lg"><div class="flex flex-col w-full gap-space-lg">
+<!-- 顶部状态工作区与快捷栏 (去重复大标题，呈现精准交易终端状态) -->
+<div class="flex flex-wrap items-center justify-between gap-space-md">
+<div class="flex items-center gap-space-md">
+<div class="flex items-center gap-space-xs">
+<span class="w-2.5 h-2.5 rounded-full bg-primary animate-pulse"></span>
+<span class="font-headline-md text-headline-md text-on-surface">账户资产与活动 Trade 全景监控</span>
+</div>
+<span class="hidden sm:inline-block w-px h-4 bg-outline-variant"></span>
+<span class="font-body-sm text-body-sm text-on-surface-variant">基准：沪深300 | 交易日 T+0 实时</span>
+</div>
+<div class="flex items-center gap-space-sm">
+<div class="flex items-center gap-space-xs bg-surface-container-lowest px-space-md py-space-xs rounded-lg shadow-sm">
+<span class="material-symbols-outlined text-primary text-[18px]">network_ping</span>
+<span class="font-body-sm text-body-sm text-on-surface-variant">券商实盘:</span>
+<span class="font-label-badge text-label-badge text-primary font-semibold">12ms</span>
+</div>
+<div class="flex items-center gap-space-xs bg-surface-container-lowest px-space-md py-space-xs rounded-lg shadow-sm">
+<span class="w-2 h-2 rounded-full bg-primary"></span>
+<span class="font-body-sm text-body-sm text-on-surface-variant">执行引擎:</span>
+<span class="font-label-badge text-label-badge text-on-surface font-semibold">运行中</span>
+</div>
+<button class="flex items-center gap-space-2xs bg-primary text-on-primary px-space-md py-space-xs rounded-lg shadow-sm hover:bg-primary-container transition-colors" type="button">
+<span class="material-symbols-outlined text-[18px]">add_circle</span>
+<span class="font-body-lg text-body-lg font-medium">新建交易</span>
+</button>
+</div>
+</div>
+<!-- 4 核心资产与风险卡片 (严格遵照炭黑、深绿、深红、白底高对比质感) -->
+<div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-space-md">
+<!-- 卡片 1: 账户净资产 (深炭灰/深蓝灰) -->
+<div class="bg-tertiary rounded-xl p-space-lg text-on-tertiary flex flex-col justify-between shadow-sm relative overflow-hidden min-h-[140px]">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-space-xs">
+<span class="material-symbols-outlined text-on-tertiary-container text-[20px]">account_balance</span>
+<span class="font-body-lg text-body-lg text-on-tertiary font-medium">账户净资产</span>
+</div>
+<span class="font-label-badge text-label-badge bg-surface-container-lowest/15 px-space-sm py-space-2xs rounded-full">实盘主账户</span>
+</div>
+<div class="my-space-xs">
+<span class="font-tabular-metric-lg text-tabular-metric-lg tracking-tight font-bold">¥1,028,450.00</span>
+</div>
+<div class="flex items-center justify-between text-on-tertiary-container font-body-sm text-body-sm pt-space-xs">
+<span>可用现金 ¥428,120.00</span>
+<span class="font-label-badge text-label-badge bg-surface-container-lowest/10 px-space-xs py-0.5 rounded">占比 41.6%</span>
+</div>
+</div>
+<!-- 卡片 2: 当前总仓位 (森林深绿) -->
+<div class="bg-primary-container rounded-xl p-space-lg text-on-primary flex flex-col justify-between shadow-sm relative overflow-hidden min-h-[140px]">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-space-xs">
+<span class="material-symbols-outlined text-on-primary-container text-[20px]">pie_chart</span>
+<span class="font-body-lg text-body-lg text-on-primary font-medium">当前总仓位</span>
+</div>
+<span class="font-label-badge text-label-badge bg-surface-container-lowest/15 px-space-sm py-space-2xs rounded-full">持仓市值 ¥600.3k</span>
+</div>
+<div class="my-space-xs flex items-baseline gap-space-xs">
+<span class="font-tabular-metric-lg text-tabular-metric-lg tracking-tight font-bold">58.4%</span>
+<span class="font-body-sm text-body-sm text-on-primary-container font-normal">/ 上限 80.0%</span>
+</div>
+<div class="flex items-center justify-between text-on-primary-container font-body-sm text-body-sm pt-space-xs">
+<span>当前总头寸 4 只</span>
+<span class="font-label-badge text-label-badge bg-surface-container-lowest/10 px-space-xs py-0.5 rounded">头寸配比稳健</span>
+</div>
+</div>
+<!-- 卡片 3: 账户总计划风险 (深酒红) -->
+<div class="bg-secondary rounded-xl p-space-lg text-on-secondary flex flex-col justify-between shadow-sm relative overflow-hidden min-h-[140px]">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-space-xs">
+<span class="material-symbols-outlined text-secondary-fixed text-[20px]">security</span>
+<span class="font-body-lg text-body-lg text-on-secondary font-medium">账户总计划风险</span>
+</div>
+<span class="font-label-badge text-label-badge bg-surface-container-lowest/15 px-space-sm py-space-2xs rounded-full">风控状态：正常</span>
+</div>
+<div class="my-space-xs flex items-baseline gap-space-xs">
+<span class="font-tabular-metric-lg text-tabular-metric-lg tracking-tight font-bold">¥4,280.00</span>
+<span class="font-body-sm text-body-sm text-secondary-fixed">(0.42%)</span>
+</div>
+<div class="flex items-center justify-between text-secondary-fixed font-body-sm text-body-sm pt-space-xs">
+<span>单笔硬上限 1.00%</span>
+<span class="font-label-badge text-label-badge bg-surface-container-lowest/10 px-space-xs py-0.5 rounded">已设止损敞口</span>
+</div>
+</div>
+<!-- 卡片 4: 今日浮动盈亏 (白底微阴影) -->
+<div class="bg-surface-container-lowest rounded-xl p-space-lg text-on-surface flex flex-col justify-between shadow-sm min-h-[140px]">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-space-xs">
+<span class="material-symbols-outlined text-secondary text-[20px]">trending_up</span>
+<span class="font-body-lg text-body-lg text-on-surface font-medium">今日浮动盈亏</span>
+</div>
+<span class="font-label-badge text-label-badge bg-secondary-fixed text-on-secondary-fixed-variant px-space-sm py-space-2xs rounded-full">日内表现</span>
+</div>
+<div class="my-space-xs flex items-baseline gap-space-xs">
+<span class="font-tabular-metric-lg text-tabular-metric-lg tracking-tight font-bold text-secondary">+¥8,450.00</span>
+<span class="font-body-sm text-body-sm font-semibold text-secondary">(+0.83%)</span>
+</div>
+<div class="flex items-center justify-between text-on-surface-variant font-body-sm text-body-sm pt-space-xs">
+<span>累计实现盈亏</span>
+<span class="font-tabular-metric-md text-tabular-metric-md text-secondary font-semibold">+¥124,580.00</span>
+</div>
+</div>
+</div>
+<!-- 待处理事项 (风控与执行待办卡片) -->
+<div class="bg-surface-container-lowest rounded-xl p-space-lg shadow-sm flex flex-col gap-space-md">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-space-sm">
+<div class="w-6 h-6 rounded-lg bg-surface-container-high flex items-center justify-center text-on-surface">
+<span class="material-symbols-outlined text-[16px]">notification_important</span>
+</div>
+<span class="font-headline-md text-headline-md text-on-surface">待处理事项</span>
+<span class="font-label-badge text-label-badge bg-secondary-fixed text-on-secondary-fixed-variant px-space-sm py-0.5 rounded-full font-medium">3 项需要关注</span>
+</div>
+<span class="font-body-sm text-body-sm text-on-surface-variant">自动化风控队列实时轮询中</span>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-3 gap-space-md">
+<!-- 事项 1: 橙黄告警 -->
+<div class="bg-surface-container-low rounded-lg p-space-md flex flex-col justify-between gap-space-sm">
+<div class="flex items-start gap-space-sm">
+<span class="material-symbols-outlined text-secondary text-[20px] shrink-0 mt-0.5">warning</span>
+<div class="flex flex-col gap-space-2xs min-w-0">
+<span class="font-body-lg text-body-lg font-semibold text-on-surface truncate">安硕信息 (300380)</span>
+<p class="font-body-sm text-body-sm text-on-surface-variant">ADD #1 加仓计划已触发确认，尚未创建执行挂单。</p>
+</div>
+</div>
+<div class="flex items-center justify-between pt-space-xs">
+<span class="font-label-micro text-label-micro text-on-surface-variant">触发于 10:28</span>
+<button class="font-label-badge text-label-badge font-semibold bg-primary text-on-primary px-space-md py-space-2xs rounded-lg hover:bg-primary-container transition-colors" type="button">立即部署执行</button>
+</div>
+</div>
+<!-- 事项 2: 红标限售/T+1 -->
+<div class="bg-surface-container-low rounded-lg p-space-md flex flex-col justify-between gap-space-sm">
+<div class="flex items-start gap-space-sm">
+<span class="material-symbols-outlined text-secondary text-[20px] shrink-0 mt-0.5">schedule</span>
+<div class="flex flex-col gap-space-2xs min-w-0">
+<span class="font-body-lg text-body-lg font-semibold text-on-surface truncate">中际旭创 (300308)</span>
+<p class="font-body-sm text-body-sm text-on-surface-variant">CLOSE 当前剩余 200 股受 T+1 限制锁定，明日开盘可卖。</p>
+</div>
+</div>
+<div class="flex items-center justify-between pt-space-xs">
+<span class="font-label-micro text-label-micro text-on-surface-variant">锁定中 200股</span>
+<button class="font-label-badge text-label-badge font-semibold bg-surface-container-high text-on-surface px-space-md py-space-2xs rounded-lg hover:bg-surface-variant transition-colors" type="button">查看详情</button>
+</div>
+</div>
+<!-- 事项 3: 蓝标/中性复核调整 -->
+<div class="bg-surface-container-low rounded-lg p-space-md flex flex-col justify-between gap-space-sm">
+<div class="flex items-start gap-space-sm">
+<span class="material-symbols-outlined text-tertiary text-[20px] shrink-0 mt-0.5">update</span>
+<div class="flex flex-col gap-space-2xs min-w-0">
+<span class="font-body-lg text-body-lg font-semibold text-on-surface truncate">新易盛 (300502)</span>
+<p class="font-body-sm text-body-sm text-on-surface-variant">整体风险参考已持续 5 个交易日未更新，建议复核抬升。</p>
+</div>
+</div>
+<div class="flex items-center justify-between pt-space-xs">
+<span class="font-label-micro text-label-micro text-on-surface-variant">5日超期提示</span>
+<button class="font-label-badge text-label-badge font-semibold bg-tertiary text-on-tertiary px-space-md py-space-2xs rounded-lg hover:bg-tertiary-container transition-colors" type="button">复核调整</button>
+</div>
+</div>
+</div>
+</div>
+<!-- 活动 Trade 监控表格 (核心业务模型) -->
+<div class="bg-surface-container-lowest rounded-xl shadow-sm overflow-hidden flex flex-col">
+<!-- 表格工具条与快捷筛选 -->
+<div class="p-space-lg flex flex-wrap items-center justify-between gap-space-md">
+<div class="flex items-center gap-space-md">
+<div class="flex items-center gap-space-xs">
+<span class="material-symbols-outlined text-primary text-[20px]">candlestick_chart</span>
+<span class="font-headline-md text-headline-md text-on-surface">活动 Trade 实时监控</span>
+</div>
+<div class="flex items-center bg-surface-container-low p-space-2xs rounded-lg">
+<button class="px-space-md py-space-2xs rounded-md bg-surface-container-lowest text-on-surface font-body-sm text-body-sm font-semibold shadow-xs" type="button">全部活动 (4)</button>
+<button class="px-space-md py-space-2xs rounded-md text-on-surface-variant font-body-sm text-body-sm hover:text-on-surface" type="button">趋势突破 (2)</button>
+<button class="px-space-md py-space-2xs rounded-md text-on-surface-variant font-body-sm text-body-sm hover:text-on-surface" type="button">波段/回踩 (1)</button>
+<button class="px-space-md py-space-2xs rounded-md text-on-surface-variant font-body-sm text-body-sm hover:text-on-surface" type="button">退出管理 (1)</button>
+</div>
+</div>
+<div class="flex items-center gap-space-sm">
+<div class="flex items-center bg-surface-container-low rounded-lg px-space-sm py-space-2xs text-on-surface-variant">
+<span class="material-symbols-outlined text-[16px] mr-space-xs">filter_list</span>
+<span class="font-body-sm text-body-sm">按风险敞口降序</span>
+</div>
+<button class="p-space-2xs rounded-lg hover:bg-surface-container text-on-surface-variant" type="button">
+<span class="material-symbols-outlined text-[20px]">download</span>
+</button>
+</div>
+</div>
+<!-- 表格主体 -->
+<div class="overflow-x-auto w-full">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="bg-surface-container-low text-on-surface-variant font-body-sm text-body-sm">
+<th class="py-space-md px-space-lg font-medium">股票代码 / 名称</th>
+<th class="py-space-md px-space-md font-medium">交易类型</th>
+<th class="py-space-md px-space-md font-medium">生命周期</th>
+<th class="py-space-md px-space-md font-medium">当前持仓</th>
+<th class="py-space-md px-space-md font-medium">仓位占比</th>
+<th class="py-space-md px-space-md font-medium">现价 / 成本</th>
+<th class="py-space-md px-space-md font-medium">浮动盈亏</th>
+<th class="py-space-md px-space-md font-medium">本金计划风险</th>
+<th class="py-space-md px-space-md font-medium">利润回吐风险</th>
+<th class="py-space-md px-space-md font-medium">最近动作</th>
+<th class="py-space-md px-space-lg text-right font-medium">操作</th>
+</tr>
+</thead>
+<tbody class="divide-y-0 text-on-surface font-body-md text-body-md">
+<!-- 行 1: 安硕信息 -->
+<tr class="hover:bg-surface-container-low transition-colors">
+<td class="py-space-md px-space-lg">
+<div class="flex flex-col">
+<div class="flex items-center gap-space-xs">
+<span class="font-tabular-metric-md text-tabular-metric-md font-bold text-secondary">300380</span>
+<span class="font-body-lg text-body-lg font-semibold text-on-surface">安硕信息</span>
+</div>
+<span class="font-label-micro text-label-micro text-on-surface-variant">软件开发 / 互联网金融</span>
+</div>
+</td>
+<td class="py-space-md px-space-md">
+<span class="bg-surface-container px-space-sm py-space-2xs rounded text-on-surface font-body-sm text-body-sm">趋势交易</span>
+</td>
+<td class="py-space-md px-space-md">
+<span class="bg-primary text-on-primary font-label-badge text-label-badge px-space-sm py-space-2xs rounded-full font-medium">ACTIVE</span>
+</td>
+<td class="py-space-md px-space-md">
+<div class="flex flex-col">
+<span class="font-tabular-metric-md text-tabular-metric-md font-semibold">500 股</span>
+<span class="font-label-micro text-label-micro text-on-surface-variant">可卖 300 股</span>
+</div>
+</td>
+<td class="py-space-md px-space-md">
+<div class="flex items-center gap-space-xs">
+<span class="font-tabular-metric-md text-tabular-metric-md font-medium">15.6%</span>
+<div class="w-12 h-1.5 rounded-full bg-surface-container-high overflow-hidden">
+<div class="bg-primary h-full rounded-full" style="width: 52%"></div>
+</div>
+</div>
+</td>
+<td class="py-space-md px-space-md">
+<div class="flex flex-col font-tabular-metric-md text-tabular-metric-md">
+<span class="font-semibold text-secondary">¥32.10</span>
+<span class="text-on-surface-variant font-normal">¥29.85</span>
+</div>
+</td>
+<td class="py-space-md px-space-md">
+<div class="flex flex-col">
+<span class="font-tabular-metric-md text-tabular-metric-md font-semibold text-secondary">+¥1,125.00</span>
+<span class="font-label-badge text-label-badge text-secondary font-medium">+7.54%</span>
+</div>
+</td>
+<td class="py-space-md px-space-md">
+<div class="flex flex-col">
+<span class="font-tabular-metric-md text-tabular-metric-md text-primary font-medium">¥0.00</span>
+<span class="font-label-micro text-label-micro text-primary">已垫底锁本</span>
+</div>
+</td>
+<td class="py-space-md px-space-md">
+<span class="font-tabular-metric-md text-tabular-metric-md text-on-surface font-medium">¥780.00</span>
+</td>
+<td class="py-space-md px-space-md">
+<span class="font-label-badge text-label-badge bg-secondary-fixed text-on-secondary-fixed-variant px-space-xs py-0.5 rounded font-medium">REDUCE #1 待执行</span>
+</td>
+<td class="py-space-md px-space-lg text-right">
+<a class="inline-flex items-center gap-space-2xs bg-surface-container-low hover:bg-surface-container text-primary font-body-sm text-body-sm font-semibold px-space-md py-space-xs rounded-lg transition-colors" data-path="trading-detail" href="#">
+<span>查看详情</span>
+<span class="material-symbols-outlined text-[16px]">chevron_right</span>
+</a>
+</td>
+</tr>
+<!-- 行 2: 沪电股份 -->
+<tr class="hover:bg-surface-container-low transition-colors">
+<td class="py-space-md px-space-lg">
+<div class="flex flex-col">
+<div class="flex items-center gap-space-xs">
+<span class="font-tabular-metric-md text-tabular-metric-md font-bold text-secondary">002463</span>
+<span class="font-body-lg text-body-lg font-semibold text-on-surface">沪电股份</span>
+</div>
+<span class="font-label-micro text-label-micro text-on-surface-variant">PCB / AI 服务器供应链</span>
+</div>
+</td>
+<td class="py-space-md px-space-md">
+<span class="bg-surface-container px-space-sm py-space-2xs rounded text-on-surface font-body-sm text-body-sm">趋势交易</span>
+</td>
+<td class="py-space-md px-space-md">
+<span class="bg-primary text-on-primary font-label-badge text-label-badge px-space-sm py-space-2xs rounded-full font-medium">ACTIVE</span>
+</td>
+<td class="py-space-md px-space-md">
+<div class="flex flex-col">
+<span class="font-tabular-metric-md text-tabular-metric-md font-semibold">1,200 股</span>
+<span class="font-label-micro text-label-micro text-on-surface-variant">全部可流通</span>
+</div>
+</td>
+<td class="py-space-md px-space-md">
+<div class="flex items-center gap-space-xs">
+<span class="font-tabular-metric-md text-tabular-metric-md font-medium">22.4%</span>
+<div class="w-12 h-1.5 rounded-full bg-surface-container-high overflow-hidden">
+<div class="bg-primary h-full rounded-full" style="width: 74%"></div>
+</div>
+</div>
+</td>
+<td class="py-space-md px-space-md">
+<div class="flex flex-col font-tabular-metric-md text-tabular-metric-md">
+<span class="font-semibold text-secondary">¥38.60</span>
+<span class="text-on-surface-variant font-normal">¥35.20</span>
+</div>
+</td>
+<td class="py-space-md px-space-md">
+<div class="flex flex-col">
+<span class="font-tabular-metric-md text-tabular-metric-md font-semibold text-secondary">+¥4,080.00</span>
+<span class="font-label-badge text-label-badge text-secondary font-medium">+9.66%</span>
+</div>
+</td>
+<td class="py-space-md px-space-md">
+<div class="flex flex-col">
+<span class="font-tabular-metric-md text-tabular-metric-md text-primary font-medium">¥0.00</span>
+<span class="font-label-micro text-label-micro text-primary">垫底保本</span>
+</div>
+</td>
+<td class="py-space-md px-space-md">
+<span class="font-tabular-metric-md text-tabular-metric-md text-on-surface font-medium">¥1,600.00</span>
+</td>
+<td class="py-space-md px-space-md">
+<span class="font-label-badge text-label-badge bg-surface-container text-on-surface px-space-xs py-0.5 rounded font-medium">止损抬升至 ¥36.50</span>
+</td>
+<td class="py-space-md px-space-lg text-right">
+<a class="inline-flex items-center gap-space-2xs bg-surface-container-low hover:bg-surface-container text-primary font-body-sm text-body-sm font-semibold px-space-md py-space-xs rounded-lg transition-colors" data-path="trading-detail" href="#">
+<span>查看详情</span>
+<span class="material-symbols-outlined text-[16px]">chevron_right</span>
+</a>
+</td>
+</tr>
+<!-- 行 3: 北方华创 -->
+<tr class="hover:bg-surface-container-low transition-colors">
+<td class="py-space-md px-space-lg">
+<div class="flex flex-col">
+<div class="flex items-center gap-space-xs">
+<span class="font-tabular-metric-md text-tabular-metric-md font-bold text-secondary">002371</span>
+<span class="font-body-lg text-body-lg font-semibold text-on-surface">北方华创</span>
+</div>
+<span class="font-label-micro text-label-micro text-on-surface-variant">半导体设备 / 龙头波段</span>
+</div>
+</td>
+<td class="py-space-md px-space-md">
+<span class="bg-surface-container px-space-sm py-space-2xs rounded text-on-surface font-body-sm text-body-sm">反弹/波段</span>
+</td>
+<td class="py-space-md px-space-md">
+<span class="bg-primary text-on-primary font-label-badge text-label-badge px-space-sm py-space-2xs rounded-full font-medium">ACTIVE</span>
+</td>
+<td class="py-space-md px-space-md">
+<div class="flex flex-col">
+<span class="font-tabular-metric-md text-tabular-metric-md font-semibold">300 股</span>
+<span class="font-label-micro text-label-micro text-on-surface-variant">头寸未解锁</span>
+</div>
+</td>
+<td class="py-space-md px-space-md">
+<div class="flex items-center gap-space-xs">
+<span class="font-tabular-metric-md text-tabular-metric-md font-medium">12.8%</span>
+<div class="w-12 h-1.5 rounded-full bg-surface-container-high overflow-hidden">
+<div class="bg-primary h-full rounded-full" style="width: 42%"></div>
+</div>
+</div>
+</td>
+<td class="py-space-md px-space-md">
+<div class="flex flex-col font-tabular-metric-md text-tabular-metric-md">
+<span class="font-semibold text-primary">¥312.00</span>
+<span class="text-on-surface-variant font-normal">¥318.50</span>
+</div>
+</td>
+<td class="py-space-md px-space-md">
+<div class="flex flex-col">
+<span class="font-tabular-metric-md text-tabular-metric-md font-semibold text-primary">-¥1,950.00</span>
+<span class="font-label-badge text-label-badge text-primary font-medium">-2.04%</span>
+</div>
+</td>
+<td class="py-space-md px-space-md">
+<div class="flex flex-col">
+<span class="font-tabular-metric-md text-tabular-metric-md text-secondary font-medium">¥2,250.00</span>
+<span class="font-label-micro text-label-micro text-secondary">0.22% 账户敞口</span>
+</div>
+</td>
+<td class="py-space-md px-space-md">
+<span class="font-tabular-metric-md text-tabular-metric-md text-on-surface-variant font-medium">¥0.00</span>
+</td>
+<td class="py-space-md px-space-md">
+<span class="font-label-badge text-label-badge bg-surface-container text-on-surface px-space-xs py-0.5 rounded font-medium">OPEN 建仓完成</span>
+</td>
+<td class="py-space-md px-space-lg text-right">
+<a class="inline-flex items-center gap-space-2xs bg-surface-container-low hover:bg-surface-container text-primary font-body-sm text-body-sm font-semibold px-space-md py-space-xs rounded-lg transition-colors" data-path="trading-detail" href="#">
+<span>查看详情</span>
+<span class="material-symbols-outlined text-[16px]">chevron_right</span>
+</a>
+</td>
+</tr>
+<!-- 行 4: 工业富联 -->
+<tr class="hover:bg-surface-container-low transition-colors">
+<td class="py-space-md px-space-lg">
+<div class="flex flex-col">
+<div class="flex items-center gap-space-xs">
+<span class="font-tabular-metric-md text-tabular-metric-md font-bold text-secondary">601138</span>
+<span class="font-body-lg text-body-lg font-semibold text-on-surface">工业富联</span>
+</div>
+<span class="font-label-micro text-label-micro text-on-surface-variant">通信互联 / 服务器整机</span>
+</div>
+</td>
+<td class="py-space-md px-space-md">
+<span class="bg-surface-container px-space-sm py-space-2xs rounded text-on-surface font-body-sm text-body-sm">固定目标</span>
+</td>
+<td class="py-space-md px-space-md">
+<span class="bg-secondary text-on-secondary font-label-badge text-label-badge px-space-sm py-space-2xs rounded-full font-medium">CLOSING</span>
+</td>
+<td class="py-space-md px-space-md">
+<div class="flex flex-col">
+<span class="font-tabular-metric-md text-tabular-metric-md font-semibold">800 股</span>
+<span class="font-label-micro text-label-micro text-primary">可卖 800 股</span>
+</div>
+</td>
+<td class="py-space-md px-space-md">
+<div class="flex items-center gap-space-xs">
+<span class="font-tabular-metric-md text-tabular-metric-md font-medium">7.6%</span>
+<div class="w-12 h-1.5 rounded-full bg-surface-container-high overflow-hidden">
+<div class="bg-secondary h-full rounded-full" style="width: 25%"></div>
+</div>
+</div>
+</td>
+<td class="py-space-md px-space-md">
+<div class="flex flex-col font-tabular-metric-md text-tabular-metric-md">
+<span class="font-semibold text-secondary">¥23.50</span>
+<span class="text-on-surface-variant font-normal">¥21.80</span>
+</div>
+</td>
+<td class="py-space-md px-space-md">
+<div class="flex flex-col">
+<span class="font-tabular-metric-md text-tabular-metric-md font-semibold text-secondary">+¥1,360.00</span>
+<span class="font-label-badge text-label-badge text-secondary font-medium">+7.80%</span>
+</div>
+</td>
+<td class="py-space-md px-space-md">
+<div class="flex flex-col">
+<span class="font-tabular-metric-md text-tabular-metric-md text-primary font-medium">¥0.00</span>
+<span class="font-label-micro text-label-micro text-primary">已全部锁止</span>
+</div>
+</td>
+<td class="py-space-md px-space-md">
+<span class="font-tabular-metric-md text-tabular-metric-md text-on-surface font-medium">¥480.00</span>
+</td>
+<td class="py-space-md px-space-md">
+<span class="font-label-badge text-label-badge bg-secondary-fixed text-on-secondary-fixed-variant px-space-xs py-0.5 rounded font-medium">CLOSE 卖出执行中</span>
+</td>
+<td class="py-space-md px-space-lg text-right">
+<a class="inline-flex items-center gap-space-2xs bg-surface-container-low hover:bg-surface-container text-primary font-body-sm text-body-sm font-semibold px-space-md py-space-xs rounded-lg transition-colors" data-path="trading-detail" href="#">
+<span>查看详情</span>
+<span class="material-symbols-outlined text-[16px]">chevron_right</span>
+</a>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<!-- 表格底部小结状态 -->
+<div class="bg-surface-container-low px-space-lg py-space-sm flex flex-wrap items-center justify-between font-body-sm text-body-sm text-on-surface-variant">
+<div class="flex items-center gap-space-md">
+<span>统计：活动头寸 4 笔</span>
+<span>•</span>
+<span>持仓均赢率 75.0%</span>
+<span>•</span>
+<span>未实现净收益：<strong class="text-secondary font-semibold font-tabular-metric-md text-tabular-metric-md">+¥4,615.00</strong></span>
+</div>
+<div class="flex items-center gap-space-xs">
+<span class="w-2 h-2 rounded-full bg-primary"></span>
+<span>数据流已绑定券商行情分发引擎</span>
+</div>
+</div>
+</div>
+<!-- 最近动作与执行流水 (下半部分左右 60% / 40% 排布) -->
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-space-lg">
+<!-- 左侧 60%：最近动作时间线流水 -->
+<div class="lg:col-span-7 bg-surface-container-lowest rounded-xl p-space-lg shadow-sm flex flex-col justify-between gap-space-md">
+<div>
+<div class="flex items-center justify-between mb-space-md">
+<div class="flex items-center gap-space-xs">
+<span class="material-symbols-outlined text-primary text-[20px]">history_toggle_off</span>
+<span class="font-headline-md text-headline-md text-on-surface">最近操作与执行流水</span>
+</div>
+<span class="font-label-badge text-label-badge bg-surface-container px-space-sm py-space-2xs rounded text-on-surface-variant">今日流水: 8 笔</span>
+</div>
+<div class="flex flex-col gap-space-md relative pl-space-lg before:content-[''] before:absolute before:left-2 before:top-2 before:bottom-2 before:w-0.5 before:bg-surface-container-high">
+<!-- 流水 1 -->
+<div class="relative flex items-start justify-between gap-space-md">
+<span class="absolute -left-[1.45rem] top-1.5 w-2.5 h-2.5 rounded-full bg-primary ring-4 ring-surface-container-lowest"></span>
+<div class="flex flex-col min-w-0">
+<div class="flex items-center gap-space-sm">
+<span class="font-body-lg text-body-lg font-semibold text-on-surface">安硕信息 (300380)</span>
+<span class="font-label-badge text-label-badge bg-primary-fixed text-on-primary-fixed px-space-xs py-0.5 rounded">加仓成交</span>
+</div>
+<p class="font-body-sm text-body-sm text-on-surface-variant mt-space-2xs">ADD #1 计划已自动撮合成交 200 股 @ ¥31.12，当前持仓扩大至 500 股</p>
+</div>
+<span class="font-label-badge text-label-badge text-on-surface-variant font-mono whitespace-nowrap">10:31:42</span>
+</div>
+<!-- 流水 2 -->
+<div class="relative flex items-start justify-between gap-space-md">
+<span class="absolute -left-[1.45rem] top-1.5 w-2.5 h-2.5 rounded-full bg-tertiary ring-4 ring-surface-container-lowest"></span>
+<div class="flex flex-col min-w-0">
+<div class="flex items-center gap-space-sm">
+<span class="font-body-lg text-body-lg font-semibold text-on-surface">沪电股份 (002463)</span>
+<span class="font-label-badge text-label-badge bg-surface-container-high text-on-surface px-space-xs py-0.5 rounded">风险抬升</span>
+</div>
+<p class="font-body-sm text-body-sm text-on-surface-variant mt-space-2xs">止损参考价上移调整 ¥34.20 → ¥36.50，完全覆盖建仓保本线</p>
+</div>
+<span class="font-label-badge text-label-badge text-on-surface-variant font-mono whitespace-nowrap">09:48:15</span>
+</div>
+<!-- 流水 3 -->
+<div class="relative flex items-start justify-between gap-space-md">
+<span class="absolute -left-[1.45rem] top-1.5 w-2.5 h-2.5 rounded-full bg-outline ring-4 ring-surface-container-lowest"></span>
+<div class="flex flex-col min-w-0">
+<div class="flex items-center gap-space-sm">
+<span class="font-body-lg text-body-lg font-semibold text-on-surface">北方华创 (002371)</span>
+<span class="font-label-badge text-label-badge bg-surface-container-high text-on-surface px-space-xs py-0.5 rounded">OPEN 建仓</span>
+</div>
+<p class="font-body-sm text-body-sm text-on-surface-variant mt-space-2xs">首仓 300 股执行限价建仓完成，初始计划风控参考 ¥311.00</p>
+</div>
+<span class="font-label-badge text-label-badge text-on-surface-variant font-mono whitespace-nowrap">昨日 14:52</span>
+</div>
+</div>
+</div>
+<div class="pt-space-md border-t-0 flex items-center justify-between bg-surface-container-low p-space-sm rounded-lg">
+<span class="font-body-sm text-body-sm text-on-surface-variant">已记录全部交易信号、委托确认与挂单回报</span>
+<a class="font-body-sm text-body-sm text-primary font-semibold hover:underline flex items-center gap-space-2xs" data-path="orders" href="#">
+          查看完整订单日志
+          <span class="material-symbols-outlined text-[16px]">arrow_forward</span>
+</a>
+</div>
+</div>
+<!-- 右侧 40%：风控合规仪表盘与风控概览 -->
+<div class="lg:col-span-5 bg-surface-container-lowest rounded-xl p-space-lg shadow-sm flex flex-col justify-between gap-space-md">
+<div>
+<div class="flex items-center justify-between mb-space-md">
+<div class="flex items-center gap-space-xs">
+<span class="material-symbols-outlined text-primary text-[20px]">verified_user</span>
+<span class="font-headline-md text-headline-md text-on-surface">风控与执行合规看板</span>
+</div>
+<span class="font-label-badge text-label-badge bg-primary-fixed text-on-primary-fixed px-space-sm py-space-2xs rounded-full">合规等级 A+</span>
+</div>
+<!-- 关键风控指示指标 -->
+<div class="flex flex-col gap-space-md">
+<div class="bg-surface-container-low p-space-md rounded-lg flex flex-col gap-space-xs">
+<div class="flex items-center justify-between font-body-sm text-body-sm">
+<span class="text-on-surface-variant">总风险暴露度 (Total Plan Risk)</span>
+<span class="font-tabular-metric-md text-tabular-metric-md font-bold text-on-surface">0.42% / 1.00%</span>
+</div>
+<div class="w-full h-2 rounded-full bg-surface-container-high overflow-hidden">
+<div class="bg-primary h-full rounded-full" style="width: 42%"></div>
+</div>
+<span class="font-label-micro text-label-micro text-on-surface-variant">远低于单日账户最大熔断线 (1.50%)</span>
+</div>
+<div class="bg-surface-container-low p-space-md rounded-lg flex flex-col gap-space-xs">
+<div class="flex items-center justify-between font-body-sm text-body-sm">
+<span class="text-on-surface-variant">头寸集中度 (Max Single Position)</span>
+<span class="font-tabular-metric-md text-tabular-metric-md font-bold text-on-surface">22.4% (沪电股份)</span>
+</div>
+<div class="w-full h-2 rounded-full bg-surface-container-high overflow-hidden">
+<div class="bg-tertiary h-full rounded-full" style="width: 56%"></div>
+</div>
+<span class="font-label-micro text-label-micro text-on-surface-variant">单票上限规则为 40.0%</span>
+</div>
+<!-- 核心提示气泡 -->
+<div class="p-space-md rounded-lg bg-surface-container flex items-start gap-space-sm">
+<span class="material-symbols-outlined text-primary text-[20px] shrink-0 mt-0.5">check_circle</span>
+<div class="flex flex-col">
+<span class="font-body-sm text-body-sm font-semibold text-on-surface">风控策略状态通报</span>
+<p class="font-body-sm text-body-sm text-on-surface-variant mt-space-2xs">
+                全部 4 笔活动 Trade 均已绑定有效风险参考，无任何裸露敞口；其中 2 笔已完成保本垫底上移，系统当前处于安全收益锁定周期。
+              </p>
+</div>
+</div>
+</div>
+</div>
+<div class="pt-space-sm flex items-center justify-between">
+<span class="font-label-micro text-label-micro text-on-surface-variant">自动风控巡检：每秒 1 次</span>
+<button class="font-label-badge text-label-badge text-on-surface-variant hover:text-on-surface flex items-center gap-space-2xs" type="button">
+<span class="material-symbols-outlined text-[14px]">tune</span>
+          风控参数设置
+        </button>
+</div>
+</div>
+</div>
+</div></main></div></body></html>

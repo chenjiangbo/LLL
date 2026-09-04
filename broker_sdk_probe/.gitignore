@@ -1,0 +1,8 @@
+config.local.json
+reports/*.json
+reports/*.md
+samples/*.json
+events_*.jsonl
+*.log
+.venv*/
+__pycache__/

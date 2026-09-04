@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN"><head><meta charset="utf-8"/><meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<style>@layer base{html,body{margin:0;padding:0;}body{overscroll-behavior:none;}main>:first-child{margin-top:0!important;}main>:last-child{margin-bottom:0!important;}}::-webkit-scrollbar{display:none;}</style><script id="tailwind-config">tailwind.config={darkMode:"class",theme:{extend:{colors:{"inverse-on-surface":"#f5f0e8","on-secondary":"#ffffff","primary-fixed-dim":"#8ecf9e","on-tertiary-container":"#554020","on-primary":"#ffffff","tertiary-container":"#c4a66a","surface-dim":"#dbd7cf","error-container":"#ffdad8","tertiary-fixed":"#f8e0a8","surface-container-lowest":"#ffffff","secondary-fixed-dim":"#d4ccbf","on-background":"#2e3230","secondary-container":"#f0e8db","on-tertiary-fixed-variant":"#554020","on-surface":"#2e3230","on-error":"#ffffff","outline":"#74796e","tertiary-fixed-dim":"#dcc48e","surface-tint":"#4a7c59","on-secondary-container":"#5e5548","background":"#faf6f0","secondary":"#6b6358","on-primary-fixed-variant":"#2a6038","inverse-surface":"#2e3230","on-primary-container":"#d8f0de","inverse-primary":"#8ecf9e","surface-container-high":"#eae6de","on-error-container":"#690005","on-tertiary-fixed":"#221a05","primary":"#4a7c59","on-secondary-fixed-variant":"#4a4538","on-tertiary":"#ffffff","primary-container":"#78a886","surface-container-low":"#f5f1ea","on-secondary-fixed":"#1e1a13","on-primary-fixed":"#002110","secondary-fixed":"#f0e8db","surface-container":"#f0ece4","surface-bright":"#faf6f0","error":"#b83230","on-surface-variant":"#4a4e4a","surface-variant":"#e4e0d8","outline-variant":"#c4c8bc","primary-fixed":"#c8e8d0","tertiary":"#705c30","surface-container-highest":"#e4e0d8","surface":"#faf6f0"},borderRadius:{DEFAULT:"0.5rem",lg:"1rem",xl:"1.5rem",full:"9999px"},spacing:{},fontFamily:{headline:["Literata"],display:["Literata"],body:["Nunito Sans"],label:["Nunito Sans"]},fontSize:{}}}}</script></head><body class="bg-surface font-body text-on-surface select-none antialiased min-h-screen"><header class="fixed top-0 left-0 right-0 h-12 bg-surface-container-lowest/90 backdrop-blur-md z-50 flex items-center justify-between px-3 shadow-[0_1px_8px_rgba(46,50,48,0.06)]"><div class="flex items-center gap-5"><div class="flex items-center gap-2 pr-2"><div class="w-7 h-7 rounded-lg bg-surface-container-low flex items-center justify-center text-primary"><span class="material-symbols-outlined text-[20px]">vital_signs</span></div><span class="font-headline font-bold text-sm tracking-wide text-on-surface whitespace-nowrap">LLL 交易研究</span></div><nav class="flex items-center gap-1 text-xs" data-active-classes="bg-primary text-on-primary font-medium rounded-full shadow-sm"><a class="px-3 py-1.5 rounded-full text-on-surface-variant hover:text-on-surface transition-colors whitespace-nowrap" data-path="a-share-market" href="#">A股行情</a><a class="px-3 py-1.5 rounded-full text-on-surface-variant hover:text-on-surface transition-colors whitespace-nowrap" data-path="market-review" href="#">复盘</a><a class="px-3 py-1.5 rounded-full text-on-surface-variant hover:text-on-surface transition-colors whitespace-nowrap" data-path="auto-stock-screener" href="#">自动选股</a><a class="px-3 py-1.5 rounded-full text-on-surface-variant hover:text-on-surface transition-colors whitespace-nowrap" data-path="market-technical-categories" href="#">全市场技术分类</a><a class="px-3 py-1.5 rounded-full text-on-surface-variant hover:text-on-surface transition-colors whitespace-nowrap" data-path="watchlist" href="#">☆ 自选股</a><a class="px-3 py-1.5 rounded-full text-on-surface-variant hover:text-on-surface transition-colors whitespace-nowrap" data-path="trading-overview" href="#">交易系统</a></nav></div><div class="flex items-center gap-2"><button class="flex items-center gap-1 px-2.5 py-1 text-xs text-on-surface-variant bg-surface-container hover:bg-surface-container-high rounded-full transition-colors" type="button"><span class="material-symbols-outlined text-xs">handyman</span><span>独立研究工具</span></button><button class="w-7 h-7 rounded-full bg-error text-on-error flex items-center justify-center hover:opacity-90 transition-opacity" title="暂停执行" type="button"><span class="material-symbols-outlined text-[16px]">pause</span></button><button class="w-7 h-7 rounded-full text-on-surface-variant hover:bg-surface-container flex items-center justify-center transition-colors" title="券商连接" type="button"><span class="material-symbols-outlined text-[18px]">hub</span></button><button class="w-7 h-7 rounded-full text-on-surface-variant hover:bg-surface-container flex items-center justify-center transition-colors" title="系统设置" type="button"><span class="material-symbols-outlined text-[18px]">settings</span></button><button class="w-7 h-7 rounded-full text-on-surface-variant hover:bg-surface-container flex items-center justify-center transition-colors" title="切换模式" type="button"><span class="material-symbols-outlined text-[18px]">light_mode</span></button><img alt="Profile" class="w-7 h-7 rounded-full object-cover ml-1 shadow-sm" src="/prototype-assets/prototype-remote-4.png"/></div></header><aside class="fixed left-0 top-12 bottom-0 w-14 bg-surface-container-low/95 z-40 flex flex-col justify-between items-center py-2.5 shadow-[0_1px_8px_rgba(46,50,48,0.04)]"><nav class="w-full flex flex-col items-center gap-1" data-active-classes="bg-surface-container-high text-primary font-semibold"><a class="w-11 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-all" data-path="trading-overview" href="#"><span class="material-symbols-outlined text-[19px]">monitoring</span><span class="text-[10px] scale-95">总览</span></a><a aria-current="page" class="w-11 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all bg-surface-container-high text-primary font-semibold" data-path="trading-lifecycle" href="#"><span class="material-symbols-outlined text-[19px]">currency_exchange</span><span class="text-[10px] scale-95">交易</span></a><a class="w-11 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-all" data-path="execution-plans" href="#"><span class="material-symbols-outlined text-[19px]">play_circle</span><span class="text-[10px] scale-95">执行</span></a><a class="w-11 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-all" data-path="order-management" href="#"><span class="material-symbols-outlined text-[19px]">receipt_long</span><span class="text-[10px] scale-95">订单</span></a><a class="w-11 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-all" data-path="portfolio-positions" href="#"><span class="material-symbols-outlined text-[19px]">account_balance_wallet</span><span class="text-[10px] scale-95">持仓</span></a></nav><div class="w-full flex flex-col items-center pb-1"><a class="w-11 h-11 rounded-xl bg-primary text-on-primary flex flex-col items-center justify-center shadow-sm hover:opacity-90 transition-opacity" data-path="trading-settings" href="#"><span class="material-symbols-outlined text-[18px]">tune</span><span class="text-[10px] scale-90">配置</span></a></div></aside><div class="pl-14"><main class="relative pt-12 min-h-screen bg-surface"><div class="flex flex-col w-full">
+<!-- Top Metric Summary Band (Clean & High Density) -->
+<section class="p-4 bg-surface-container-low">
+<div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+<!-- Card 1 -->
+<div class="bg-surface-container-lowest p-3 rounded-lg shadow-sm flex flex-col justify-between">
+<div class="flex items-center justify-between text-xs text-on-surface-variant">
+<span>今日委托笔数</span>
+<span class="material-symbols-outlined text-[15px] text-outline">receipt_long</span>
+</div>
+<div class="flex items-baseline gap-2 mt-1">
+<span class="font-headline font-bold text-xl text-on-surface">42</span>
+<span class="text-[11px] text-primary font-medium flex items-center">
+<span class="material-symbols-outlined text-[13px]">arrow_upward</span>+12.5%
+          </span>
+</div>
+</div>
+<!-- Card 2 -->
+<div class="bg-surface-container-lowest p-3 rounded-lg shadow-sm flex flex-col justify-between">
+<div class="flex items-center justify-between text-xs text-on-surface-variant">
+<span>已完全成交</span>
+<span class="material-symbols-outlined text-[15px] text-primary">check_circle</span>
+</div>
+<div class="flex items-baseline gap-2 mt-1">
+<span class="font-headline font-bold text-xl text-primary">31</span>
+<span class="text-[11px] text-on-surface-variant">成交率 73.8%</span>
+</div>
+</div>
+<!-- Card 3 -->
+<div class="bg-surface-container-lowest p-3 rounded-lg shadow-sm flex flex-col justify-between">
+<div class="flex items-center justify-between text-xs text-on-surface-variant">
+<span>部成 / 挂单中</span>
+<span class="material-symbols-outlined text-[15px] text-tertiary">hourglass_bottom</span>
+</div>
+<div class="flex items-baseline gap-2 mt-1">
+<span class="font-headline font-bold text-xl text-tertiary">4</span>
+<span class="text-[11px] bg-tertiary-fixed text-on-tertiary-fixed px-1.5 py-0.2 rounded">待撮合</span>
+</div>
+</div>
+<!-- Card 4 -->
+<div class="bg-surface-container-lowest p-3 rounded-lg shadow-sm flex flex-col justify-between">
+<div class="flex items-center justify-between text-xs text-on-surface-variant">
+<span>已撤单 / 废单</span>
+<span class="material-symbols-outlined text-[15px] text-error">cancel</span>
+</div>
+<div class="flex items-baseline gap-2 mt-1">
+<span class="font-headline font-bold text-xl text-error">7</span>
+<span class="text-[11px] text-on-surface-variant">主动撤单 6 · 拒单 1</span>
+</div>
+</div>
+<!-- Card 5 (Double wide on large screen) -->
+<div class="col-span-2 bg-surface-container-lowest p-3 rounded-lg shadow-sm flex items-center justify-between">
+<div class="flex flex-col">
+<span class="text-xs text-on-surface-variant">今日实际成交总额</span>
+<div class="flex items-baseline gap-2 mt-1">
+<span class="font-headline font-bold text-2xl text-on-surface">¥1,894,220.00</span>
+<span class="text-xs text-on-surface-variant">买入 ¥1.12M / 卖出 ¥774K</span>
+</div>
+</div>
+<div class="flex flex-col items-end">
+<span class="text-[11px] text-on-surface-variant flex items-center gap-1">
+<span class="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span>CTP/L2 专线平稳
+          </span>
+<span class="text-[11px] font-mono text-outline mt-1">RTT: 18ms</span>
+</div>
+</div>
+</div>
+</section>
+<!-- Filter Toolbar (Sticky style) -->
+<section class="px-4 py-2.5 bg-surface-container-lowest flex flex-wrap items-center justify-between gap-3 shadow-sm">
+<div class="flex flex-wrap items-center gap-2 text-xs">
+<!-- Status Tabs -->
+<div class="inline-flex bg-surface-container rounded-lg p-0.5" id="statusFilterTabs">
+<button class="px-3 py-1 rounded-md font-semibold bg-surface-container-lowest text-primary shadow-xs" type="button">全部 (42)</button>
+<button class="px-3 py-1 rounded-md text-on-surface-variant hover:text-on-surface" type="button">已成交 (31)</button>
+<button class="px-3 py-1 rounded-md text-on-surface-variant hover:text-on-surface" type="button">部成 (2)</button>
+<button class="px-3 py-1 rounded-md text-on-surface-variant hover:text-on-surface" type="button">已撤销 (6)</button>
+<button class="px-3 py-1 rounded-md text-error hover:opacity-80" type="button">废单/拒单 (1)</button>
+</div>
+<!-- Direction Filter -->
+<div class="inline-flex items-center bg-surface-container rounded-lg p-0.5 text-xs text-on-surface-variant">
+<button class="px-2.5 py-1 rounded-md bg-surface-container-lowest font-medium text-on-surface" type="button">买卖: 全部</button>
+<button class="px-2 py-1 text-error hover:text-on-surface" type="button">买入</button>
+<button class="px-2 py-1 text-primary hover:text-on-surface" type="button">卖出</button>
+</div>
+<!-- Date selector -->
+<div class="flex items-center gap-1.5 bg-surface-container px-2.5 py-1 rounded-lg text-on-surface text-xs">
+<span class="material-symbols-outlined text-[15px] text-on-surface-variant">calendar_today</span>
+<span>今日 (2023-09-08)</span>
+</div>
+</div>
+<!-- Right Search & Quick Actions -->
+<div class="flex items-center gap-2">
+<div class="relative">
+<span class="material-symbols-outlined absolute left-2.5 top-1.5 text-xs text-outline">search</span>
+<input class="bg-surface-container pl-7 pr-3 py-1 text-xs rounded-lg w-56 focus:outline-none focus:bg-surface-container-lowest focus:ring-1 focus:ring-primary text-on-surface placeholder:text-outline" placeholder="搜索代码、名称、合同号..." type="text"/>
+</div>
+<button class="h-7 w-7 rounded-lg bg-surface-container text-on-surface-variant flex items-center justify-center hover:bg-surface-container-high transition-colors" title="刷新流水" type="button">
+<span class="material-symbols-outlined text-[16px]">sync</span>
+</button>
+<button class="px-2.5 py-1 rounded-lg bg-surface-container text-on-surface-variant hover:bg-surface-container-high text-xs flex items-center gap-1" type="button">
+<span class="material-symbols-outlined text-[15px]">file_download</span>
+<span>导出流水</span>
+</button>
+</div>
+</section>
+<!-- Page Purpose Alert Banner -->
+<div class="px-4 py-1.5 bg-secondary-container/40 flex items-center justify-between text-xs text-on-secondary-container">
+<div class="flex items-center gap-1.5">
+<span class="material-symbols-outlined text-[16px] text-tertiary">info</span>
+<span>当前页面为<strong>真实报单流水与网关诊断</strong>审计台，非 Trade 策略主入口。所有买卖指令已穿透映射至执行母单。</span>
+</div>
+<span class="text-[11px] font-mono opacity-80">通道: 华泰证券 CTP-01 (柜台已就绪)</span>
+</div>
+<!-- Main Split Layout (Table on left/center, Diagnosis Drawer on right) -->
+<div class="flex-1 flex overflow-hidden p-3 gap-3 relative">
+<!-- Left Table Container -->
+<div class="flex-1 bg-surface-container-lowest rounded-xl shadow-sm flex flex-col overflow-hidden">
+<!-- Table Top Meta -->
+<div class="px-4 py-2 bg-surface-container-low flex items-center justify-between text-xs">
+<div class="flex items-center gap-2">
+<span class="font-semibold text-on-surface">实时订单明细 (Order Book Log)</span>
+<span class="text-outline">共 42 条记录</span>
+</div>
+<div class="flex items-center gap-3 text-on-surface-variant text-[11px]">
+<span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-error"></span>红涨/买入</span>
+<span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-primary"></span>绿跌/卖出</span>
+<span class="text-outline">· 自动刷新 3s</span>
+</div>
+</div>
+<!-- Orders Table View -->
+<div class="overflow-x-auto flex-1">
+<table class="w-full text-left text-xs">
+<thead class="bg-surface-container text-on-surface-variant font-medium">
+<tr>
+<th class="py-2 px-3 whitespace-nowrap">时间</th>
+<th class="py-2 px-3 whitespace-nowrap">标的股票</th>
+<th class="py-2 px-3 whitespace-nowrap">所属 Trade</th>
+<th class="py-2 px-3 whitespace-nowrap">动作</th>
+<th class="py-2 px-3 whitespace-nowrap">买卖</th>
+<th class="py-2 px-3 whitespace-nowrap">委托类型</th>
+<th class="py-2 px-3 whitespace-nowrap text-right">报单 / 成交均价</th>
+<th class="py-2 px-3 whitespace-nowrap">委托 / 成交数量</th>
+<th class="py-2 px-3 whitespace-nowrap">状态</th>
+<th class="py-2 px-3 whitespace-nowrap">券商合同号 / ClientID</th>
+<th class="py-2 px-3 text-center whitespace-nowrap">操作</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-surface-container/60 text-on-surface">
+<!-- Row 1 (Focused Order) -->
+<tr class="bg-primary/5 hover:bg-surface-container-low transition-colors cursor-pointer" onclick="selectOrder(1)">
+<td class="py-2.5 px-3 font-mono text-[11px] whitespace-nowrap">10:14:58</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<div class="font-bold text-on-surface">安硕信息</div>
+<div class="text-[10px] font-mono text-outline">300380.SZ</div>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<a class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-surface-container-high text-primary font-mono text-[11px] hover:bg-primary hover:text-on-primary transition-colors" href="#">
+<span class="material-symbols-outlined text-[11px]">link</span>
+                  TR-202309-008
+                </a>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-surface-container text-on-surface">OPEN 建仓</span>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<span class="px-1.5 py-0.5 rounded text-[11px] font-bold bg-error-container text-error">买入</span>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap text-on-surface-variant">限价智能扫单</td>
+<td class="py-2.5 px-3 text-right whitespace-nowrap font-mono">
+<div class="text-on-surface">¥31.12</div>
+<div class="text-[11px] text-error font-medium">¥31.12</div>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<div class="flex items-center justify-between text-[11px] font-mono mb-1">
+<span>200 / 200 股</span>
+<span class="text-primary font-semibold">100%</span>
+</div>
+<div class="w-24 bg-surface-container-high rounded-full h-1.5 overflow-hidden">
+<div class="bg-primary h-1.5 rounded-full" style="width: 100%"></div>
+</div>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium text-[11px]">
+<span class="w-1.5 h-1.5 rounded-full bg-primary"></span>已成交 FILLED
+                </span>
+</td>
+<td class="py-2.5 px-3 font-mono text-[11px] whitespace-nowrap">
+<div class="text-on-surface">ORD-300380-0908-001</div>
+<div class="text-[10px] text-outline">CLI_892019948</div>
+</td>
+<td class="py-2.5 px-3 text-center whitespace-nowrap">
+<div class="flex items-center justify-center gap-1">
+<button class="px-2 py-0.5 rounded bg-primary text-on-primary text-[11px] hover:opacity-90 transition-opacity" onclick="event.stopPropagation(); selectOrder(1)" type="button">详情</button>
+<button class="px-2 py-0.5 rounded bg-surface-container text-on-surface-variant hover:text-on-surface text-[11px] hover:bg-surface-container-high transition-colors" onclick="event.stopPropagation(); selectOrder(1)" type="button">诊断</button>
+</div>
+</td>
+</tr>
+<!-- Row 2 -->
+<tr class="hover:bg-surface-container-low transition-colors cursor-pointer" onclick="selectOrder(2)">
+<td class="py-2.5 px-3 font-mono text-[11px] whitespace-nowrap">09:52:11</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<div class="font-bold text-on-surface">中际旭创</div>
+<div class="text-[10px] font-mono text-outline">300308.SZ</div>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<a class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-surface-container-high text-primary font-mono text-[11px] hover:bg-primary hover:text-on-primary transition-colors" href="#">
+<span class="material-symbols-outlined text-[11px]">link</span>
+                  TR-202309-002
+                </a>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-surface-container text-on-surface">ADD #1 加仓</span>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<span class="px-1.5 py-0.5 rounded text-[11px] font-bold bg-error-container text-error">买入</span>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap text-on-surface-variant">到价突破委托</td>
+<td class="py-2.5 px-3 text-right whitespace-nowrap font-mono">
+<div class="text-on-surface">¥114.50</div>
+<div class="text-[11px] text-error font-medium">¥114.48</div>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<div class="flex items-center justify-between text-[11px] font-mono mb-1">
+<span>800 / 800 股</span>
+<span class="text-primary font-semibold">100%</span>
+</div>
+<div class="w-24 bg-surface-container-high rounded-full h-1.5 overflow-hidden">
+<div class="bg-primary h-1.5 rounded-full" style="width: 100%"></div>
+</div>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium text-[11px]">
+<span class="w-1.5 h-1.5 rounded-full bg-primary"></span>已成交 FILLED
+                </span>
+</td>
+<td class="py-2.5 px-3 font-mono text-[11px] whitespace-nowrap">
+<div class="text-on-surface">ORD-300308-0908-002</div>
+<div class="text-[10px] text-outline">CLI_892019914</div>
+</td>
+<td class="py-2.5 px-3 text-center whitespace-nowrap">
+<div class="flex items-center justify-center gap-1">
+<button class="px-2 py-0.5 rounded bg-surface-container text-on-surface-variant hover:text-on-surface text-[11px] hover:bg-surface-container-high" onclick="event.stopPropagation(); selectOrder(2)" type="button">详情</button>
+<button class="px-2 py-0.5 rounded bg-surface-container text-on-surface-variant hover:text-on-surface text-[11px] hover:bg-surface-container-high" onclick="event.stopPropagation(); selectOrder(2)" type="button">诊断</button>
+</div>
+</td>
+</tr>
+<!-- Row 3: Partial Fill -->
+<tr class="hover:bg-surface-container-low transition-colors cursor-pointer" onclick="selectOrder(3)">
+<td class="py-2.5 px-3 font-mono text-[11px] whitespace-nowrap">10:31:05</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<div class="font-bold text-on-surface">北方华创</div>
+<div class="text-[10px] font-mono text-outline">002371.SZ</div>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<a class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-surface-container-high text-primary font-mono text-[11px] hover:bg-primary hover:text-on-primary transition-colors" href="#">
+<span class="material-symbols-outlined text-[11px]">link</span>
+                  TR-202309-011
+                </a>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-surface-container text-on-surface">REDUCE #1 减仓</span>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<span class="px-1.5 py-0.5 rounded text-[11px] font-bold bg-primary/10 text-primary">卖出</span>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap text-on-surface-variant">限价挂单</td>
+<td class="py-2.5 px-3 text-right whitespace-nowrap font-mono">
+<div class="text-on-surface">¥248.80</div>
+<div class="text-[11px] text-primary font-medium">¥248.80</div>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<div class="flex items-center justify-between text-[11px] font-mono mb-1">
+<span>300 / 600 股</span>
+<span class="text-tertiary font-semibold">50%</span>
+</div>
+<div class="w-24 bg-surface-container-high rounded-full h-1.5 overflow-hidden">
+<div class="bg-tertiary h-1.5 rounded-full" style="width: 50%"></div>
+</div>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-tertiary/10 text-tertiary font-medium text-[11px]">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary animate-ping"></span>部成 PARTIAL
+                </span>
+</td>
+<td class="py-2.5 px-3 font-mono text-[11px] whitespace-nowrap">
+<div class="text-on-surface">ORD-002371-0908-005</div>
+<div class="text-[10px] text-outline">CLI_892020108</div>
+</td>
+<td class="py-2.5 px-3 text-center whitespace-nowrap">
+<div class="flex items-center justify-center gap-1">
+<button class="px-2 py-0.5 rounded bg-error text-on-error text-[11px] hover:opacity-90 font-medium" type="button">撤单</button>
+<button class="px-2 py-0.5 rounded bg-surface-container text-on-surface-variant hover:text-on-surface text-[11px] hover:bg-surface-container-high" onclick="event.stopPropagation(); selectOrder(3)" type="button">诊断</button>
+</div>
+</td>
+</tr>
+<!-- Row 4: Cancelled -->
+<tr class="hover:bg-surface-container-low transition-colors opacity-80 cursor-pointer" onclick="selectOrder(4)">
+<td class="py-2.5 px-3 font-mono text-[11px] whitespace-nowrap">09:30:12</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<div class="font-bold text-on-surface">赛力斯</div>
+<div class="text-[10px] font-mono text-outline">601127.SH</div>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<a class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-surface-container-high text-outline font-mono text-[11px]" href="#">
+<span class="material-symbols-outlined text-[11px]">link</span>
+                  TR-202309-001
+                </a>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-surface-container text-on-surface-variant">OPEN 建仓</span>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<span class="px-1.5 py-0.5 rounded text-[11px] font-bold bg-error-container text-error">买入</span>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap text-on-surface-variant">限价智能扫单</td>
+<td class="py-2.5 px-3 text-right whitespace-nowrap font-mono">
+<div class="text-on-surface">¥82.10</div>
+<div class="text-[11px] text-outline">--</div>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<div class="flex items-center justify-between text-[11px] font-mono mb-1">
+<span>0 / 500 股</span>
+<span class="text-outline">0%</span>
+</div>
+<div class="w-24 bg-surface-container-high rounded-full h-1.5 overflow-hidden">
+<div class="bg-outline h-1.5 rounded-full" style="width: 0%"></div>
+</div>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-surface-container-high text-outline font-medium text-[11px]">
+                  已撤 CANCEL
+                </span>
+</td>
+<td class="py-2.5 px-3 font-mono text-[11px] whitespace-nowrap">
+<div class="text-on-surface">ORD-601127-0908-001</div>
+<div class="text-[10px] text-outline">CLI_892019441</div>
+</td>
+<td class="py-2.5 px-3 text-center whitespace-nowrap">
+<div class="flex items-center justify-center gap-1">
+<button class="px-2 py-0.5 rounded bg-surface-container text-on-surface-variant hover:text-on-surface text-[11px]" onclick="event.stopPropagation(); selectOrder(4)" type="button">详情</button>
+<button class="px-2 py-0.5 rounded bg-surface-container text-on-surface-variant hover:text-on-surface text-[11px]" onclick="event.stopPropagation(); selectOrder(4)" type="button">诊断</button>
+</div>
+</td>
+</tr>
+<!-- Row 5: Filled Exit -->
+<tr class="hover:bg-surface-container-low transition-colors cursor-pointer" onclick="selectOrder(5)">
+<td class="py-2.5 px-3 font-mono text-[11px] whitespace-nowrap">11:12:04</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<div class="font-bold text-on-surface">中科创达</div>
+<div class="text-[10px] font-mono text-outline">300496.SZ</div>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<a class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-surface-container-high text-primary font-mono text-[11px] hover:bg-primary hover:text-on-primary transition-colors" href="#">
+<span class="material-symbols-outlined text-[11px]">link</span>
+                  TR-202308-092
+                </a>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-surface-container text-on-surface">CLOSE 清仓</span>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<span class="px-1.5 py-0.5 rounded text-[11px] font-bold bg-primary/10 text-primary">卖出</span>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap text-on-surface-variant">限价智能扫单</td>
+<td class="py-2.5 px-3 text-right whitespace-nowrap font-mono">
+<div class="text-on-surface">¥78.30</div>
+<div class="text-[11px] text-primary font-medium">¥78.35</div>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<div class="flex items-center justify-between text-[11px] font-mono mb-1">
+<span>1,200 / 1,200 股</span>
+<span class="text-primary font-semibold">100%</span>
+</div>
+<div class="w-24 bg-surface-container-high rounded-full h-1.5 overflow-hidden">
+<div class="bg-primary h-1.5 rounded-full" style="width: 100%"></div>
+</div>
+</td>
+<td class="py-2.5 px-3 whitespace-nowrap">
+<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium text-[11px]">
+<span class="w-1.5 h-1.5 rounded-full bg-primary"></span>已成交 FILLED
+                </span>
+</td>
+<td class="py-2.5 px-3 font-mono text-[11px] whitespace-nowrap">
+<div class="text-on-surface">ORD-300496-0908-009</div>
+<div class="text-[10px] text-outline">CLI_892021102</div>
+</td>
+<td class="py-2.5 px-3 text-center whitespace-nowrap">
+<div class="flex items-center justify-center gap-1">
+<button class="px-2 py-0.5 rounded bg-surface-container text-on-surface-variant hover:text-on-surface text-[11px] hover:bg-surface-container-high" onclick="event.stopPropagation(); selectOrder(5)" type="button">详情</button>
+<button class="px-2 py-0.5 rounded bg-surface-container text-on-surface-variant hover:text-on-surface text-[11px] hover:bg-surface-container-high" onclick="event.stopPropagation(); selectOrder(5)" type="button">诊断</button>
+</div>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<!-- Pagination bar -->
+<div class="px-4 py-2 bg-surface-container-lowest flex items-center justify-between text-xs text-on-surface-variant">
+<span>显示第 1 到 5 项，共 42 条流水</span>
+<div class="flex items-center gap-1">
+<button class="px-2 py-1 rounded bg-surface-container hover:bg-surface-container-high disabled:opacity-40" disabled="" type="button">上一页</button>
+<button class="px-2.5 py-1 rounded bg-primary text-on-primary font-semibold" type="button">1</button>
+<button class="px-2.5 py-1 rounded bg-surface-container hover:bg-surface-container-high" type="button">2</button>
+<button class="px-2.5 py-1 rounded bg-surface-container hover:bg-surface-container-high" type="button">3</button>
+<button class="px-2 py-1 rounded bg-surface-container hover:bg-surface-container-high" type="button">下一页</button>
+</div>
+</div>
+</div>
+<!-- Right Diagnosis Drawer / Detail Panel (16.3 节规格标准) -->
+<aside class="w-96 flex-shrink-0 bg-surface-container-lowest rounded-xl shadow-md flex flex-col overflow-hidden transition-all duration-300" id="orderDetailDrawer">
+<!-- Drawer Header -->
+<div class="p-3 bg-surface-container-low flex items-center justify-between">
+<div class="flex items-center gap-2">
+<span class="w-2.5 h-2.5 rounded-full bg-primary"></span>
+<span class="font-headline font-bold text-sm text-on-surface">订单详情与网关诊断</span>
+</div>
+<div class="flex items-center gap-1">
+<span class="text-[11px] px-2 py-0.5 rounded bg-primary-fixed text-on-primary-fixed font-semibold">已全成</span>
+<button class="w-6 h-6 rounded flex items-center justify-center text-on-surface-variant hover:bg-surface-container" onclick="toggleDrawer()" type="button">
+<span class="material-symbols-outlined text-[16px]">close</span>
+</button>
+</div>
+</div>
+<div class="p-3.5 flex-1 overflow-y-auto space-y-4 text-xs">
+<!-- 1. Order Identification Mapping -->
+<div class="bg-surface-container-low p-3 rounded-lg space-y-1.5">
+<div class="flex items-center justify-between">
+<span class="text-on-surface-variant text-[11px]">Broker Order ID (券商合同号)</span>
+<span class="font-mono font-bold text-on-surface">ORD-300380-0908-001</span>
+</div>
+<div class="flex items-center justify-between">
+<span class="text-on-surface-variant text-[11px]">Client Order ID (系统母单映射)</span>
+<span class="font-mono text-outline">CLI_892019948</span>
+</div>
+<div class="flex items-center justify-between pt-1">
+<span class="text-on-surface-variant text-[11px]">标的与买卖行为</span>
+<span class="font-bold text-error">安硕信息 (300380) · 买入 OPEN</span>
+</div>
+</div>
+<!-- 2. Execution Linkage Penetration (执行链路穿透) -->
+<div>
+<div class="flex items-center justify-between mb-2">
+<span class="font-bold text-on-surface flex items-center gap-1">
+<span class="material-symbols-outlined text-[15px] text-primary">account_tree</span>
+              执行链路穿透 (Execution Penetration)
+            </span>
+</div>
+<div class="space-y-1.5 p-2.5 bg-surface-container rounded-lg font-mono text-[11px]">
+<div class="flex items-center justify-between">
+<span class="text-on-surface-variant">所属 Trade (业务持仓):</span>
+<a class="text-primary font-bold hover:underline flex items-center gap-0.5" href="#">
+                TR-202309-008
+                <span class="material-symbols-outlined text-[12px]">open_in_new</span>
+</a>
+</div>
+<div class="flex items-center justify-between">
+<span class="text-on-surface-variant">所属 TradePlan:</span>
+<span class="text-on-surface">PLAN-安硕突破-20230908</span>
+</div>
+<div class="flex items-center justify-between">
+<span class="text-on-surface-variant">所属 ExecutionPlan:</span>
+<span class="text-on-surface">EXEC-AGGRESSIVE-SWEEP</span>
+</div>
+</div>
+</div>
+<!-- 3. Gateway & Latency Diagnostics (网关诊断数据) -->
+<div>
+<span class="font-bold text-on-surface flex items-center gap-1 mb-2">
+<span class="material-symbols-outlined text-[15px] text-tertiary">speed</span>
+            网关延迟与滑点诊断 (Gateway Diagnostics)
+          </span>
+<div class="grid grid-cols-3 gap-2">
+<div class="p-2 bg-surface-container rounded-lg text-center">
+<div class="text-[10px] text-on-surface-variant">报单内部延迟</div>
+<div class="font-mono font-bold text-sm text-primary mt-0.5">18 ms</div>
+<div class="text-[9px] text-outline">柜台内联通道</div>
+</div>
+<div class="p-2 bg-surface-container rounded-lg text-center">
+<div class="text-[10px] text-on-surface-variant">交易所撮合回执</div>
+<div class="font-mono font-bold text-sm text-on-surface mt-0.5">1,024 ms</div>
+<div class="text-[9px] text-outline">深交所五档快照</div>
+</div>
+<div class="p-2 bg-surface-container rounded-lg text-center">
+<div class="text-[10px] text-on-surface-variant">成交滑点 (Slippage)</div>
+<div class="font-mono font-bold text-sm text-primary mt-0.5">0.00%</div>
+<div class="text-[9px] text-primary">零滑点成交</div>
+</div>
+</div>
+</div>
+<!-- 4. Lifecycle Status Timeline (状态时间线) -->
+<div>
+<span class="font-bold text-on-surface flex items-center gap-1 mb-2">
+<span class="material-symbols-outlined text-[15px] text-primary">timeline</span>
+            状态生命周期时间线
+          </span>
+<div class="relative pl-4 space-y-3">
+<div class="relative flex items-start gap-2">
+<div class="absolute -left-[19px] top-1 w-2.5 h-2.5 rounded-full bg-primary"></div>
+<div>
+<div class="flex items-center gap-2">
+<span class="font-mono font-bold text-on-surface">10:14:58.120</span>
+<span class="px-1 py-0.2 rounded bg-surface-container text-[10px] text-on-surface">客户端报送</span>
+</div>
+<p class="text-[11px] text-on-surface-variant mt-0.5">指令通过内部风控引擎校验，送达柜台</p>
+</div>
+</div>
+<div class="relative flex items-start gap-2">
+<div class="absolute -left-[19px] top-1 w-2.5 h-2.5 rounded-full bg-primary"></div>
+<div>
+<div class="flex items-center gap-2">
+<span class="font-mono font-bold text-on-surface">10:15:00.034</span>
+<span class="px-1 py-0.2 rounded bg-surface-container text-[10px] text-on-surface">交易所已确认</span>
+</div>
+<p class="text-[11px] text-on-surface-variant mt-0.5">深交所接收委托，进入集中撮合队列</p>
+</div>
+</div>
+<div class="relative flex items-start gap-2">
+<div class="absolute -left-[19px] top-1 w-2.5 h-2.5 rounded-full bg-primary"></div>
+<div>
+<div class="flex items-center gap-2">
+<span class="font-mono font-bold text-on-surface">10:15:02.144</span>
+<span class="px-1 py-0.2 rounded bg-primary-fixed text-on-primary-fixed text-[10px] font-semibold">撮合全成 FILLED</span>
+</div>
+<p class="text-[11px] text-on-surface-variant mt-0.5">主笔撮合成交完毕，更新持仓状态</p>
+</div>
+</div>
+</div>
+</div>
+<!-- 5. Execution Fills Detail (逐笔成交明细) -->
+<div>
+<div class="flex items-center justify-between mb-2">
+<span class="font-bold text-on-surface flex items-center gap-1">
+<span class="material-symbols-outlined text-[15px] text-outline">receipt</span>
+              逐笔撮合成交明细
+            </span>
+<span class="text-[11px] text-outline">共 1 笔分笔</span>
+</div>
+<div class="bg-surface-container rounded-lg p-2.5 space-y-2">
+<div class="flex items-center justify-between font-mono text-[11px] pb-1.5">
+<div>
+<span class="font-bold text-on-surface">10:15:02</span>
+<span class="ml-1 text-on-surface-variant">分笔 #1</span>
+</div>
+<div class="text-right">
+<span class="font-bold text-on-surface">200 股</span>
+<span class="text-error ml-1 font-semibold">@ ¥31.12</span>
+</div>
+</div>
+<div class="grid grid-cols-2 gap-2 text-[10px] text-on-surface-variant pt-1">
+<div>券商佣金: <span class="font-mono text-on-surface">¥5.00</span> (最低)</div>
+<div>印花税: <span class="font-mono text-on-surface">¥0.00</span> (买入免收)</div>
+<div>过户规费: <span class="font-mono text-on-surface">¥0.12</span></div>
+<div>总费用扣减: <span class="font-mono font-semibold text-on-surface">¥5.12</span></div>
+</div>
+</div>
+</div>
+<!-- Quick actions at drawer bottom -->
+<div class="pt-2 flex items-center gap-2">
+<button class="flex-1 py-1.5 rounded-lg bg-surface-container hover:bg-surface-container-high text-on-surface font-medium text-xs flex items-center justify-center gap-1" type="button">
+<span class="material-symbols-outlined text-[14px]">terminal</span>
+<span>复制报文日志</span>
+</button>
+<button class="flex-1 py-1.5 rounded-lg bg-primary text-on-primary font-medium text-xs flex items-center justify-center gap-1" type="button">
+<span class="material-symbols-outlined text-[14px]">travel_explore</span>
+<span>跳转 Trade 视图</span>
+</button>
+</div>
+</div>
+</aside>
+</div>
+</div>
+<script>
+  function selectOrder(index) {
+    const drawer = document.getElementById('orderDetailDrawer');
+    if (drawer) {
+      drawer.classList.remove('hidden');
+    }
+  }
+
+  function toggleDrawer() {
+    const drawer = document.getElementById('orderDetailDrawer');
+    if (drawer) {
+      drawer.classList.toggle('hidden');
+    }
+  }
+</script></main></div></body></html>
