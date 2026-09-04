@@ -220,6 +220,7 @@ export default function TradingSystemShell({
   const [control, setControl] = useState<any>({ execution_paused: false });
   const [account, setAccount] = useState<any>(null);
   const [broker, setBroker] = useState<any>(null);
+  const [reconciliationIssueCount, setReconciliationIssueCount] = useState(0);
   const [dataRevision, setDataRevision] = useState(0);
   const [shellError, setShellError] = useState<string | null>(null);
   const [internalSettingsOpen, setInternalSettingsOpen] = useState(false);
@@ -245,14 +246,14 @@ export default function TradingSystemShell({
     const fixedTarget = tradeType === "FIXED_TARGET";
     setPrototypePlanForm({
       trade_type: tradeType,
-      thesis: values.textarea_0 || "",
-      reference_entry_price: values.input_2 || "",
-      max_acceptable_entry_price: values.input_3 || "",
-      risk_reference_price: values.input_4 || "",
-      plan_risk_pct: (values.input_5 || "").replace("%", ""),
+      thesis: values.thesis || values.textarea_0 || "",
+      reference_entry_price: values.reference_entry_price || values.input_2 || "",
+      max_acceptable_entry_price: values.max_acceptable_entry_price || values.input_3 || "",
+      risk_reference_price: values.risk_reference_price || values.input_4 || "",
+      plan_risk_pct: (values.plan_risk_pct || values.input_5 || "").replace("%", ""),
       target_type: fixedTarget ? "FIXED_TARGET" : "TREND_FOLLOWING",
-      target_price: fixedTarget ? values.input_6 || "" : "",
-      expected_price: fixedTarget ? "" : values.input_6 || "",
+      target_price: fixedTarget ? values.target_price || values.input_6 || "" : "",
+      expected_price: fixedTarget ? "" : values.target_price || values.input_6 || "",
     });
     setPrototypePlanDialogOpen(true);
   };
@@ -264,30 +265,30 @@ export default function TradingSystemShell({
     if (page === "add") {
       setActionInitialValues({
         reasonCode: values.reason_code || "CUSTOM",
-        referencePrice: values.input_2 || "",
-        maxPrice: values.input_3 || "",
-        riskPrice: values.input_4 || "",
-        quantity: values.input_5 || "",
-        reasonText: values.input_1 || "",
+        referencePrice: values.reference_price || values.input_2 || "",
+        maxPrice: values.max_acceptable_price || values.input_3 || "",
+        riskPrice: values.risk_reference_price || values.input_4 || "",
+        quantity: values.quantity || values.input_5 || "",
+        reasonText: values.reason_text || values.input_1 || "",
         failureHandling: ({ exit_add: "EXIT_ADDED_QTY_ONLY", reduce_to: "REDUCE_TO_TARGET_QTY", exit_all: "CLOSE_ALL", manual: "MANUAL_REVIEW" } as Record<string, string>)[values.fail_action] || "EXIT_ADDED_QTY_ONLY",
         riskMode: values.risk_mode === "unified" ? "UNIFIED" : "INDEPENDENT",
-        unifiedRiskReference: values.input_11 || "",
+        unifiedRiskReference: values.unified_risk_reference_price || values.input_11 || "",
       });
     } else if (page === "reduce") {
       setActionInitialValues({
         reasonCode: values.reason_code || "CUSTOM",
         reduceMethod: values.reduce_method || "FIXED_QTY",
-        quantity: values.input_0 || "",
-        referencePrice: values.input_1 || "",
-        minimumPrice: values.input_2 || "",
-        reasonText: values.textarea_0 || "",
+        quantity: values.quantity || values.input_0 || "",
+        referencePrice: values.reference_price || values.input_1 || "",
+        minimumPrice: values.minimum_acceptable_price || values.input_2 || "",
+        reasonText: values.reason_text || values.textarea_0 || "",
         residualMode: values.residual_mode || "KEEP",
       });
     } else {
       setActionInitialValues({
         reasonCode: values.reason_code || "CUSTOM",
         triggerCondition: values.trigger_condition || "",
-        reasonText: values.textarea_0 || "",
+        reasonText: values.reason_text || values.textarea_0 || "",
       });
     }
     setActionDialog(page.toUpperCase() as "ADD" | "REDUCE" | "CLOSE");
@@ -307,6 +308,7 @@ export default function TradingSystemShell({
     setShellError(null);
     setAccount(null);
     setBroker(null);
+    setReconciliationIssueCount(0);
     setControl({ execution_paused: false });
     try {
       const [overview, controlResult, brokerResult] = await Promise.all([
@@ -315,6 +317,7 @@ export default function TradingSystemShell({
         request(accountPath("/api/trading/broker", accountId)),
       ]);
       setAccount(overview.account);
+      setReconciliationIssueCount(Array.isArray(overview.reconciliation_issues) ? overview.reconciliation_issues.length : 0);
       setControl(controlResult.control);
       setBroker(brokerResult);
       setDataRevision((current) => current + 1);
@@ -532,6 +535,7 @@ export default function TradingSystemShell({
               <span className="truncate font-bold text-[#27332c]">{account?.name || "正在读取账号…"}</span>
               <span className="hidden text-[#68736b] sm:inline">{accountType}</span>
               <span className="hidden text-[#68736b] md:inline">· 券商{brokerStatusText}</span>
+              {reconciliationIssueCount > 0 && <span className="hidden rounded bg-[#fff0dc] px-2 py-1 font-bold text-[#8a4b08] sm:inline">· 待处理对账 {reconciliationIssueCount} 项</span>}
             </div>
             <button
               onClick={togglePause}
@@ -677,6 +681,7 @@ function ExecutionComposerDialog({ accountId, onClose, onSaved, onError }: { acc
   const [executionType, setExecutionType] = useState("LIMIT");
   const [price, setPrice] = useState("");
   const [limitPrice, setLimitPrice] = useState("");
+  const [rangeHigh, setRangeHigh] = useState("");
   const [validUntil, setValidUntil] = useState("");
   const [busy, setBusy] = useState(false);
   useEffect(() => {
@@ -689,6 +694,7 @@ function ExecutionComposerDialog({ accountId, onClose, onSaved, onError }: { acc
         setSelectedId(String(ready[0].id));
         setPrice(String(ready[0].input_json?.reference_entry_price || ""));
         setLimitPrice(String(ready[0].input_json?.max_acceptable_entry_price || ready[0].input_json?.reference_entry_price || ""));
+        setRangeHigh(String(ready[0].input_json?.max_acceptable_entry_price || ready[0].input_json?.reference_entry_price || ""));
       }
     }).catch((error) => onError(error instanceof Error ? error.message : "待执行交易计划读取失败"));
   }, [accountId, onError]);
@@ -696,6 +702,8 @@ function ExecutionComposerDialog({ accountId, onClose, onSaved, onError }: { acc
   async function save() {
     if (!selected) { onError("请选择一个已确认的交易计划"); return; }
     if (!price || Number(price) <= 0) { onError("请输入有效执行价格"); return; }
+    if (["PRICE_TRIGGER", "PRICE_RANGE"].includes(executionType) && (!limitPrice || Number(limitPrice) <= 0)) { onError("条件触发计划必须填写触发后的限价保护"); return; }
+    if (executionType === "PRICE_RANGE" && (!rangeHigh || Number(rangeHigh) <= Number(price))) { onError("价格区间的上限必须大于下限"); return; }
     setBusy(true);
     try {
       const created = await request(accountPath("/api/trading/execution-plans", accountId), { method: "POST", body: JSON.stringify({
@@ -707,14 +715,16 @@ function ExecutionComposerDialog({ accountId, onClose, onSaved, onError }: { acc
         valid_until: validUntil ? `${validUntil}T23:59:59+08:00` : null,
         execution_params: executionType === "PRICE_TRIGGER"
           ? { trigger_price: Number(price), limit_price: Number(limitPrice) }
-          : { limit_price: Number(price) },
+          : executionType === "PRICE_RANGE"
+            ? { low_price: Number(price), high_price: Number(rangeHigh), limit_price: Number(limitPrice) }
+            : { limit_price: Number(price) },
       })});
       await request(accountPath(`/api/trading/execution-plans/${created.item.id}/status`, accountId), { method: "PATCH", body: JSON.stringify({ status: "ACTIVE" }) });
       await onSaved();
     } catch (error) { onError(error instanceof Error ? error.message : "执行计划创建失败"); }
     finally { setBusy(false); }
   }
-  return <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/30 p-4"><div className="w-full max-w-lg rounded-xl bg-white p-5 shadow-xl"><div className="mb-4 flex items-center justify-between"><h2 className="text-lg font-bold">创建执行计划</h2><button onClick={onClose} className="text-xl text-[#52616b]">×</button></div>{plans.length === 0 ? <p className="rounded-lg bg-[#fff8ed] p-3 text-sm text-[#8a4b08]">当前账号没有可创建执行计划的已确认交易计划。</p> : <div className="grid gap-3"><label className="text-sm font-bold">交易计划<select value={selectedId} onChange={(event) => { const next = plans.find((plan) => String(plan.id) === event.target.value); setSelectedId(event.target.value); setPrice(String(next?.input_json?.reference_entry_price || "")); }} className="input mt-1">{plans.map((plan) => <option key={plan.id} value={plan.id}>{plan.symbol} · {plan.security_name || "—"} · {plan.calculation_snapshot_json?.planned_qty || 0} 股</option>)}</select></label><label className="text-sm font-bold">执行方式<select value={executionType} onChange={(event) => setExecutionType(event.target.value)} className="input mt-1"><option value="LIMIT">限价委托</option><option value="PRICE_TRIGGER">价格触发</option></select></label><label className="text-sm font-bold">{executionType === "PRICE_TRIGGER" ? "触发价格" : "限价"}<input value={price} onChange={(event) => setPrice(event.target.value)} type="number" min="0.01" step="0.01" className="input mt-1" /></label><label className="text-sm font-bold">有效期<input value={validUntil} onChange={(event) => setValidUntil(event.target.value)} type="date" className="input mt-1" /></label></div>}<div className="mt-5 flex justify-end gap-2"><button onClick={onClose} className="rounded-md border border-[#bfc9c1] px-3 py-2 text-sm font-bold">取消</button><button onClick={() => void save()} disabled={busy || plans.length === 0} className="rounded-md bg-[#0f5238] px-3 py-2 text-sm font-bold text-white disabled:opacity-50">保存并启用</button></div></div></div>;
+  return <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/30 p-4"><div className="w-full max-w-lg rounded-xl bg-white p-5 shadow-xl"><div className="mb-4 flex items-center justify-between"><h2 className="text-lg font-bold">创建执行计划</h2><button onClick={onClose} className="text-xl text-[#52616b]">×</button></div>{plans.length === 0 ? <p className="rounded-lg bg-[#fff8ed] p-3 text-sm text-[#8a4b08]">当前账号没有可创建执行计划的已确认交易计划。</p> : <div className="grid gap-3"><label className="text-sm font-bold">交易计划<select value={selectedId} onChange={(event) => { const next = plans.find((plan) => String(plan.id) === event.target.value); setSelectedId(event.target.value); setPrice(String(next?.input_json?.reference_entry_price || "")); setLimitPrice(String(next?.input_json?.max_acceptable_entry_price || next?.input_json?.reference_entry_price || "")); setRangeHigh(String(next?.input_json?.max_acceptable_entry_price || next?.input_json?.reference_entry_price || "")); }} className="input mt-1">{plans.map((plan) => <option key={plan.id} value={plan.id}>{plan.symbol} · {plan.security_name || "—"} · {plan.calculation_snapshot_json?.planned_qty || 0} 股</option>)}</select></label><label className="text-sm font-bold">执行方式<select value={executionType} onChange={(event) => setExecutionType(event.target.value)} className="input mt-1"><option value="LIMIT">限价委托</option><option value="PRICE_TRIGGER">价格触发</option><option value="PRICE_RANGE">价格区间触发</option></select></label><label className="text-sm font-bold">{executionType === "PRICE_TRIGGER" ? "触发价格" : executionType === "PRICE_RANGE" ? "区间下限" : "限价"}<input value={price} onChange={(event) => setPrice(event.target.value)} type="number" min="0.01" step="0.01" className="input mt-1" /></label>{executionType === "PRICE_RANGE" && <label className="text-sm font-bold">区间上限<input value={rangeHigh} onChange={(event) => setRangeHigh(event.target.value)} type="number" min="0.01" step="0.01" className="input mt-1" /></label>}{["PRICE_TRIGGER", "PRICE_RANGE"].includes(executionType) && <label className="text-sm font-bold">触发后限价保护<input value={limitPrice} onChange={(event) => setLimitPrice(event.target.value)} type="number" min="0.01" step="0.01" className="input mt-1" /></label>}<label className="text-sm font-bold">有效期<input value={validUntil} onChange={(event) => setValidUntil(event.target.value)} type="date" className="input mt-1" /></label></div>}<div className="mt-5 flex justify-end gap-2"><button onClick={onClose} className="rounded-md border border-[#bfc9c1] px-3 py-2 text-sm font-bold">取消</button><button onClick={() => void save()} disabled={busy || plans.length === 0} className="rounded-md bg-[#0f5238] px-3 py-2 text-sm font-bold text-white disabled:opacity-50">保存并启用</button></div></div></div>;
 }
 
 function PrototypeOrderDetailDialog({ data, onClose }: { data: { order: any; fills: any[] }; onClose: () => void }) {
@@ -796,6 +806,8 @@ function OverviewPage({
     }
   }
   useEffect(() => {
+    setData(null);
+    setError(null);
     load();
   }, [accountId]);
   if (error)
@@ -844,8 +856,8 @@ function OverviewPage({
     </div>
   );
   return <PageFrame className="pb-8">
-    <div className="flex flex-wrap items-center justify-between gap-4">
-      <div className="flex items-center gap-3"><span className="h-2.5 w-2.5 animate-pulse rounded-full bg-[#2b543c]" /><span className="text-base font-semibold">账户资产与活动 Trade 全景监控</span><span className="hidden h-4 w-px bg-[#c1c8c1] sm:block" /><span className="text-xs text-[#414943]">基准：沪深300 | 交易日 T+0 实时</span></div>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+      <div className="flex items-center gap-3"><span className="h-2.5 w-2.5 animate-pulse rounded-full bg-[#2b543c]" /><span className="text-base font-semibold">账户资产与活动 Trade 全景监控</span><span className="hidden h-4 w-px bg-[#c1c8c1] sm:block" /><span className="text-xs text-[#414943]">价格口径：最近一次有效行情</span></div>
       <div className="flex items-center gap-2"><div className="flex items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-xs shadow-sm"><Activity className="h-4 w-4 text-[#2b543c]" />交易环境：<b className="text-[#2b543c]">{environmentText}</b></div><div className="flex items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-xs shadow-sm"><span className={`h-2 w-2 rounded-full ${engineText === "已连接" ? "bg-[#2b543c]" : "bg-[#a64b00]"}`} />执行引擎：<b>{engineText}</b></div><button onClick={() => onNavigate("plan")} className="inline-flex items-center gap-1 rounded-lg bg-[#2b543c] px-3 py-2 text-sm font-medium text-white"><Plus className="h-4 w-4" />新建交易</button></div>
     </div>
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -895,6 +907,10 @@ function ExecutionPage({ accountId, onRefresh }: { accountId: number; onRefresh:
     }
   }
   useEffect(() => {
+    setItems([]);
+    setBroker(null);
+    setReadyPlans([]);
+    setError(null);
     load();
   }, [accountId]);
   async function setStatus(id: number, status: string) {
@@ -942,14 +958,14 @@ function ExecutionPage({ accountId, onRefresh }: { accountId: number; onRefresh:
   const executionPlanIds = new Set(items.map((item) => item.trade_plan_id));
   const brokerConnected = brokerConnectionHealthy(broker?.connection);
   const brokerNodeStatus = broker?.connection?.node_status || {};
-  const executionReady = brokerConnected && brokerNodeStatus.execution_enabled === true && !brokerNodeStatus.reconciliation_required;
+  const executionReady = brokerConnected && brokerNodeStatus.execution_enabled === true && !brokerNodeStatus.reconciliation_required && brokerNodeStatus.paused !== true;
   return (
     <PageFrame>
       <div className="mb-5 flex flex-wrap items-end justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-[#0f5238]">EXECUTION DESK</p><h1 className="mt-1 text-3xl font-bold">交易执行 <span className="text-xl font-normal text-[#52616b]">/ Orders & Routing</span></h1><p className="mt-1 text-sm text-[#52616b]">将已确认的 TradePlan 转换为可管理的执行计划。</p></div><div className="grid grid-cols-3 gap-2 text-center"><div className="rounded-xl border border-[#e2ded4] bg-white px-5 py-3"><p className="text-xs text-[#52616b]">活跃执行</p><b className="text-xl text-[#0f5238]">{items.filter((item) => item.status === "ACTIVE").length}</b></div><div className="rounded-xl border border-[#e2ded4] bg-white px-5 py-3"><p className="text-xs text-[#52616b]">已暂停</p><b className="text-xl">{items.filter((item) => item.status === "PAUSED").length}</b></div><div className="rounded-xl border border-[#e2ded4] bg-white px-5 py-3"><p className="text-xs text-[#52616b]">待创建</p><b className="text-xl">{readyPlans.filter((plan) => !executionPlanIds.has(plan.id)).length}</b></div></div></div>
       {!executionReady && (
         <div className="mb-4 flex items-center justify-between gap-4 rounded-xl border border-[#ffb3b3] bg-[#ffdad6] px-5 py-4 text-[#93000a]">
-          <div className="flex items-center gap-3"><Cable className="h-7 w-7 shrink-0" /><div><b className="block text-base">{!brokerConnected ? "券商未连接" : brokerNodeStatus.reconciliation_required ? "券商已连接，待完成对账" : "当前暂不可执行"}</b><span className="text-sm">暂不可发送委托；可以保存执行意图、查看记录和完成风险复核。</span></div></div>
-          <span className="rounded-lg bg-white px-3 py-2 text-xs font-bold">{!brokerConnected ? "请前往交易设置连接券商" : "完成对账后可执行"}</span>
+          <div className="flex items-center gap-3"><Cable className="h-7 w-7 shrink-0" /><div><b className="block text-base">{!brokerConnected ? "券商未连接" : brokerNodeStatus.reconciliation_required ? "券商已连接，待完成对账" : brokerNodeStatus.paused ? "当前账号已暂停执行" : "当前暂不可执行"}</b><span className="text-sm">暂不可发送委托；可以保存执行意图、查看记录和完成风险复核。</span></div></div>
+          <span className="rounded-lg bg-white px-3 py-2 text-xs font-bold">{!brokerConnected ? "请前往交易设置连接券商" : brokerNodeStatus.reconciliation_required ? "完成对账后可执行" : brokerNodeStatus.paused ? "恢复账号执行后可发送委托" : "检查执行权限后重试"}</span>
         </div>
       )}
       {error && <ErrorBox message={error} onRetry={load} />}
@@ -1115,6 +1131,9 @@ function OrdersPage({ accountId }: { accountId: number }) {
     }
   }
   useEffect(() => {
+    setItems([]);
+    setSelected(null);
+    setError(null);
     load();
   }, [accountId]);
   async function cancel(id: number) {
@@ -1259,6 +1278,10 @@ function PositionsPage({
     }
   }
   useEffect(() => {
+    setData(null);
+    setAction(null);
+    setRiskAction(null);
+    setError(null);
     load();
   }, [accountId]);
   return (
@@ -1617,8 +1640,7 @@ export function SettingsPage({ accountId, onRefresh, onClose, mode = "trade" }: 
   if (!isGlobal)
     return (
       <SettingsDialog onClose={onClose}>
-        <ExactTradeSettings account={account} setAccount={setAccount} risk={risk} setRisk={setRisk} brokerAccounts={brokerAccounts} brokerForm={brokerForm} setBrokerForm={setBrokerForm} setBrokerDialogOpen={setBrokerDialogOpen} busy={busy} testingBrokerId={testingBrokerId} save={save} testBrokerProfile={testBrokerProfile} deleteBrokerProfile={deleteBrokerProfile} editBrokerProfile={editBrokerProfile} />
-        {brokerDialogOpen && <BrokerAccountDialog brokerForm={brokerForm} setBrokerForm={setBrokerForm} setBrokerDialogOpen={setBrokerDialogOpen} createBrokerAccount={saveBrokerAccount} busy={busy} editing={editingBrokerId !== null} />}
+        <CurrentAccountSettings risk={risk} setRisk={setRisk} save={save} accountId={accountId} brokerAccounts={brokerAccounts} />
         {notice && <div className="fixed bottom-5 right-5 z-[80] inline-flex items-center gap-2 rounded-lg bg-[#0f5238] px-4 py-3 text-sm font-bold text-white shadow-lg" role="status"><CheckCircle2 className="h-4 w-4" />{notice}</div>}
       </SettingsDialog>
     );
@@ -1651,7 +1673,7 @@ export function SettingsPage({ accountId, onRefresh, onClose, mode = "trade" }: 
           )}
         </nav>}
         <div className="space-y-6">
-          {isGlobal && settingsSection === "account" && <><BrokerAccountsPanel brokerAccounts={brokerAccounts} brokerForm={brokerForm} setBrokerForm={setBrokerForm} setBrokerDialogOpen={setBrokerDialogOpen} busy={busy} testingBrokerId={testingBrokerId} testBrokerProfile={testBrokerProfile} deleteBrokerProfile={deleteBrokerProfile} editBrokerProfile={editBrokerProfile} /><NodeSettingsPanel brokerAccounts={brokerAccounts} /></>}
+          {isGlobal && settingsSection === "account" && <BrokerAccountsPanel brokerAccounts={brokerAccounts} brokerForm={brokerForm} setBrokerForm={setBrokerForm} setBrokerDialogOpen={setBrokerDialogOpen} busy={busy} testingBrokerId={testingBrokerId} testBrokerProfile={testBrokerProfile} deleteBrokerProfile={deleteBrokerProfile} editBrokerProfile={editBrokerProfile} />}
           {!isGlobal && <Card id="account" className="rounded-xl border border-stone-200/70 bg-white p-5 shadow-sm">
             <div className="mb-4 flex items-center justify-between border-b border-stone-100 pb-4">
               <div className="flex items-center gap-3">
@@ -1818,6 +1840,15 @@ export function SettingsPage({ accountId, onRefresh, onClose, mode = "trade" }: 
   );
 }
 
+function CurrentAccountSettings({ risk, setRisk, save, accountId, brokerAccounts }: any) {
+  const riskField = (label: string, key: string, description: string) => <label className="block rounded-lg border border-stone-200/80 bg-stone-50/80 p-3"><span className="block text-xs font-semibold text-stone-800">{label}</span><span className="mt-1 block text-[11px] text-stone-400">{description}</span><div className="mt-3 flex items-center gap-2"><input type="number" min="0" max="100" step="0.1" value={risk[key] == null ? "" : Number(risk[key]) * 100} onChange={(event) => setRisk({ ...risk, [key]: Number(event.target.value) / 100 })} className="w-full rounded border border-stone-200 bg-white px-2.5 py-1.5 text-sm font-bold outline-none focus:border-[#3a6d50]" /><span className="text-xs text-stone-500">%</span></div></label>;
+  const currentBroker = brokerAccounts.find((item: any) => item.account_id === accountId);
+  return <main className="mx-auto w-full max-w-7xl space-y-5 px-6 py-5" aria-label="当前账号设置">
+    <section className="rounded-xl border border-stone-200/70 bg-white p-5 shadow-sm"><div className="flex items-center justify-between border-b border-stone-100 pb-4"><div><h2 className="text-base font-bold text-stone-900">当前账号设置</h2><p className="mt-1 text-xs text-[#52616b]">配置当前选中账号的交易风控和执行规则。</p></div><button type="button" onClick={() => void save()} className="rounded-lg bg-[#2d5a43] px-4 py-2 text-sm font-bold text-white">保存设置</button></div><div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">{riskField("默认单笔风险比例", "default_trade_risk_pct", "用于计算单笔交易的风险预算")}{riskField("最大单笔风险比例", "max_trade_risk_pct", "超过后禁止提交交易")}{riskField("单票最大仓位比例", "max_single_position_pct", "限制单个标的占用的账户资产")}{riskField("最大总仓位比例", "max_total_exposure_pct", "限制全部持仓占用的账户资产")}</div><div className="mt-4 rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-xs text-stone-500">最低现金留存：{typeof risk.max_total_exposure_pct === "number" ? `${((1 - risk.max_total_exposure_pct) * 100).toFixed(1)}%` : "—"}（根据最大总仓位自动计算）</div></section>
+    <NodeSettingsPanel currentBroker={currentBroker} />
+  </main>;
+}
+
 function BrokerAccountsPanel({ brokerAccounts, brokerForm, setBrokerForm, setBrokerDialogOpen, busy, testingBrokerId, testBrokerProfile, deleteBrokerProfile, editBrokerProfile }: any) {
   function openAdd() {
     setBrokerForm({ name: "", account_type: "SIMULATION", broker: "", broker_account_id: "", broker_strategy_id: "", broker_node_url: "", broker_gm_token: "" });
@@ -1832,23 +1863,21 @@ function BrokerAccountsPanel({ brokerAccounts, brokerForm, setBrokerForm, setBro
   </Card>;
 }
 
-function NodeSettingsPanel({ brokerAccounts }: { brokerAccounts: any[] }) {
-  const liveAccounts = brokerAccounts.filter((item) => item.account_type === "LIVE");
-  const [selectedId, setSelectedId] = useState<number | null>(liveAccounts[0]?.id ?? null);
+function NodeSettingsPanel({ currentBroker }: { currentBroker?: any }) {
+  const selected = currentBroker;
   const [settings, setSettings] = useState({ allow_live_orders: false, start_paused: true });
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const selected = liveAccounts.find((item) => item.id === selectedId);
 
   useEffect(() => {
-    if (!selected) return;
+    if (!selected || selected.account_type !== "LIVE") return;
     setLoading(true); setMessage(null);
     void request(`/api/trading/broker-accounts/${selected.id}/node-settings`)
       .then((result) => setSettings({ allow_live_orders: Boolean(result.settings?.settings?.allow_live_orders), start_paused: Boolean(result.settings?.settings?.start_paused) }))
       .catch((error) => setMessage(error instanceof Error ? error.message : "读取 Node 设置失败"))
       .finally(() => setLoading(false));
-  }, [selectedId, selected?.id]);
+  }, [selected?.id]);
 
   async function save() {
     if (!selected || !password) { setMessage("请输入管理员密码"); return; }
@@ -1862,8 +1891,8 @@ function NodeSettingsPanel({ brokerAccounts }: { brokerAccounts: any[] }) {
 
   return <section className="rounded-xl border border-stone-200/70 bg-white p-5 shadow-sm">
     <div className="mb-4 flex items-center gap-2 border-b border-stone-100 pb-4"><div className="rounded border border-rose-100 bg-rose-50 p-1.5 text-rose-600"><Shield className="h-4 w-4" /></div><div><h2 className="text-base font-bold text-stone-900">实盘交易授权</h2><p className="mt-1 text-xs text-stone-500">修改后同步到对应 Broker Node。变更授权需要管理员密码。</p></div></div>
-    {liveAccounts.length === 0 ? <p className="text-sm text-stone-500">暂无实盘账号。</p> : <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-      <label className="block"><span className="mb-1 block text-xs font-medium text-stone-600">实盘账号</span><select value={selectedId ?? ""} onChange={(event) => setSelectedId(Number(event.target.value))} className="w-full rounded-lg border border-stone-200 px-3 py-2 text-sm outline-none focus:border-[#3a6d50]">{liveAccounts.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+    {!selected ? <p className="text-sm text-stone-500">当前账号未绑定券商账号。</p> : selected.account_type !== "LIVE" ? <p className="text-sm text-stone-500">当前为仿真账号，无需配置实盘交易授权。</p> : <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <div className="rounded-lg bg-stone-50 px-3 py-2 text-sm font-medium text-stone-700">当前账号：{selected.name}</div>
       <label className="flex items-center justify-between rounded-lg bg-stone-50 px-3 py-2"><span className="text-sm font-medium text-stone-700">允许实盘下单</span><input type="checkbox" checked={settings.allow_live_orders} onChange={(event) => setSettings({ ...settings, allow_live_orders: event.target.checked })} disabled={loading} className="h-4 w-4 accent-[#0f5238]" /></label>
       <label className="block"><span className="mb-1 block text-xs font-medium text-stone-600">管理员密码</span><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" placeholder="请输入密码确认" className="w-full rounded-lg border border-stone-200 px-3 py-2 text-sm outline-none focus:border-[#3a6d50]" /></label>
       <div className="flex items-end justify-between gap-3"><p className="text-xs text-stone-500">当前 Node：{selected?.broker_node_url || "—"}</p><button type="button" onClick={() => void save()} disabled={loading} className="rounded-lg bg-[#2d5a43] px-4 py-2 text-sm font-bold text-white disabled:opacity-50">{loading ? "保存中…" : "保存授权"}</button></div>

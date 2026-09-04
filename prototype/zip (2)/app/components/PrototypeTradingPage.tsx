@@ -106,6 +106,9 @@ function decoratePrototypeFormControls(root: Element, page: PrototypePageKey) {
   };
   if (page === "open") {
     markButtons("trade_type", { "趋势交易": "TREND", "反弹波段": "REBOUND", "固定目标": "FIXED_TARGET", "自定义": "CUSTOM" });
+    const fields = ["reference_entry_price", "max_acceptable_entry_price", "risk_reference_price", "plan_risk_pct", "target_price"];
+    root.querySelector("textarea")?.setAttribute("data-prototype-field", "thesis");
+    root.querySelectorAll("input").forEach((input, index) => fields[index] && input.setAttribute("data-prototype-field", fields[index]));
   }
   if (page === "risk") {
     root.querySelector("#newRiskPriceInput")?.setAttribute("data-prototype-field", "risk_reference_price");
@@ -114,6 +117,9 @@ function decoratePrototypeFormControls(root: Element, page: PrototypePageKey) {
   if (page === "add") {
     const reason = root.querySelector("select");
     reason?.setAttribute("name", "reason_code");
+    const fields = ["reason_text", "reference_price", "max_acceptable_price", "risk_reference_price", "quantity", "unified_risk_reference_price"];
+    root.querySelectorAll("input:not([type='radio'])").forEach((input, index) => fields[index] && input.setAttribute("data-prototype-field", fields[index]));
+    root.querySelector("input[name='fail_action']")?.closest("div")?.setAttribute("data-prototype-group", "failure_handling");
   }
   if (page === "reduce") {
     markButtons("reason_code", {
@@ -122,6 +128,11 @@ function decoratePrototypeFormControls(root: Element, page: PrototypePageKey) {
     });
     markButtons("reduce_method", { "固定数量": "FIXED_QTY", "持仓比例": "POSITION_PCT", "目标数量": "TARGET_REMAINING_QTY", "目标仓位": "TARGET_REMAINING_PCT" });
     markButtons("quantity", { "25% (75股)": "75", "33% (100股)": "100", "50% (150股)": "150", "最大 (300股)": "300" });
+    ["quantity", "reference_price", "minimum_acceptable_price"].forEach((field, index) => {
+      const input = Array.from(root.querySelectorAll("input:not([type='radio'])"))[index];
+      input?.setAttribute("data-prototype-field", field);
+    });
+    root.querySelector("textarea")?.setAttribute("data-prototype-field", "reason_text");
     root.querySelectorAll("input[name='residual_mode']").forEach((input, index) => {
       const value = ["KEEP", "NEW_REFERENCE", "MANUAL"][index] || "KEEP";
       input.setAttribute("data-prototype-value", value);
@@ -139,6 +150,7 @@ function decoratePrototypeFormControls(root: Element, page: PrototypePageKey) {
       input.setAttribute("data-prototype-value", value);
       input.setAttribute("value", value);
     });
+    root.querySelector("textarea")?.setAttribute("data-prototype-field", "reason_text");
   }
 }
 
@@ -184,6 +196,16 @@ function replaceTextEverywhere(root: Element, from: string, to: string) {
     current = walker.nextNode();
   }
   nodes.forEach((node) => { node.nodeValue = (node.nodeValue || "").split(from).join(to); });
+}
+
+function replaceLeafText(root: Element, pattern: RegExp, replacement: string) {
+  root.querySelectorAll("span, p, div").forEach((element) => {
+    if (element.children.length > 0) return;
+    const value = (element.textContent || "").trim();
+    if (!pattern.test(value)) return;
+    pattern.lastIndex = 0;
+    element.textContent = value.replace(pattern, replacement);
+  });
 }
 
 function replacePatternEverywhere(root: Element, pattern: RegExp, replacement: string) {
@@ -643,9 +665,10 @@ function writePendingExecutionRows(root: Element, data: any) {
   const tbody = table?.querySelector("tbody");
   const template = tbody?.querySelector(":scope > tr");
   if (!table || !tbody || !template) return;
+  const executionTradePlanIds = new Set((Array.isArray(data.execution_plans) ? data.execution_plans : []).map((plan: any) => Number(plan.trade_plan_id)));
   const plans = (Array.isArray(data.trades) ? data.trades : []).flatMap((trade: any) =>
     (Array.isArray(trade.plans) ? trade.plans : [])
-      .filter((plan: any) => ["READY", "ARMED"].includes(plan.status))
+      .filter((plan: any) => ["READY", "ARMED"].includes(plan.status) && !executionTradePlanIds.has(Number(plan.id)))
       .map((plan: any) => ({ trade, plan }))
   );
   if (!plans.length) {
@@ -870,7 +893,8 @@ function hydrateMarkup(root: Element, data: any, page: PrototypePageKey, detail?
     ? trade.plans.reduce((sum: number, plan: any) => sum + Number(plan.calculation_snapshot_json?.planned_risk_amount || plan.action_risk_budget_amount || 0), 0)
     : 0), 0);
   const brokerConnected = data.broker_status?.status === "CONNECTED" || data.broker_status?.ok === true;
-  const brokerReady = brokerConnected && data.broker_status?.node_status?.agent_online !== false && data.broker_status?.node_status?.execution_enabled !== false && !data.broker_status?.node_status?.paused && !data.broker_status?.node_status?.reconciliation_required;
+  const reconciliationIssues = Array.isArray(data.reconciliation_issues) ? data.reconciliation_issues : [];
+  const brokerReady = brokerConnected && data.broker_status?.node_status?.agent_online !== false && data.broker_status?.node_status?.execution_enabled !== false && !data.broker_status?.node_status?.paused && !data.broker_status?.node_status?.reconciliation_required && reconciliationIssues.length === 0;
   const risk = typeof account.equity === "number" && typeof data.risk_profile?.default_trade_risk_pct === "number"
     ? account.equity * data.risk_profile.default_trade_risk_pct
     : null;
@@ -930,6 +954,11 @@ function hydrateMarkup(root: Element, data: any, page: PrototypePageKey, detail?
       replacePatternEverywhere(root, /已结束\s*\(\d+\)/g, `已结束 (${trades.filter((item: any) => ["CLOSED", "COMPLETED"].includes(item.status)).length})`);
       replacePatternEverywhere(root, /已取消\s*\(\d+\)/g, `已取消 (${count("CANCELLED")})`);
       replacePatternEverywhere(root, /共\s*—\s*笔交易/g, `共 ${trades.length} 笔交易`);
+      replaceTextEverywhere(root, "共 — 笔交易", `共 ${trades.length} 笔交易`);
+      replaceLeafText(root, /^共\s*—\s*笔交易$/, `共 ${trades.length} 笔交易`);
+      const totalLabel = Array.from(root.querySelectorAll("span")).find((element) => (element.textContent || "").trim() === "共 — 笔交易");
+      const totalValue = totalLabel?.querySelector("strong");
+      if (totalValue) totalValue.textContent = String(trades.length);
       replaceExactText(root, "12", String(trades.length));
       const pages = Math.max(1, Math.ceil(trades.length / 10));
       replaceExactText(root, "第 1 / 2 页", `第 1 / ${pages} 页`);
@@ -942,7 +971,9 @@ function hydrateMarkup(root: Element, data: any, page: PrototypePageKey, detail?
   if (page === "overview") {
     replaceRecentActions(root, Array.isArray(data.orders) ? data.orders : [], Array.isArray(data.fills) ? data.fills : []);
     replacePrototypeSection(root, "账户敞口与技术分级监控快照", "当前账号暂无可展示的风险与技术快照。");
-    replacePrototypeSection(root, "待处理事项", trades.length ? `当前账号有 ${trades.length} 笔 Trade，请进入交易列表查看当前动作。` : "当前账号暂无待处理事项。");
+    replacePrototypeSection(root, "待处理事项", reconciliationIssues.length
+      ? `当前账号有 ${reconciliationIssues.length} 项未解决对账事项，确认前不会发送新的委托。`
+      : trades.length ? `当前账号有 ${trades.length} 笔 Trade，请进入交易列表查看当前动作。` : "当前账号暂无待处理事项。");
   }
   if (page === "orders") {
     const orders = Array.isArray(data.orders) ? data.orders : [];
@@ -974,15 +1005,23 @@ function hydrateMarkup(root: Element, data: any, page: PrototypePageKey, detail?
     replacePatternEverywhere(root, /今日委托笔数\s+receipt_long\s+\d+/g, `今日委托笔数 receipt_long ${orders.length}`);
     replacePatternEverywhere(root, /已完全成交\s+check_circle\s+\d+/g, `已完全成交 check_circle ${count(["FILLED"])}`);
     replacePatternEverywhere(root, /部成 \/ 挂单中\s+hourglass_bottom\s+\d+/g, `部成 / 挂单中 hourglass_bottom ${count(["PARTIALLY_FILLED", "PENDING_SUBMIT", "SUBMITTED", "ACCEPTED"])}`);
-    replacePatternEverywhere(root, /已撤单 \/ 废单\s+cancel\s+\d+\s+主动撤单\s+\d+\s+·\s+拒单\s+\d+/g, `已撤单 / 废单 cancel ${count(["CANCELLED", "REJECTED", "EXPIRED"])} 主动撤单 ${count(["CANCELLED"])} · 拒单 ${count(["REJECTED"])}`);
+    replacePatternEverywhere(root, /已撤单 \/ 废单\s+cancel\s+(?:\d+|—)\s+主动撤单\s+(?:\d+|—)\s+·\s+拒单\s+(?:\d+|—)/g, `已撤单 / 废单 cancel ${count(["CANCELLED", "REJECTED", "EXPIRED"])} 主动撤单 ${count(["CANCELLED"])} · 拒单 ${count(["REJECTED"])}`);
     replacePatternEverywhere(root, /实时订单明细 \(Order Book Log\) 共 \d+ 条记录/g, `实时订单明细 (Order Book Log) 共 ${orders.length} 条记录`);
     replacePatternEverywhere(root, /显示第 \d+ 到 \d+ 项，共 \d+ 条流水/g, `显示第 ${orders.length ? 1 : 0} 到 ${orders.length} 项，共 ${orders.length} 条流水`);
+    replaceLeafText(root, /^已撤单 \/ 废单\s+cancel\s+(?:\d+|—)\s+主动撤单\s+(?:\d+|—)\s+·\s+拒单\s+(?:\d+|—)$/, `已撤单 / 废单 cancel ${count(["CANCELLED", "REJECTED", "EXPIRED"])} 主动撤单 ${count(["CANCELLED"])} · 拒单 ${count(["REJECTED"])}`);
+    const cancelledCardLabel = Array.from(root.querySelectorAll("span")).find((element) => (element.textContent || "").trim() === "已撤单 / 废单");
+    const cancelledCard = cancelledCardLabel?.parentElement?.parentElement;
+    const cancelledMetric = cancelledCard?.querySelector(".text-xl");
+    const cancelledDetail = cancelledCard?.querySelector(".text-\\[11px\\]");
+    if (cancelledMetric) cancelledMetric.textContent = String(count(["CANCELLED", "REJECTED", "EXPIRED"]));
+    if (cancelledDetail) cancelledDetail.textContent = `主动撤单 ${count(["CANCELLED"])} · 拒单 ${count(["REJECTED"])}`;
     const drawer = root.querySelector("#orderDetailDrawer");
     drawer?.remove();
   }
   if (page === "execution") {
     const plans = Array.isArray(data.execution_plans) ? data.execution_plans : [];
-    const tradePlans = trades.flatMap((trade: any) => trade.plans || []).filter((plan: any) => ["READY", "ARMED"].includes(plan.status));
+    const executionTradePlanIds = new Set(plans.map((plan: any) => Number(plan.trade_plan_id)));
+    const tradePlans = trades.flatMap((trade: any) => trade.plans || []).filter((plan: any) => ["READY", "ARMED"].includes(plan.status) && !executionTradePlanIds.has(Number(plan.id)));
     const executionReadiness = brokerReady ? "引擎就绪" : data.broker_status?.node_status?.agent_online === false ? "执行器离线" : "当前不可执行";
     replaceTextEverywhere(root, "引擎就绪", executionReadiness);
     bindLabelValue(root, ["待执行计划"], `${tradePlans.length} 笔待路由`);

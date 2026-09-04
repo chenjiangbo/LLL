@@ -1072,6 +1072,12 @@ def create_app() -> FastAPI:
             if poller:
                 poller.poll([])
             return
+        # A locally unresolved order/event is not proof that the broker did
+        # not receive a command.  Stop the account execution loop until the
+        # reconciliation record is resolved, so a second command cannot be
+        # created against an uncertain broker state.
+        if execution_store.list_reconciliation_issues(account_id):
+            return
         raw_gateway = broker_gateway._gateway(account_id)
         node_status = raw_gateway.get_status()
         if node_status.get("execution_enabled") is not True or node_status.get("paused") is True or node_status.get("reconciliation_required") is True:
@@ -1600,6 +1606,7 @@ def create_app() -> FastAPI:
         plans = execution_store.list_execution_plans(account_id)
         orders = execution_store.list_orders(account_id)
         fills = execution_store.list_fills(account_id)
+        reconciliation_issues = execution_store.list_reconciliation_issues(account_id)
         try:
             broker_status = broker_gateway.connect(account_id)
         except BrokerNotConnectedError as exc:
@@ -1618,8 +1625,12 @@ def create_app() -> FastAPI:
             "fills": fills,
             "broker_status": broker_status,
             "control": execution_store.get_control(account_id),
+            "reconciliation_issues": reconciliation_issues,
             "data_quality": {
-                "complete": broker_status.get("status") == "CONNECTED" and not bool((broker_status.get("node_status") or {}).get("reconciliation_required")),
+                "complete": broker_status.get("status") == "CONNECTED"
+                and not bool((broker_status.get("node_status") or {}).get("reconciliation_required"))
+                and not reconciliation_issues,
+                "reconciliation_issue_count": len(reconciliation_issues),
                 "updated_at": datetime.now(UTC).isoformat(),
             },
         }
@@ -1821,6 +1832,9 @@ def create_app() -> FastAPI:
         control = execution_store.get_control(account_id)
         if control.get("execution_paused"):
             raise HTTPException(status_code=409, detail="交易执行已暂停")
+        unresolved_issues = execution_store.list_reconciliation_issues(account_id)
+        if unresolved_issues:
+            raise HTTPException(status_code=409, detail=f"当前账号有 {len(unresolved_issues)} 项未解决对账事项，确认前不能提交新订单")
         try:
             order = OrderInput(execution_plan_id=execution_plan_id, symbol=execution_plan["symbol"], side=execution_plan["side"], account_id=account_id, **body)
             existing_plan_orders = [

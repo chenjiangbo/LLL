@@ -242,7 +242,7 @@ class ExecutionStore:
         if item.side not in {"BUY", "SELL"} or item.execution_type not in {"LIMIT", "PERSISTENT_LIMIT", "PRICE_TRIGGER", "PRICE_RANGE"}:
             raise ExecutionValidationError("execution plan type or side is invalid")
         params = item.execution_params or {}
-        if item.execution_type in {"LIMIT", "PERSISTENT_LIMIT"}:
+        if item.execution_type in {"LIMIT", "PERSISTENT_LIMIT", "PRICE_TRIGGER", "PRICE_RANGE"}:
             _positive_number(params.get("limit_price"), "limit_price")
         if item.execution_type == "PRICE_TRIGGER":
             _positive_number(params.get("trigger_price"), "trigger_price")
