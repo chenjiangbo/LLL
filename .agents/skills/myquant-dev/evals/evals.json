@@ -1,0 +1,36 @@
+{
+  "skill_name": "myquant_dev",
+  "description": "测试用例：掘金量化策略开发",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "帮我写一个基于布林线的均值回归策略，订阅SHSE.600004，日线数据",
+      "expected_output": "一个完整的掘金策略，包含init和on_bar函数，使用subscribe订阅，使用context.data获取数据",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "如何在掘金中使用context.data获取滑窗数据？能举个例子吗",
+      "expected_output": "解释context.data的用法，包括symbol、frequency、count、fields参数，返回格式说明",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "我写的策略运行时报错说数据获取失败，可能是什么原因？",
+      "expected_output": "提示检查subscribe是否已调用、count参数是否大于0、数据格式是否正确",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "帮我看看gmquant/strategies/boll_reversion.py这个策略有什么问题，为什么没有触发交易",
+      "expected_output": "分析策略代码，检查交易逻辑、持仓检查、下单条件是否正确",
+      "files": ["gmquant/strategies/boll_reversion.py"]
+    },
+    {
+      "id": 5,
+      "prompt": "如何订阅期货品种的行情？比如螺纹钢主力连续合约",
+      "expected_output": "说明期货symbol格式，使用SHFE.RB这样的代码",
+      "files": []
+    }
+  ]
+}
