@@ -16,6 +16,8 @@ A-Pre V2 / Early Turn 早期转强实验选股引擎
 from typing import Any
 import math
 
+from backend.screening.double_bottom_rules import POSSIBLE_BONUS, CLEAR_BONUS, ACTIVE_BARS_AFTER_CONFIRMATION
+
 
 def _f(d: dict[str, Any], key: str, default: float = 0.0) -> float:
     val = d.get(key)
@@ -60,6 +62,8 @@ class EarlyTurnEngine:
         ts_code: str,
         trade_date: str,
         features: dict[str, Any],
+        *,
+        prep_score_mode: str = "rounded",
     ) -> dict[str, Any]:
         """对单只股票的日线及技术特征计算 Early Turn 8 大模块分值与状态"""
         data_status = features.get("data_status") if features else None
@@ -284,12 +288,35 @@ class EarlyTurnEngine:
         ma20_curve_improve = _f(features, "ma20_curve_improve")
         ma_spread_atr = _f(features, "ma_spread_atr", default=9.9)
 
-        prep_slope_turn = (
-            slope_flat_score(ma10_slope_5d)
-            + slope_flat_score(ma20_slope_5d)
-            + curve_improve_score(ma10_curve_improve)
-            + curve_improve_score(ma20_curve_improve)
-        )
+        # A-PreV2 的新方案；独立技术分类仍显式使用其原有评分口径。
+        prep_slope_breakdown = None
+        if prep_score_mode == "rounded":
+            rounded = features.get("rounded_repair")
+            required = ("ma5_decelerating", "ma5_flattened", "ma5_rounded")
+            if (not isinstance(rounded, dict) or not rounded.get("indicators_available")
+                    or any(not isinstance(rounded.get(key), bool) for key in required)):
+                raise ValueError("底部准备度评分缺少 MA5 圆弧诊断数据")
+            ma5_points = (5.0 if rounded["ma5_decelerating"] else 0.0) + (5.0 if rounded["ma5_flattened"] else 0.0) + (5.0 if rounded["ma5_rounded"] else 0.0)
+            ma5_daily = rounded.get('ma5_daily_slopes')
+            if not isinstance(ma5_daily, list) or len(ma5_daily) < 3 or any(not isinstance(x, (int, float)) or not math.isfinite(x) for x in ma5_daily[-3:]):
+                raise ValueError('底部准备度评分缺少 MA5 近期斜率')
+            if ma5_daily[-1] > 0 and ma5_daily[-1] > ma5_daily[-2] > ma5_daily[-3]:
+                ma5_points = max(ma5_points, 10.0)
+            ma10_points = slope_flat_score(ma10_slope_5d) * 0.8 + curve_improve_score(ma10_curve_improve) * 0.7
+            ma20_points = slope_flat_score(ma20_slope_5d) * 0.5 + curve_improve_score(ma20_curve_improve) * 0.5
+            if ma10_slope_5d > 0:
+                ma10_points = 15.0
+            if ma20_slope_5d > 0:
+                ma20_points = 10.0
+            prep_slope_turn = round(ma5_points + ma10_points + ma20_points, 1)
+            prep_slope_breakdown = {"ma5": ma5_points, "ma10": round(ma10_points, 1), "ma20": round(ma20_points, 1)}
+        elif prep_score_mode == "existing":
+            prep_slope_turn = (
+                slope_flat_score(ma10_slope_5d) + slope_flat_score(ma20_slope_5d)
+                + curve_improve_score(ma10_curve_improve) + curve_improve_score(ma20_curve_improve)
+            )
+        else:
+            raise ValueError(f"未知的准备度评分方案：{prep_score_mode}")
 
         if ma_spread_atr <= 0.60:
             prep_compression = 15.0
@@ -301,6 +328,11 @@ class EarlyTurnEngine:
             prep_compression = 4.0
         else:
             prep_compression = 0.0
+        # 已站回三根均线、短线拐升时，适度展开仍是修复，不按压缩不足降分。
+        if (prep_score_mode == 'rounded' and close > ma5 and close > ma10 and close > ma20
+                and ma10_slope_5d > 0 and isinstance(ma5_daily, list) and ma5_daily
+                and ma5_daily[-1] > 0 and ma_spread_atr <= 1.20):
+            prep_compression = 15.0
         if cross_pairs >= 3:
             prep_cross = 10.0
         elif cross_pairs == 2:
@@ -327,14 +359,36 @@ class EarlyTurnEngine:
             or max_drawdown_60d >= 0.10
         ) and days_since_40d_high >= 5
         prep_decline = 10.0 if strong_decline else (5.0 if weak_decline else 0.0)
-        if extension_atr <= 1.0:
+        position_full_limit = 1.5 if prep_score_mode == 'rounded' else 1.0
+        position_partial_limit = 2.0 if prep_score_mode == 'rounded' else 1.5
+        if extension_atr <= position_full_limit:
             prep_position = 5.0
-        elif extension_atr <= 1.5:
+        elif extension_atr <= position_partial_limit:
             prep_position = 3.0
         else:
             prep_position = 0.0
         prep_background_position = prep_decline + prep_position
-        prep_score = round(min(100.0, prep_slope_turn + prep_compression_cross + prep_retake + prep_background_position), 1)
+        prep_base_score = round(min(100.0, prep_slope_turn + prep_compression_cross + prep_retake + prep_background_position), 1)
+        bottom_bonus = 0.0
+        if prep_score_mode == "rounded":
+            if "bottom_structure_type" not in features or "bottom_structure_quality" not in features:
+                raise ValueError("底部准备度评分缺少双底结构数据")
+            bottom_type = features["bottom_structure_type"]
+            bottom_quality = features["bottom_structure_quality"]
+            if bottom_type not in {"NONE", "MICRO_DOUBLE_BOTTOM", "STANDARD_DOUBLE_BOTTOM"} or bottom_quality not in {"NONE", "POSSIBLE", "CLEAR"}:
+                raise ValueError("双底结构类型或质量无效")
+            if (bottom_type == "NONE") != (bottom_quality == "NONE"):
+                raise ValueError("双底结构类型与质量不一致")
+            if bottom_type == "STANDARD_DOUBLE_BOTTOM":
+                age = features.get("bottom_structure_age_bars")
+                confirmed_date = features.get("bottom_structure_confirmed_date")
+                if (not isinstance(age, int) or isinstance(age, bool) or not 0 <= age <= ACTIVE_BARS_AFTER_CONFIRMATION
+                        or not isinstance(confirmed_date, str) or len(confirmed_date) != 8
+                        or confirmed_date > str(trade_date).replace("-", "")):
+                    raise ValueError("日线双底确认日期或有效期无效")
+                bottom_bonus = {"POSSIBLE": POSSIBLE_BONUS, "CLEAR": CLEAR_BONUS}[bottom_quality]
+        prep_score = round(min(100.0, prep_base_score + bottom_bonus), 1)
+        bottom_bonus_applied = round(prep_score - prep_base_score, 1)
 
         # 评分输出统一为 total_score，但语义必须由 score_type 明确区分。
         # FIRST 的 75 分正式入选门槛只比较 TURN_SCORE，保持原策略不变。
@@ -425,7 +479,7 @@ class EarlyTurnEngine:
         if turn_episode_state == "PRE_FIRST_TURN":
             reasons.append({
                 "type": "INFO",
-                "msg": f"底部准备度 {prep_score:.1f}/100：均线走平 {prep_slope_turn:.0f}/40、靠拢交叉 {prep_compression_cross:.0f}/25、夺回均线 {prep_retake:.0f}/20、背景位置 {prep_background_position:.0f}/15",
+                "msg": f"底部准备度 {prep_score:.1f}/100：均线走平 {prep_slope_turn:.0f}/40、均线结构 {prep_compression_cross:.0f}/25、夺回均线 {prep_retake:.0f}/20、背景位置 {prep_background_position:.0f}/15",
             })
         if min_3ma_spread_atr <= 0.51:
             reasons.append({"type": "BONUS", "msg": f"均线系统高度压缩 (离散度/ATR: {min_3ma_spread_atr:.2f})"})
@@ -491,9 +545,13 @@ class EarlyTurnEngine:
                 "turn_score": turn_score,
                 "prep": {
                     "slope_turn": prep_slope_turn,
+                    "slope_breakdown": prep_slope_breakdown,
                     "compression_cross": prep_compression_cross,
                     "retake": prep_retake,
                     "background_position": prep_background_position,
+                    "base_score": prep_base_score,
+                    "bottom_bonus": bottom_bonus_applied,
+                    "bottom_bonus_before_cap": bottom_bonus,
                     "decline": prep_decline,
                     "position": prep_position,
                 },
@@ -558,6 +616,12 @@ class EarlyTurnEngine:
             "first_trigger_close": first_trigger_close,
             "return_since_first_trigger": return_since_first_trigger,
             "structural_damage_flag": structural_damage_flag,
+            "bottom_structure_type": features.get("bottom_structure_type", "NONE"),
+            "bottom_structure_quality": features.get("bottom_structure_quality", "NONE"),
+            "bottom_structure_strength": features.get("bottom_structure_strength", 0),
+            "bottom_first_low_date": features.get("bottom_first_low_date"),
+            "bottom_second_low_date": features.get("bottom_second_low_date"),
+            "bottom_structure_confirmed_date": features.get("bottom_structure_confirmed_date"),
             "features_json": features,
             "score_detail_json": score_detail,
             "reasons_json": reasons,

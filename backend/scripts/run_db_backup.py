@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import gzip
+import shutil
 import subprocess
 import sys
 from datetime import datetime
@@ -18,10 +20,20 @@ def main() -> None:
     backup_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_path = backup_dir / f"lll_market_review_backup_{timestamp}.sql.gz"
+    pg_dump = shutil.which("pg_dump")
+    if not pg_dump:
+        print("[Backup FAILED] pg_dump is not installed or not on PATH; no backup was created.")
+        sys.exit(1)
     print(f"[Backup] Starting full database backup to {backup_path} ...")
-    cmd = f'pg_dump "{database_url}" | gzip > "{backup_path}"'
     try:
-        subprocess.run(cmd, shell=True, check=True)
+        with gzip.open(backup_path, "wb") as output:
+            completed = subprocess.run([pg_dump, database_url], stdout=output, stderr=subprocess.PIPE, check=False)
+        if completed.returncode != 0:
+            backup_path.unlink(missing_ok=True)
+            raise RuntimeError(completed.stderr.decode("utf-8", errors="replace").strip() or "pg_dump failed")
+        if backup_path.stat().st_size <= 20:
+            backup_path.unlink(missing_ok=True)
+            raise RuntimeError("backup output is empty")
         size_mb = backup_path.stat().st_size / (1024 * 1024)
         print(f"[Backup SUCCESS] {backup_path} ({size_mb:.2f} MB)")
     except Exception as exc:

@@ -31,7 +31,7 @@ def test_early_turn_engine_calculation():
         "amount_preheat": 1.3,
     }
 
-    res = engine.evaluate_stock("600683.SH", "20260807", features)
+    res = engine.evaluate_stock("600683.SH", "20260807", features, prep_score_mode="existing")
 
     assert res["ts_code"] == "600683.SH"
     assert res["total_score"] >= 65.0

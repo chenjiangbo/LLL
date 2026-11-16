@@ -71,7 +71,8 @@ def main() -> None:
             from screening_asset_master a
             left join screening_candidate_snapshot s on s.asset_code = a.asset_code
             left join screening_user_watchlist w on w.asset_code = a.asset_code
-            where s.primary_pool in ('A', 'B', 'C') or w.asset_code is not null
+            where a.asset_type = 'stock'
+              and (s.primary_pool in ('A', 'B', 'C') or w.asset_code is not null)
             order by a.asset_code
             """
         ).fetchall()

@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 import psycopg
 from psycopg.rows import dict_row
+from backend.trading.account import normalize_symbol
 from backend.trading.trade import validate_exit_rule
 
 
@@ -21,15 +22,16 @@ class TradePlanInput:
     symbol: str
     security_name: str
     reference_entry_price: float
-    max_acceptable_entry_price: float
     risk_reference_price: float
     plan_risk_pct: float
+    trade_risk_budget_pct: float | None = None
     target_type: Literal["FIXED_TARGET", "TREND_FOLLOWING"] = "TREND_FOLLOWING"
     target_price: float | None = None
     expected_price: float | None = None
     manual_planned_qty: int | None = None
     current_price: float | None = None
     risk_reference_note: str | None = None
+    invalidation_note: str | None = None
     thesis: str | None = None
     selection_source_type: Literal["MANUAL", "STRATEGY", "UNKNOWN"] = "MANUAL"
     selection_strategy: str | None = None
@@ -55,6 +57,7 @@ class TradePlanInput:
     trigger_config_json: dict[str, Any] | None = None
     exit_config_json: dict[str, Any] | None = None
     account_id: int = 0
+    client_request_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -66,6 +69,13 @@ class AccountRiskSettings:
     max_single_position_pct: float
     max_total_position_pct: float
     max_trade_risk_pct: float = 0.02
+    max_account_risk_pct: float | None = None
+    quantity_step: int = 100
+    min_order_quantity: int = 100
+    min_cash_ratio_enabled: bool = False
+    min_cash_ratio_pct: float | None = None
+    max_single_order_notional: float | None = None
+    max_single_order_quantity: float | None = None
 
 
 @dataclass(frozen=True)
@@ -93,12 +103,12 @@ class TradePlanCalculator:
         plan: TradePlanInput,
         account: AccountRiskSettings,
         instrument: InstrumentInfo = InstrumentInfo(),
+        require_complete: bool = False,
     ) -> dict[str, Any]:
         errors: list[str] = []
         warnings: list[str] = []
         try:
             entry = _finite_positive(plan.reference_entry_price, "reference_entry_price")
-            max_entry = _finite_positive(plan.max_acceptable_entry_price, "max_acceptable_entry_price")
             risk_reference = _finite_positive(plan.risk_reference_price, "risk_reference_price")
             equity = _finite_positive(account.account_equity, "account_equity")
             cash = _finite_nonnegative(account.available_cash, "available_cash")
@@ -121,15 +131,29 @@ class TradePlanCalculator:
             max_single_position_pct=single_pct,
             max_total_position_pct=total_pct,
             max_trade_risk_pct=max_trade_risk_pct,
+            max_account_risk_pct=account.max_account_risk_pct,
+            quantity_step=account.quantity_step,
+            min_order_quantity=account.min_order_quantity,
+            min_cash_ratio_enabled=account.min_cash_ratio_enabled,
+            min_cash_ratio_pct=account.min_cash_ratio_pct,
+            max_single_order_notional=account.max_single_order_notional,
+            max_single_order_quantity=account.max_single_order_quantity,
         )
 
-        if max_entry < entry:
-            errors.append("max_acceptable_entry_price must be greater than or equal to reference_entry_price")
         if risk_reference >= entry:
             errors.append("risk_reference_price must be lower than reference_entry_price for OPEN_LONG")
         if account.available_cash < 0:
             errors.append("available_cash cannot be negative")
-        if risk_pct > max_trade_risk_pct:
+        trade_budget_pct = risk_pct
+        if plan.trade_risk_budget_pct is not None:
+            trade_budget_pct = _finite_positive(plan.trade_risk_budget_pct, "trade_risk_budget_pct")
+            if trade_budget_pct > max_trade_risk_pct:
+                errors.append("trade_risk_budget_pct exceeds max_trade_risk_pct")
+            if account.max_account_risk_pct is not None and trade_budget_pct > float(account.max_account_risk_pct):
+                errors.append("trade_risk_budget_pct exceeds max_account_risk_pct")
+            if risk_pct > trade_budget_pct:
+                errors.append("plan_risk_pct exceeds trade_risk_budget_pct")
+        elif risk_pct > max_trade_risk_pct:
             errors.append("plan_risk_pct exceeds max_trade_risk_pct")
         if plan.target_type not in ("FIXED_TARGET", "TREND_FOLLOWING"):
             errors.append("target_type must be FIXED_TARGET or TREND_FOLLOWING")
@@ -140,22 +164,34 @@ class TradePlanCalculator:
                 errors.append("expected_price must be empty for FIXED_TARGET")
         elif plan.target_price is not None:
             errors.append("target_price must be empty for TREND_FOLLOWING")
-        elif plan.expected_price is None or not math.isfinite(plan.expected_price) or plan.expected_price <= entry:
-            errors.append("expected_price must be greater than reference_entry_price for TREND_FOLLOWING")
+        elif plan.expected_price is None:
+            if require_complete and plan.trade_type != "REBOUND":
+                errors.append("expected_price is required when saving a TREND_FOLLOWING plan")
+        elif not math.isfinite(plan.expected_price) or plan.expected_price <= entry:
+            errors.append("expected_price must be greater than reference_entry_price for TREND_FOLLOWING when provided")
         if plan.selection_source_type not in {"MANUAL", "STRATEGY", "UNKNOWN"}:
             errors.append("selection_source_type is invalid")
         if plan.trade_type not in {"TREND", "REBOUND", "FIXED_TARGET", "CUSTOM"}:
             errors.append("trade_type is invalid")
         if plan.trade_type == "REBOUND":
-            if plan.target_zone_lower is None or not math.isfinite(plan.target_zone_lower) or plan.target_zone_lower <= entry:
+            if plan.target_zone_lower is None:
+                if require_complete:
+                    errors.append("target_zone_lower must be greater than reference_entry_price for REBOUND")
+            elif not math.isfinite(plan.target_zone_lower) or plan.target_zone_lower <= entry:
                 errors.append("target_zone_lower must be greater than reference_entry_price for REBOUND")
-            if plan.target_zone_upper is None or not math.isfinite(plan.target_zone_upper) or plan.target_zone_upper <= entry:
+            if plan.target_zone_upper is None:
+                if require_complete:
+                    errors.append("target_zone_upper must be greater than reference_entry_price for REBOUND")
+            elif not math.isfinite(plan.target_zone_upper) or plan.target_zone_upper <= entry:
                 errors.append("target_zone_upper must be greater than reference_entry_price for REBOUND")
             if plan.target_zone_lower is not None and plan.target_zone_upper is not None and plan.target_zone_upper < plan.target_zone_lower:
                 errors.append("target_zone_upper must be greater than or equal to target_zone_lower")
-            if plan.holding_period_days is None or not isinstance(plan.holding_period_days, int) or plan.holding_period_days <= 0:
+            if plan.holding_period_days is None:
+                if require_complete:
+                    errors.append("holding_period_days must be a positive integer for REBOUND")
+            elif not isinstance(plan.holding_period_days, int) or plan.holding_period_days <= 0:
                 errors.append("holding_period_days must be a positive integer for REBOUND")
-            if not (plan.time_invalidation_condition or "").strip():
+            if require_complete and not (plan.time_invalidation_condition or "").strip():
                 errors.append("time_invalidation_condition is required for REBOUND")
         if plan.selection_source_type == "STRATEGY" and (not plan.selection_strategy or not plan.selection_stage or not plan.selection_snapshot_date):
             errors.append("strategy selection source is incomplete")
@@ -167,6 +203,9 @@ class TradePlanCalculator:
         risk_budget_amount = equity * risk_pct
         max_single_amount = equity * single_pct
         max_total_amount = equity * total_pct
+        minimum_cash_amount = None
+        if account.min_cash_ratio_enabled:
+            minimum_cash_amount = equity * _finite_nonnegative(account.min_cash_ratio_pct, "min_cash_ratio_pct")
         remaining_total_capacity = max(0.0, max_total_amount - invested)
 
         if unit_risk <= 0:
@@ -183,15 +222,23 @@ class TradePlanCalculator:
             "CASH_LIMIT": qty_by_cash_raw,
             "TOTAL_POSITION_LIMIT": qty_by_total_raw,
         }
+        if minimum_cash_amount is not None:
+            raw_limits["MIN_CASH_LIMIT"] = max(0.0, equity - minimum_cash_amount - invested) / entry
+        if account.max_single_order_notional is not None:
+            raw_limits["SINGLE_ORDER_AMOUNT_LIMIT"] = _finite_positive(float(account.max_single_order_notional), "max_single_order_notional") / entry
+        if account.max_single_order_quantity is not None:
+            raw_limits["SINGLE_ORDER_QUANTITY_LIMIT"] = _finite_positive(float(account.max_single_order_quantity), "max_single_order_quantity")
         limiting_factor = min(raw_limits, key=raw_limits.get)
         unrounded_recommended_qty = int(math.floor(raw_limits[limiting_factor]))
         recommended_qty = int(math.floor(unrounded_recommended_qty / instrument.quantity_step) * instrument.quantity_step)
         planned_qty = plan.manual_planned_qty if plan.manual_planned_qty is not None else recommended_qty
-        if planned_qty is not None and (not isinstance(planned_qty, int) or planned_qty < 0):
-            errors.append("manual_planned_qty must be a non-negative integer")
+        if planned_qty is not None and (not isinstance(planned_qty, int) or (plan.manual_planned_qty is not None and planned_qty <= 0) or planned_qty < 0):
+            errors.append("manual_planned_qty must be a positive integer")
             planned_qty = 0
         if planned_qty and planned_qty % instrument.quantity_step != 0:
             errors.append(f"planned quantity must be a multiple of quantity_step ({instrument.quantity_step})")
+        if planned_qty and planned_qty < account.min_order_quantity:
+            errors.append(f"planned quantity must be at least min_order_quantity ({account.min_order_quantity})")
         if recommended_qty <= 0:
             errors.append("recommended_qty must be greater than 0")
         if plan.manual_planned_qty is not None:
@@ -203,13 +250,15 @@ class TradePlanCalculator:
                 errors.append("manual planned quantity exceeds available cash")
             if planned_qty > qty_by_total_raw + 1e-9:
                 errors.append("manual planned quantity exceeds total-position limit")
+            if "MIN_CASH_LIMIT" in raw_limits and planned_qty > raw_limits["MIN_CASH_LIMIT"] + 1e-9:
+                errors.append("计划数量超过最低现金比例限制，请减少计划数量或调整账户设置")
+            if "SINGLE_ORDER_AMOUNT_LIMIT" in raw_limits and planned_qty > raw_limits["SINGLE_ORDER_AMOUNT_LIMIT"] + 1e-9:
+                errors.append("计划金额超过单笔最大金额，请减少计划数量或调整账户设置")
+            if "SINGLE_ORDER_QUANTITY_LIMIT" in raw_limits and planned_qty > raw_limits["SINGLE_ORDER_QUANTITY_LIMIT"] + 1e-9:
+                errors.append("计划数量超过单笔最大数量，请减少计划数量或调整账户设置")
             if planned_qty > recommended_qty:
                 warnings.append(f"manual planned quantity is above system recommendation by {planned_qty - recommended_qty} shares")
 
-        if plan.current_price is not None and math.isfinite(plan.current_price) and plan.current_price > max_entry:
-            warnings.append("current price is above the maximum acceptable entry price")
-        if risk_pct > account.default_risk_pct:
-            warnings.append("plan risk is above the default risk level")
         target_reward_risk = None
         if plan.target_type == "FIXED_TARGET" and plan.target_price is not None and not errors:
             target_reward_risk = (plan.target_price - entry) / unit_risk
@@ -217,6 +266,11 @@ class TradePlanCalculator:
                 warnings.append("fixed target reward-to-risk ratio is below 1.5R")
         expected_price = plan.expected_price if plan.target_type == "TREND_FOLLOWING" else None
         expected_reward_risk = (expected_price - entry) / unit_risk if expected_price is not None else None
+        rebound_reward_risk_lower = None
+        rebound_reward_risk_upper = None
+        if plan.trade_type == "REBOUND" and plan.target_zone_lower is not None and plan.target_zone_upper is not None:
+            rebound_reward_risk_lower = (plan.target_zone_lower - entry) / unit_risk
+            rebound_reward_risk_upper = (plan.target_zone_upper - entry) / unit_risk
         if price_risk_pct > 0.1:
             warnings.append("risk reference price is far from the reference entry price")
 
@@ -229,10 +283,17 @@ class TradePlanCalculator:
             target_return_pct = (plan.target_price - entry) / entry
         result = {
             "unit_risk": unit_risk,
+            "price_risk_amount": unit_risk,
             "price_risk_pct": price_risk_pct,
             "risk_budget_amount": risk_budget_amount,
+            "trade_risk_budget_amount": equity * plan.trade_risk_budget_pct if plan.trade_risk_budget_pct is not None else risk_budget_amount,
+            "action_risk_budget_amount": risk_budget_amount,
+            "remaining_trade_risk_budget_amount": max(0.0, (equity * (plan.trade_risk_budget_pct or risk_pct)) - planned_risk_amount),
             "qty_by_risk": int(math.floor(qty_by_risk_raw)),
             "qty_by_single_position": int(math.floor(qty_by_single_raw)),
+            "qty_by_min_cash": int(math.floor(raw_limits["MIN_CASH_LIMIT"])) if "MIN_CASH_LIMIT" in raw_limits else None,
+            "qty_by_single_order_amount": int(math.floor(raw_limits["SINGLE_ORDER_AMOUNT_LIMIT"])) if "SINGLE_ORDER_AMOUNT_LIMIT" in raw_limits else None,
+            "qty_by_single_order_quantity": int(math.floor(raw_limits["SINGLE_ORDER_QUANTITY_LIMIT"])) if "SINGLE_ORDER_QUANTITY_LIMIT" in raw_limits else None,
             "qty_by_cash": int(math.floor(qty_by_cash_raw)),
             "qty_by_total_position": int(math.floor(qty_by_total_raw)),
             "unrounded_recommended_qty": unrounded_recommended_qty,
@@ -251,46 +312,20 @@ class TradePlanCalculator:
             "target_return_pct": target_return_pct,
             "expected_reward_r": expected_reward_risk,
             "expected_price": expected_price,
+            "rebound_reward_r_lower": rebound_reward_risk_lower,
+            "rebound_reward_r_upper": rebound_reward_risk_upper,
+            "rebound_conservative_reward_r": rebound_reward_risk_lower,
+            "rebound_ideal_reward_r": rebound_reward_risk_upper,
             "target_zone_lower": plan.target_zone_lower,
             "target_zone_upper": plan.target_zone_upper,
             "holding_period_days": plan.holding_period_days,
             "time_invalidation_condition": plan.time_invalidation_condition,
+            "invalidation_note": plan.invalidation_note,
             "limiting_factor": limiting_factor,
-            "max_price_scenario": TradePlanCalculator._scenario(plan, account, instrument, max_entry),
             "warnings": warnings,
             "blocking_errors": errors,
         }
         return result
-
-    @staticmethod
-    def _scenario(plan: TradePlanInput, account: AccountRiskSettings, instrument: InstrumentInfo, entry: float) -> dict[str, Any]:
-        risk = entry - plan.risk_reference_price
-        if risk <= 0:
-            return {"entry_price": entry, "blocking_errors": ["maximum entry price does not leave positive unit risk"]}
-        limits = {
-            "RISK_BUDGET": account.account_equity * plan.plan_risk_pct / risk,
-            "SINGLE_POSITION_LIMIT": account.account_equity * account.max_single_position_pct / entry,
-            "CASH_LIMIT": account.available_cash / entry,
-            "TOTAL_POSITION_LIMIT": max(0.0, account.account_equity * account.max_total_position_pct - account.current_invested_amount) / entry,
-        }
-        limiting = min(limits, key=limits.get)
-        unrounded_qty = int(math.floor(limits[limiting]))
-        qty = int(math.floor(unrounded_qty / instrument.quantity_step) * instrument.quantity_step)
-        planned_notional = qty * entry
-        planned_risk_amount = qty * risk
-        return {
-            "entry_price": entry,
-            "unit_risk": risk,
-            "unrounded_recommended_qty": unrounded_qty,
-            "recommended_qty": qty,
-            "planned_notional": planned_notional,
-            "planned_risk_amount": planned_risk_amount,
-            "planned_account_risk_pct": planned_risk_amount / account.account_equity,
-            "planned_position_pct": planned_notional / account.account_equity,
-            "post_trade_total_position_pct": (account.current_invested_amount + planned_notional) / account.account_equity,
-            "limiting_factor": limiting,
-        }
-
 
 class TradePlanStore:
     def __init__(self, database_url: str):
@@ -454,7 +489,7 @@ class TradePlanStore:
         with self.connect() as conn:
             row = conn.execute("""select a.equity as account_equity, a.available_cash,
                 coalesce((select sum(quantity * market_price) from planning_position where account_id=a.id),0) as current_invested_amount,
-                r.default_trade_risk_pct as default_risk_pct, r.max_single_position_pct,
+                r.max_trade_risk_pct as default_risk_pct, r.max_single_position_pct,
                 r.max_total_exposure_pct as max_total_position_pct, r.max_trade_risk_pct
                 from trading_account a join risk_profile r on r.account_id=a.id where a.id=%s""", (account_id,)).fetchone()
         if not row:
@@ -465,17 +500,17 @@ class TradePlanStore:
         _finite_positive(settings.account_equity, "account_equity")
         _finite_nonnegative(settings.available_cash, "available_cash")
         _finite_nonnegative(settings.current_invested_amount, "current_invested_amount")
-        _finite_positive(settings.default_risk_pct, "default_risk_pct")
+        _finite_positive(settings.max_trade_risk_pct, "max_trade_risk_pct")
         _finite_positive(settings.max_single_position_pct, "max_single_position_pct")
         _finite_positive(settings.max_total_position_pct, "max_total_position_pct")
         with self.connect() as conn:
             conn.execute("update trading_account set equity=%s, available_cash=%s, cash=%s, updated_at=now() where id=%s", (settings.account_equity, settings.available_cash, settings.available_cash, account_id))
             conn.execute("""update risk_profile set default_trade_risk_pct=%s, max_trade_risk_pct=%s,
                 max_single_position_pct=%s, max_total_exposure_pct=%s, configuration_confirmed=true, updated_at=now()
-                where account_id=%s""", (settings.default_risk_pct, settings.max_trade_risk_pct, settings.max_single_position_pct, settings.max_total_position_pct, account_id))
+                where account_id=%s""", (settings.max_trade_risk_pct, settings.max_trade_risk_pct, settings.max_single_position_pct, settings.max_total_position_pct, account_id))
             row = conn.execute("""select a.equity as account_equity, a.available_cash,
                 coalesce((select sum(quantity * market_price) from planning_position where account_id=a.id),0) as current_invested_amount,
-                r.default_trade_risk_pct as default_risk_pct, r.max_single_position_pct,
+                r.max_trade_risk_pct as default_risk_pct, r.max_single_position_pct,
                 r.max_total_exposure_pct as max_total_position_pct, r.max_trade_risk_pct
                 from trading_account a join risk_profile r on r.account_id=a.id where a.id=%s""", (account_id,)).fetchone()
         if not row:
@@ -490,13 +525,27 @@ class TradePlanStore:
         if not isinstance(plan.account_id, int) or plan.account_id <= 0:
             raise TradePlanValidationError("account_id is required")
         with self.connect() as conn:
+            if plan.client_request_id:
+                conn.execute("select pg_advisory_xact_lock(hashtext(%s))", (f"trade-plan:{plan.account_id}:{plan.action_type}:{plan.client_request_id}",))
+                existing = conn.execute(
+                    """
+                    select * from trade_plan
+                    where account_id=%s and action_type=%s
+                      and input_json->>'client_request_id'=%s
+                    order by id desc limit 1
+                    """,
+                    (plan.account_id, plan.action_type, plan.client_request_id),
+                ).fetchone()
+                if existing:
+                    return self._serialize(existing)
             trade_id = plan.trade_id
             if trade_id is None:
                 trade_row = conn.execute("""
                     insert into trades (account_id, symbol, symbol_name, trade_type, playbook_id, playbook_snapshot_json, thesis, initial_reason, trade_risk_budget_pct, trade_risk_budget_amount)
                     values (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s) returning id
                 """, (plan.account_id, plan.symbol, plan.security_name, plan.trade_type, plan.playbook_id, json.dumps(plan.playbook_snapshot_json), plan.thesis, plan.thesis,
-                       plan.plan_risk_pct, plan.action_risk_budget_amount or account.account_equity * plan.plan_risk_pct)).fetchone()
+                       plan.trade_risk_budget_pct if plan.trade_risk_budget_pct is not None else plan.plan_risk_pct,
+                       account.account_equity * (plan.trade_risk_budget_pct if plan.trade_risk_budget_pct is not None else plan.plan_risk_pct))).fetchone()
                 trade_id = int(trade_row["id"])
             elif not conn.execute("select 1 from trades where id=%s and account_id=%s", (trade_id, plan.account_id)).fetchone():
                 raise TradePlanValidationError("Trade does not belong to account")
@@ -509,11 +558,35 @@ class TradePlanStore:
                     %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s)
                 returning *
             """, (plan.account_id, trade_id, plan.symbol, plan.security_name, plan.action_type, plan.sequence_no, plan.reason_code, plan.reason_text,
-                   plan.action_risk_budget_pct, plan.action_risk_budget_amount, plan.failure_handling, plan.target_remaining_qty, plan.target_remaining_pct,
+                   plan.action_risk_budget_pct or plan.plan_risk_pct, plan.action_risk_budget_amount or account.account_equity * plan.plan_risk_pct, plan.failure_handling, plan.target_remaining_qty, plan.target_remaining_pct,
                    json.dumps(plan.trigger_config_json), json.dumps(plan.exit_config_json), json.dumps(asdict(plan)), json.dumps(asdict(account)),
                    json.dumps(asdict(instrument)), json.dumps(calculation), json.dumps({"warnings": calculation.get("warnings", []), "blocking_errors": calculation.get("blocking_errors", [])}), expires_at)).fetchone()
             conn.execute("update trades set updated_at = now() where id = %s", (trade_id,))
         return self._serialize(row)
+
+    def find_unfinished_trade(self, account_id: int, symbol: str) -> dict[str, Any] | None:
+        """Return the existing unfinished Trade for an account/security, if any.
+
+        A second OPEN must not silently create an independent Trade for the same
+        security.  The caller decides whether to reuse the Trade or require an
+        explicit independent-trade confirmation.
+        """
+        canonical_symbol = normalize_symbol(symbol)
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                select id, account_id, symbol, symbol_name, trade_type, status,
+                       thesis, created_at, updated_at
+                from trades
+                where account_id=%s and status in ('PLANNED', 'ACTIVE', 'CLOSING')
+                order by updated_at desc, id desc
+                """,
+                (account_id,),
+            ).fetchall()
+        for row in rows:
+            if normalize_symbol(row["symbol"]) == canonical_symbol:
+                return self._serialize(row)
+        return None
 
     def create_action_plan(self, account_id: int, trade_id: int, action_type: str, symbol: str, security_name: str,
                            input_data: dict[str, Any], calculation: dict[str, Any],
@@ -527,20 +600,110 @@ class TradePlanStore:
             trade = conn.execute("select id, account_id, symbol, symbol_name, status from trades where id=%s and account_id=%s for update", (trade_id, account_id)).fetchone()
             if not trade:
                 raise TradePlanValidationError("Trade not found")
-            if trade["symbol"] != symbol:
+            if normalize_symbol(trade["symbol"]) != normalize_symbol(symbol):
                 raise TradePlanValidationError("action plan symbol does not match Trade")
             if trade["status"] not in {"ACTIVE", "CLOSING"}:
                 raise TradePlanValidationError("Trade is not active")
+            client_request_id = input_data.get("client_request_id")
+            if client_request_id:
+                conn.execute("select pg_advisory_xact_lock(hashtext(%s))", (f"trade-plan:{account_id}:{action_type}:{client_request_id}",))
+                existing = conn.execute(
+                    """
+                    select * from trade_plan
+                    where account_id=%s and trade_id=%s and action_type=%s
+                      and input_json->>'client_request_id'=%s
+                    order by id desc limit 1
+                    """,
+                    (account_id, trade_id, action_type, str(client_request_id)),
+                ).fetchone()
+                if existing:
+                    return self._serialize(existing)
+            settings = conn.execute(
+                """
+                select a.equity as account_equity, a.available_cash,
+                       coalesce((select sum(quantity * market_price) from planning_position where account_id=a.id), 0) as current_invested_amount,
+                       r.max_trade_risk_pct as default_risk_pct,
+                       r.max_single_position_pct, r.max_total_exposure_pct as max_total_position_pct,
+                       r.max_trade_risk_pct
+                from trading_account a join risk_profile r on r.account_id=a.id
+                where a.id=%s
+                """,
+                (account_id,),
+            ).fetchone()
+            if not settings:
+                raise TradePlanValidationError("交易账号或风险规则不存在")
+            account_settings = {key: float(value) for key, value in settings.items()}
+            instrument_settings = {"quantity_step": 100}
             sequence = conn.execute("select coalesce(max(sequence_no), 0) + 1 as next_sequence from trade_plan where trade_id=%s", (trade_id,)).fetchone()["next_sequence"]
             row = conn.execute("""
-                insert into trade_plan (account_id, trade_id, symbol, security_name, action_type, sequence_no, reason_code, reason_text,
-                    input_json, calculation_snapshot_json, validation_snapshot_json, expires_at)
-                values (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s::jsonb,%s) returning *
-            """, (account_id, trade_id, symbol, security_name, action_type, sequence, reason_code, reason_text,
-                   json.dumps(input_data), json.dumps(calculation), json.dumps({"warnings": calculation.get("warnings", []), "blocking_errors": []}), expires_at)).fetchone()
-            if action_type == "CLOSE":
-                conn.execute("update trades set status='CLOSING', updated_at=now() where id=%s and status='ACTIVE'", (trade_id,))
+                insert into trade_plan (account_id, trade_id, symbol, security_name, action, action_type, sequence_no, reason_code, reason_text,
+                    input_json, account_settings_json, instrument_json, calculation_snapshot_json, validation_snapshot_json, expires_at)
+                values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s::jsonb,%s::jsonb,%s::jsonb,%s) returning *
+            """, (account_id, trade_id, symbol, security_name, action_type, action_type, sequence, reason_code, reason_text,
+                   json.dumps(input_data), json.dumps(account_settings), json.dumps(instrument_settings), json.dumps(calculation), json.dumps({"warnings": calculation.get("warnings", []), "blocking_errors": []}), expires_at)).fetchone()
         return self._serialize(row)
+
+    def update_action_plan_draft(self, account_id: int, trade_id: int, plan_id: int, action_type: str,
+                                 input_data: dict[str, Any], calculation: dict[str, Any],
+                                 reason_code: str | None, reason_text: str | None,
+                                 expires_at: datetime | None) -> dict[str, Any] | None:
+        if action_type not in {"ADD", "REDUCE", "CLOSE"}:
+            raise TradePlanValidationError("unsupported child action type")
+        if calculation.get("blocking_errors"):
+            raise TradePlanValidationError("action plan has blocking errors")
+        with self.connect() as conn:
+            current = conn.execute("""
+                select id, status, action_type from trade_plan
+                where id=%s and account_id=%s and trade_id=%s and action_type=%s
+                for update
+            """, (plan_id, account_id, trade_id, action_type)).fetchone()
+            if not current or current["status"] not in {"DRAFT", "READY"}:
+                return None
+            if not self._can_reopen_plan_for_edit(conn, plan_id):
+                return None
+            row = conn.execute("""
+                update trade_plan set reason_code=%s, reason_text=%s, input_json=%s::jsonb,
+                    calculation_snapshot_json=%s::jsonb,
+                    validation_snapshot_json=%s::jsonb,
+                    action_risk_budget_pct=%s, action_risk_budget_amount=%s,
+                    failure_handling=%s, target_remaining_qty=%s, target_remaining_pct=%s,
+                    status='DRAFT', confirmed_at=null, expires_at=%s, updated_at=now()
+                where id=%s and account_id=%s and trade_id=%s and action_type=%s and status in ('DRAFT','READY')
+                returning *
+            """, (reason_code, reason_text, json.dumps(input_data), json.dumps(calculation),
+                   json.dumps({"warnings": calculation.get("warnings", []), "blocking_errors": []}),
+                   input_data.get("action_risk_budget_pct"), input_data.get("action_risk_budget_amount"),
+                   input_data.get("failure_handling"), input_data.get("target_remaining_qty"),
+                   input_data.get("target_remaining_pct"), expires_at, plan_id, account_id, trade_id, action_type)).fetchone()
+            if row and action_type == "CLOSE" and current["status"] == "READY":
+                conn.execute("""
+                    update trades set status='ACTIVE', updated_at=now()
+                    where id=%s and account_id=%s and status='CLOSING'
+                      and not exists (
+                          select 1 from trade_plan p
+                          where p.trade_id=trades.id and p.id<>%s and p.action_type='CLOSE' and p.status='READY'
+                      )
+                """, (trade_id, account_id, plan_id))
+        return self._serialize(row) if row else None
+
+    @staticmethod
+    def _can_reopen_plan_for_edit(conn: Any, plan_id: int) -> bool:
+        """Allow re-edit only after any prior execution arrangement is fully stopped and unfilled."""
+        rows = conn.execute("""
+            select ep.status,
+                   coalesce(bool_or(coalesce(o.filled_quantity, 0) > 0), false) as has_fills,
+                   coalesce(bool_or(o.status not in ('CANCELLED','CANCELED','CANCELLED_ORDER','REJECTED','FAILED','EXPIRED')), false) as has_live_order
+            from execution_plan ep
+            left join trading_order o on o.execution_plan_id=ep.id
+            where ep.trade_plan_id=%s
+            group by ep.id, ep.status
+        """, (plan_id,)).fetchall()
+        return all(
+            str(row["status"]) in {"CANCELLED", "EXPIRED"}
+            and not bool(row["has_fills"])
+            and not bool(row["has_live_order"])
+            for row in rows
+        )
 
     def update_risk_reference(self, account_id: int, trade_id: int, new_price: float, reason: str, leg_id: int | None = None) -> dict[str, Any]:
         if not reason.strip():
@@ -691,27 +854,48 @@ class TradePlanStore:
     def get(self, account_id: int, plan_id: int) -> dict[str, Any] | None:
         with self.connect() as conn:
             row = conn.execute("select * from trade_plan where id = %s and account_id=%s", (plan_id, account_id)).fetchone()
-        return self._serialize(row) if row else None
+            if row:
+                return self._with_execution_data(conn, row)
+        return None
 
-    def update_draft(self, plan_id: int, plan: TradePlanInput, account: AccountRiskSettings, instrument: InstrumentInfo, calculation: dict[str, Any]) -> dict[str, Any] | None:
+    def update_draft(self, account_id: int, plan_id: int, plan: TradePlanInput, account: AccountRiskSettings, instrument: InstrumentInfo, calculation: dict[str, Any]) -> dict[str, Any] | None:
         with self.connect() as conn:
+            current = conn.execute("""
+                select id, status, action_type from trade_plan
+                where id=%s and account_id=%s
+                for update
+            """, (plan_id, account_id)).fetchone()
+            if not current or current["action_type"] != "OPEN" or current["status"] not in {"DRAFT", "READY"}:
+                return None
+            if not self._can_reopen_plan_for_edit(conn, plan_id):
+                return None
             row = conn.execute("""
-                update trade_plan set symbol=%s, security_name=%s, action_type=%s, sequence_no=%s,
+                update trade_plan set status='DRAFT', confirmed_at=null,
+                    symbol=%s, security_name=%s, action_type=%s, sequence_no=%s,
                     reason_code=%s, reason_text=%s, action_risk_budget_pct=%s, action_risk_budget_amount=%s,
                     failure_handling=%s, target_remaining_qty=%s, target_remaining_pct=%s,
                     trigger_config_json=%s::jsonb, exit_config_json=%s::jsonb, input_json=%s::jsonb,
                     account_settings_json=%s::jsonb, instrument_json=%s::jsonb,
-                    calculation_snapshot_json=%s::jsonb, validation_snapshot_json=%s::jsonb, updated_at=now()
-                where id=%s and status='DRAFT' returning *
+                    calculation_snapshot_json=%s::jsonb, validation_snapshot_json=%s::jsonb, expires_at=null, updated_at=now()
+                where id=%s and account_id=%s and status in ('DRAFT','READY') returning *
             """, (plan.symbol, plan.security_name, plan.action_type, plan.sequence_no, plan.reason_code, plan.reason_text,
                    plan.action_risk_budget_pct, plan.action_risk_budget_amount, plan.failure_handling, plan.target_remaining_qty, plan.target_remaining_pct,
                    json.dumps(plan.trigger_config_json), json.dumps(plan.exit_config_json), json.dumps(asdict(plan)), json.dumps(asdict(account)),
-                   json.dumps(asdict(instrument)), json.dumps(calculation), json.dumps({"warnings": calculation.get("warnings", []), "blocking_errors": calculation.get("blocking_errors", [])}), plan_id)).fetchone()
+                   json.dumps(asdict(instrument)), json.dumps(calculation), json.dumps({"warnings": calculation.get("warnings", []), "blocking_errors": calculation.get("blocking_errors", [])}), plan_id, account_id)).fetchone()
         return self._serialize(row) if row else None
 
-    def delete_draft(self, plan_id: int) -> bool:
+    def delete_draft(self, account_id: int, plan_id: int) -> bool:
         with self.connect() as conn:
-            row = conn.execute("delete from trade_plan where id=%s and status='DRAFT' returning id", (plan_id,)).fetchone()
+            row = conn.execute("delete from trade_plan where id=%s and account_id=%s and status='DRAFT' returning id, trade_id, action_type", (plan_id, account_id)).fetchone()
+            if row and row["trade_id"] and str(row["action_type"]).upper() == "OPEN":
+                conn.execute("""
+                    delete from trades t
+                    where t.id=%s and t.account_id=%s and t.status='PLANNED'
+                      and not exists (select 1 from trade_plan p where p.trade_id=t.id)
+                      and not exists (select 1 from trade_leg l where l.trade_id=t.id)
+                      and not exists (select 1 from planning_position pos where pos.account_id=t.account_id and pos.symbol=t.symbol and pos.quantity>0)
+                      and not exists (select 1 from trading_order o where o.account_id=t.account_id and o.symbol=t.symbol)
+                """, (row["trade_id"], account_id))
         return bool(row)
 
     def update_status(self, account_id: int, plan_id: int, status: str, calculation: dict[str, Any] | None = None) -> dict[str, Any] | None:
@@ -728,7 +912,7 @@ class TradePlanStore:
             raise TradePlanValidationError("TradePlan cannot enter READY with blocking errors")
         now = datetime.now(UTC)
         with self.connect() as conn:
-            current = conn.execute("select status from trade_plan where id=%s and account_id=%s for update", (plan_id, account_id)).fetchone()
+            current = conn.execute("select status, trade_id, action_type from trade_plan where id=%s and account_id=%s for update", (plan_id, account_id)).fetchone()
             if not current:
                 return None
             if status not in allowed_transitions.get(current["status"], set()):
@@ -742,6 +926,17 @@ class TradePlanStore:
                 where id = %s and account_id = %s and status not in ('CANCELLED', 'EXPIRED')
                 returning *
             """, (status, now, status, now, status, now, json.dumps(calculation) if calculation else None, json.dumps(calculation) if calculation else None, json.dumps(calculation) if calculation else None, json.dumps(calculation) if calculation else None, plan_id, account_id)).fetchone()
+            if row and status == "READY" and str(current["action_type"]).upper() == "CLOSE" and current["trade_id"]:
+                conn.execute("update trades set status='CLOSING', updated_at=now() where id=%s and account_id=%s and status='ACTIVE'", (current["trade_id"], account_id))
+            if row and status == "CANCELLED" and current["trade_id"]:
+                conn.execute("""
+                    update trades t set status=case
+                        when exists (select 1 from trade_leg l where l.trade_id=t.id and l.remaining_qty>0) then 'ACTIVE'
+                        when exists (select 1 from trade_plan p where p.trade_id=t.id and p.id<>%s and p.status not in ('CANCELLED','EXPIRED','INVALIDATED')) then 'PLANNED'
+                        else 'CANCELLED' end,
+                        updated_at=now()
+                    where t.id=%s and t.account_id=%s and t.status in ('PLANNED','CLOSING')
+                """, (plan_id, current["trade_id"], account_id))
         return self._serialize(row) if row else None
 
     @staticmethod

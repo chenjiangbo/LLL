@@ -9,12 +9,13 @@ from typing import Any, Optional
 from fastapi import Depends, FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from broker_node.api_service.repositories import NodeRepository
+from broker_node.api_service.repositories import CommandArchiveError, NodeRepository
 from broker_node.shared.config import ConfigError, NodeConfig
 from broker_node.shared.db import initialize
 from broker_node.gm_agent.quote_cache import QuoteCache
 from broker_node.gm_agent.command_validator import CommandValidationError, validate_order_payload
 from broker_node.api_service.auth import require_bearer_token
+from broker_node.api_service.agent_manager import create_agent_manager
 
 
 def _now() -> str:
@@ -37,7 +38,8 @@ class OrderRequest(BaseModel):
     code: str = Field(min_length=1)
     exchange: str = Field(pattern="^(SH|SZ)$")
     side: str = Field(pattern="^(BUY|SELL)$")
-    price: str = Field(min_length=1)
+    order_type: str = Field(min_length=1)
+    price: Optional[str] = None
     quantity: int = Field(gt=0)
     source: dict[str, Any] = Field(default_factory=dict)
     safety_constraints: dict[str, Any] = Field(default_factory=dict)
@@ -55,17 +57,33 @@ class GmTokenRequest(BaseModel):
 
 class NodeSettingsRequest(BaseModel):
     allow_live_orders: bool
-    start_paused: bool
 
 
-def create_app() -> FastAPI:
+class ArchiveCommandRequest(BaseModel):
+    reason: str = Field(min_length=1)
+    archived_by: str = Field(default="API", min_length=1)
+
+
+def create_app(ipc_store=None, node_config: NodeConfig | None = None) -> FastAPI:
     config_path = default_config_path()
-    config = NodeConfig.load(config_path)
+    config = node_config or NodeConfig.load(config_path)
+    if config.path.resolve() != config_path.resolve():
+        raise ConfigError('public API and Node must use the same configuration file')
     durable_db = Path(config.raw["runtime"]["durable_db"])
+    if ipc_store is not None and ipc_store.path.resolve() != durable_db.resolve():
+        raise ConfigError('V2 IPC and API must use the same durable database')
     initialize(durable_db)
     repository = NodeRepository(durable_db)
     quote_cache = QuoteCache(Path(config.raw["runtime"]["quote_cache_db"]))
+    agent_manager = create_agent_manager(config) if ipc_store is None else None
     app = FastAPI(title="Guotou Broker Node API", version="1.2")
+    if agent_manager is not None:
+        agent_manager.start()
+
+    @app.on_event("shutdown")
+    def stop_agent_manager() -> None:
+        if agent_manager is not None:
+            agent_manager.stop()
 
     @app.get("/api/v1/health")
     def health() -> dict[str, Any]:
@@ -73,9 +91,10 @@ def create_app() -> FastAPI:
 
     @app.get("/api/v1/status")
     def status() -> dict[str, Any]:
+        ipc_health = ipc_store.health() if ipc_store is not None else None
         state = repository.get_node_state()
         if not state:
-            return {
+            result = {
                 "node_id": config.raw["node_id"],
                 "broker_account_key": config.raw["broker_account_key"],
                 "account_mode": config.raw["account_mode"],
@@ -89,36 +108,68 @@ def create_app() -> FastAPI:
                 "reconciliation_required": True,
                 "unresolved_unknown_commands": repository.unresolved_unknown_commands(),
                 "status": "AGENT_NOT_INITIALIZED",
+                "last_disconnect": repository.last_diagnostic_event("disconnect"),
+                "last_error": repository.last_diagnostic_event("error"),
+                "last_failed_command": repository.last_failed_command(),
             }
+            if ipc_health is not None:
+                result.update(ipc_health)
+                result['account_connected'] = ipc_health['account_verified']
+                result['reconciliation_issues'] = ipc_store.unresolved_event_issues()
+            return result
         heartbeat = state.get("last_agent_heartbeat_at")
-        offline_seconds = int(config.raw["sync"]["agent_offline_seconds"])
+        from broker_node.api_service.agent_manager import CALLBACK_TIMEOUT_SECONDS
+        offline_seconds = max(CALLBACK_TIMEOUT_SECONDS, int(config.raw["sync"]["agent_offline_seconds"]))
         agent_online = False
         if heartbeat:
             heartbeat_time = datetime.fromisoformat(heartbeat.replace("Z", "+00:00"))
             age = (datetime.now(timezone.utc) - heartbeat_time).total_seconds()
             agent_online = age <= offline_seconds
-        return {
+        result = {
             "node_id": state["node_id"],
             "broker_account_key": state["broker_account_key"],
             "account_mode": state["account_mode"],
             "strategy_id": config.raw["gm"]["strategy_id"],
             "agent_online": agent_online,
-            "market_connected": state["market_connection_status"] == "CONNECTED",
-            "trade_connected": state["trade_connection_status"] == "CONNECTED",
-            "account_connected": state["broker_account_status"] == "CONNECTED",
-            "execution_enabled": bool(state["execution_enabled"]),
+            "market_connected": agent_online and state["market_connection_status"] == "CONNECTED",
+            "trade_connected": agent_online and state["trade_connection_status"] == "CONNECTED",
+            "account_connected": agent_online and state["broker_account_status"] == "CONNECTED",
+            "execution_enabled": agent_online and bool(state["execution_enabled"]),
             "paused": bool(state["paused"]),
+            "pause_reason": state.get("pause_reason"),
             "reconciliation_required": bool(state["reconciliation_required"]),
             "unresolved_unknown_commands": repository.unresolved_unknown_commands(),
             "last_agent_heartbeat_at": heartbeat,
             "last_account_sync_at": state["last_account_sync_at"],
+            "last_disconnect": repository.last_diagnostic_event("disconnect"),
+            "last_error": repository.last_diagnostic_event("error"),
+            "last_failed_command": repository.last_failed_command(),
         }
+        if ipc_health is not None:
+            result.update(ipc_health)
+            result['account_connected'] = ipc_health['account_verified']
+            result['reconciliation_issues'] = ipc_store.unresolved_event_issues()
+            account_authorized = state['account_mode'] == 'SIM' or config.live_orders_enabled()
+            result['execution_enabled'] = bool(state['execution_enabled']) and ipc_health['agent_online'] and account_authorized
+            if result['reconciliation_issues'] or not ipc_health['agent_online']:
+                result['reconciliation_required'] = True
+        return result
 
     def snapshot_response(snapshot_type: str) -> dict[str, Any]:
+        if ipc_store is not None:
+            health = ipc_store.health()
+            if not health['agent_online'] or not health['trade_connected'] or not health['account_verified']:
+                raise HTTPException(status_code=503, detail={'code': 'ACCOUNT_NOT_CONNECTED', 'message': 'account session is not connected'})
         snapshot = repository.get_snapshot(snapshot_type)
-        if not snapshot:
+        if not snapshot or snapshot.get('stale'):
             raise HTTPException(status_code=503, detail={"code": "STALE_SNAPSHOT", "message": f"{snapshot_type} snapshot is not available"})
         return snapshot
+
+    def require_execution_channel() -> None:
+        if ipc_store is not None:
+            health = ipc_store.health()
+            if not health['agent_online'] or not health['trade_connected'] or not health['account_verified']:
+                raise HTTPException(status_code=503, detail={'code': 'EXECUTION_CHANNEL_NOT_READY', 'message': 'agent or account is not connected'})
 
     @app.put("/api/v1/connection/token")
     def configure_gm_token(request: GmTokenRequest) -> dict[str, Any]:
@@ -138,7 +189,6 @@ def create_app() -> FastAPI:
         safety = config.raw["safety"]
         return {
             "allow_live_orders": bool(safety.get("allow_live_orders", False)),
-            "start_paused": bool(safety.get("start_paused", True)),
             "account_mode": config.raw["account_mode"],
             "restart_required": False,
         }
@@ -155,7 +205,6 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=422, detail={"code": "LIVE_SETTING_ON_SIM_NODE", "message": "仿真节点不能开启实盘交易授权"})
         updated = json.loads(json.dumps(config.raw))
         updated.setdefault("safety", {})["allow_live_orders"] = request.allow_live_orders
-        updated["safety"]["start_paused"] = request.start_paused
         temp_path = config_path.with_suffix(config_path.suffix + ".tmp")
         try:
             temp_path.write_text(json.dumps(updated, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -164,11 +213,12 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=500, detail={"code": "CONFIG_WRITE_FAILED", "message": "Node 配置写入失败"}) from exc
         config.raw.clear()
         config.raw.update(updated)
+        if ipc_store is not None and config.raw['account_mode'] == 'LIVE':
+            ipc_store.refresh_execution_authorization()
         return {
             "status": "SUCCESS",
             "settings": {
                 "allow_live_orders": request.allow_live_orders,
-                "start_paused": request.start_paused,
                 "account_mode": config.raw["account_mode"],
                 "restart_required": False,
             },
@@ -196,19 +246,36 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail={"code": "INVALID_REQUEST", "message": "limit cannot exceed 500"})
         return repository.list_events(after_seq, limit)
 
+    @app.get("/api/v1/commands/{command_id}", dependencies=[Depends(require_bearer_token)])
+    def command(command_id: str) -> dict[str, Any]:
+        result = repository.get_command(command_id)
+        if not result:
+            raise HTTPException(status_code=404, detail={"code": "COMMAND_NOT_FOUND", "message": "command does not exist"})
+        return result
+
+    @app.post("/api/v1/commands/{command_id}/archive", dependencies=[Depends(require_bearer_token)])
+    def archive_command(command_id: str, request: ArchiveCommandRequest) -> dict[str, Any]:
+        try:
+            result = repository.archive_command(command_id, request.reason, request.archived_by, _now())
+        except CommandArchiveError as exc:
+            status_code = 404 if exc.code == "COMMAND_NOT_FOUND" else 409
+            raise HTTPException(status_code=status_code, detail={"code": exc.code, "message": exc.message}) from exc
+        return {"status": "ARCHIVED", "command": result}
+
     @app.post("/api/v1/sync")
     def sync(request: SyncRequest) -> dict[str, Any]:
         return repository.enqueue_sync(request.request_id, _now())
 
     @app.post("/api/v1/orders", status_code=202)
     def place_order(request: OrderRequest) -> dict[str, Any]:
+        require_execution_channel()
         if config.raw["account_mode"] == "LIVE" and not config.live_orders_enabled():
             raise HTTPException(status_code=423, detail={"code": "LIVE_ORDERS_DISABLED", "message": "live order execution is disabled"})
         if request.broker_account_key != config.raw["broker_account_key"]:
             raise HTTPException(status_code=409, detail={"code": "ACCOUNT_MISMATCH", "message": "broker account key does not match node"})
         payload = request.model_dump()
         try:
-            payload = validate_order_payload(payload, config.raw, durable_db)
+            payload = validate_order_payload(payload, config.raw)
         except CommandValidationError as exc:
             raise HTTPException(status_code=400, detail={"code": "INVALID_ORDER", "message": str(exc)}) from exc
         try:
@@ -220,6 +287,9 @@ def create_app() -> FastAPI:
 
     @app.post("/api/v1/orders/{client_order_id}/cancel", status_code=202)
     def cancel_order(client_order_id: str, request: CancelRequest) -> dict[str, Any]:
+        require_execution_channel()
+        if config.raw['account_mode'] == 'LIVE' and not config.live_orders_enabled():
+            raise HTTPException(status_code=423, detail={'code': 'LIVE_ORDERS_DISABLED', 'message': 'live order execution is disabled'})
         if repository.order_status(client_order_id) in {"FILLED", "CANCELLED", "REJECTED", "EXPIRED"}:
             raise HTTPException(status_code=409, detail={"code": "ALREADY_TERMINAL", "message": "order is already terminal"})
         payload = {"client_order_id": client_order_id, **request.model_dump()}
@@ -234,6 +304,7 @@ def create_app() -> FastAPI:
 
     @app.post("/api/v1/control/resume")
     def resume() -> dict[str, Any]:
+        require_execution_channel()
         if config.raw["account_mode"] == "LIVE" and not config.live_orders_enabled():
             raise HTTPException(status_code=423, detail={"code": "LIVE_ORDERS_DISABLED", "message": "live order execution is disabled"})
         try:
@@ -243,6 +314,9 @@ def create_app() -> FastAPI:
 
     @app.post("/api/v1/control/pause-and-cancel-open-orders")
     def pause_and_cancel_open_orders() -> dict[str, Any]:
+        require_execution_channel()
+        if config.raw['account_mode'] == 'LIVE' and not config.live_orders_enabled():
+            raise HTTPException(status_code=423, detail={'code': 'LIVE_ORDERS_DISABLED', 'message': 'live order execution is disabled'})
         paused = repository.set_paused(True, "API_PAUSED_AND_CANCELING")
         order_ids = repository.open_system_orders()
         queued = []

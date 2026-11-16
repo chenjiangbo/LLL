@@ -178,7 +178,7 @@ def _prep_score(row: pd.Series, background: str) -> int:
 
 def _turn_score(features: dict[str, Any], ts_code: str, trade_date: str) -> int:
     """复用现有 A-Pre 转强评分器；分类语义仍由本模块决定。"""
-    result = EarlyTurnEngine().evaluate_stock(ts_code, trade_date, features)
+    result = EarlyTurnEngine().evaluate_stock(ts_code, trade_date, features, prep_score_mode="existing")
     return int(round(float(result.get("total_score") or 0)))
 
 

@@ -3,6 +3,16 @@ from __future__ import annotations
 from typing import Any, Dict, List
 import psycopg
 import re
+import pandas as pd
+import json
+
+from backend.market_review.errors import MarketReviewError
+from backend.market_review.sources.tushare_source import TushareSource
+from backend.screening.tushare_errors import is_tushare_rate_limit_error
+
+
+class MarketObjectiveDataUnavailable(RuntimeError):
+    """The local market database is reachable but has no complete data for this date."""
 
 # 预存核心指数真实历史每日收盘价与涨跌幅字典 (精确匹配 A 股各交易日行情)
 REAL_HISTORICAL_INDICES: Dict[str, Dict[str, Dict[str, Any]]] = {
@@ -66,6 +76,102 @@ INDEX_QUOTES = {
     "000688.SH": "科创50",
     "899050.BJ": "北证50",
 }
+
+THS_CONCEPT_BOARD_SOURCE = "tushare.moneyflow_cnt_ths"
+THS_CONCEPT_BOARD_REQUIRED_FIELDS = {
+    "trade_date",
+    "ts_code",
+    "name",
+    "lead_stock",
+    "pct_change",
+    "pct_change_stock",
+    "net_amount",
+}
+
+
+def _format_ths_concept_item(row: dict[str, Any]) -> dict[str, str]:
+    pct_change = float(row["pct_change"])
+    leader_pct_change = float(row["pct_change_stock"])
+    net_amount = float(row["net_amount"])
+    leader_sign = "+" if leader_pct_change > 0 else ""
+    net_sign = "+" if net_amount > 0 else ""
+    return {
+        "name": str(row["name"]),
+        "pct_change": f"{pct_change:+.2f}%",
+        "amount": f"净额 {net_sign}{net_amount:.0f}亿元",
+        "leading_stock": f"{row['lead_stock']} ({leader_sign}{leader_pct_change:.1f}%)",
+        "ths_code": str(row["ts_code"]),
+    }
+
+
+def _fetch_official_ths_concept_board_snapshot(trade_date: str) -> dict[str, Any]:
+    """Fetch the full official THS concept-board result for exactly one trading day."""
+    try:
+        frame = TushareSource.from_env().pro.moneyflow_cnt_ths(trade_date=trade_date)
+    except Exception as exc:
+        if is_tushare_rate_limit_error(exc):
+            raise MarketReviewError(f"TUSHARE_RATE_LIMIT:{THS_CONCEPT_BOARD_SOURCE}({trade_date}): {exc}") from exc
+        raise MarketReviewError(f"{THS_CONCEPT_BOARD_SOURCE}({trade_date}) failed: {exc}") from exc
+
+    if frame is None or frame.empty:
+        raise MarketReviewError(f"{THS_CONCEPT_BOARD_SOURCE}({trade_date}) returned no concept-board rows")
+    missing_fields = THS_CONCEPT_BOARD_REQUIRED_FIELDS.difference(frame.columns)
+    if missing_fields:
+        raise MarketReviewError(
+            f"{THS_CONCEPT_BOARD_SOURCE}({trade_date}) missing required fields: {sorted(missing_fields)}"
+        )
+
+    frame = frame.copy()
+    frame["trade_date"] = frame["trade_date"].astype(str)
+    returned_dates = set(frame["trade_date"])
+    if returned_dates != {trade_date}:
+        raise MarketReviewError(
+            f"{THS_CONCEPT_BOARD_SOURCE} returned unexpected trade dates: {sorted(returned_dates)}"
+        )
+    for column in ("pct_change", "pct_change_stock", "net_amount"):
+        frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    if frame[["ts_code", "name", "lead_stock", "pct_change", "pct_change_stock", "net_amount"]].isna().any().any():
+        raise MarketReviewError(f"{THS_CONCEPT_BOARD_SOURCE}({trade_date}) contains incomplete concept-board rows")
+    if frame["ts_code"].astype(str).duplicated().any():
+        raise MarketReviewError(f"{THS_CONCEPT_BOARD_SOURCE}({trade_date}) contains duplicate concept codes")
+
+    rows = [
+        {
+            "trade_date": str(item["trade_date"]),
+            "ts_code": str(item["ts_code"]),
+            "name": str(item["name"]),
+            "lead_stock": str(item["lead_stock"]),
+            "pct_change": float(item["pct_change"]),
+            "pct_change_stock": float(item["pct_change_stock"]),
+            "net_amount": float(item["net_amount"]),
+        }
+        for item in frame.to_dict(orient="records")
+    ]
+    ranked_desc = sorted(rows, key=lambda item: (item["pct_change"], item["ts_code"]), reverse=True)
+    ranked_asc = sorted(rows, key=lambda item: (item["pct_change"], item["ts_code"]))
+    return {
+        "trade_date": trade_date,
+        "source": THS_CONCEPT_BOARD_SOURCE,
+        "source_row_count": len(rows),
+        "rows": rows,
+        "top_gainers": [_format_ths_concept_item(item) for item in ranked_desc[:6]],
+        "top_losers": [_format_ths_concept_item(item) for item in ranked_asc[:6]],
+    }
+
+
+def capture_imported_review_ths_concept_board_snapshot(store: Any, trade_date: str) -> dict[str, Any]:
+    """Capture an official THS board once during review import, or return the existing immutable record."""
+    norm_date = trade_date.replace("-", "").strip()
+    existing = store.load_imported_review_ths_concept_board_snapshot(norm_date)
+    if existing is not None:
+        return existing
+    snapshot = _fetch_official_ths_concept_board_snapshot(norm_date)
+    return store.save_imported_review_ths_concept_board_snapshot(
+        trade_date=norm_date,
+        source=THS_CONCEPT_BOARD_SOURCE,
+        source_row_count=snapshot["source_row_count"],
+        payload=snapshot,
+    )
 
 
 def _load_or_fetch_index_quotes(conn, norm_date: str) -> Dict[str, Dict[str, Any]]:
@@ -193,7 +299,13 @@ def extract_key_stocks_from_review_text(cur, norm_date: str, date_formatted: str
         )
         run = cur.fetchone()
         if run is None:
-            raise RuntimeError(f"{formatted_date} 复盘尚未生成全文股票提取结果")
+            # The review article itself is still readable, but objective market
+            # data cannot be assembled until the durable stock-extraction job has
+            # succeeded.  Surface this as an explicit unavailable-data state so
+            # the overview endpoint does not turn a readable article into HTTP 500.
+            raise MarketObjectiveDataUnavailable(
+                f"{formatted_date} 复盘尚未生成全文股票提取结果"
+            )
         # 历史文章若存在不能唯一绑定的泛称/错别字，仍展示已验证的证券；
         # 未绑定项会保留在 extraction run 中，绝不被补写为任意股票。
         cur.execute(
@@ -309,8 +421,12 @@ def extract_key_stocks_from_review_text(cur, norm_date: str, date_formatted: str
     return prev_verify_stocks, today_stocks
 
 
+KEY_STOCK_REVIEW_WINDOW = 60
+KEY_STOCK_PRICE_WINDOW = 7
+
+
 def extract_weekly_focus_groups(cur, norm_date: str) -> Dict[str, Any]:
-    """汇总当前复盘日前最近七个交易日文章提及的股票，并按题材分组。"""
+    """汇总当前复盘日前最近 60 个已导入复盘日期的股票，并按题材分组。"""
     cur.execute(
         """
         SELECT DISTINCT trade_date
@@ -321,9 +437,23 @@ def extract_weekly_focus_groups(cur, norm_date: str) -> Dict[str, Any]:
         (norm_date,),
     )
     review_dates = [str(row[0]).replace("-", "") for row in cur.fetchall()]
-    window_dates = review_dates[:7]
+    # 关键股票以“有复盘文章的日期”为单位展示；不为未导入文章的自然日制造空项。
+    window_dates = review_dates[:KEY_STOCK_REVIEW_WINDOW]
     if not window_dates:
-        return {"window_dates": [], "groups": [], "date_groups": [], "stock_count": 0}
+        return {"window_dates": [], "price_window_dates": [], "groups": [], "date_groups": [], "stock_count": 0}
+
+    # 行情对照不能把周末或文章缺失日当作交易日；直接以本地日线库的最近交易日为准。
+    cur.execute(
+        """
+        SELECT DISTINCT trade_date
+        FROM screening_daily_bar
+        WHERE trade_date <= %s
+        ORDER BY trade_date DESC
+        LIMIT %s
+        """,
+        (norm_date, KEY_STOCK_PRICE_WINDOW),
+    )
+    price_window_dates = [str(row[0]).replace("-", "") for row in cur.fetchall()]
 
     mentions: Dict[tuple[str, str], Dict[str, Any]] = {}
     date_mentions: Dict[str, List[Dict[str, Any]]] = {date: [] for date in window_dates}
@@ -356,10 +486,10 @@ def extract_weekly_focus_groups(cur, norm_date: str) -> Dict[str, Any]:
                 record["mention_dates"].append(review_date)
 
     codes = sorted({record["ts_code"] for record in mentions.values()})
-    date_placeholders = ",".join(["%s"] * len(window_dates))
+    date_placeholders = ",".join(["%s"] * len(price_window_dates))
     code_placeholders = ",".join(["%s"] * len(codes))
     bars: Dict[tuple[str, str], Dict[str, Any]] = {}
-    if codes:
+    if codes and price_window_dates:
         cur.execute(
             f"""
             SELECT asset_code, trade_date, close, pct_chg, amount
@@ -368,7 +498,7 @@ def extract_weekly_focus_groups(cur, norm_date: str) -> Dict[str, Any]:
               AND asset_code IN ({code_placeholders})
             ORDER BY trade_date ASC
             """,
-            [*window_dates, *codes],
+            [*price_window_dates, *codes],
         )
         for code, trade_date, close, pct_chg, amount in cur.fetchall():
             pct = float(pct_chg)
@@ -381,9 +511,9 @@ def extract_weekly_focus_groups(cur, norm_date: str) -> Dict[str, Any]:
 
     groups: Dict[str, List[Dict[str, Any]]] = {}
     for record in mentions.values():
-        daily = [bars[(record["ts_code"], date)] for date in window_dates if (record["ts_code"], date) in bars]
+        daily = [bars[(record["ts_code"], date)] for date in price_window_dates if (record["ts_code"], date) in bars]
         record["daily"] = daily
-        record["latest"] = daily[-1] if daily else None
+        record["latest"] = daily[0] if daily else None
         groups.setdefault(record["sector"], []).append(record)
 
     date_groups = []
@@ -392,10 +522,10 @@ def extract_weekly_focus_groups(cur, norm_date: str) -> Dict[str, Any]:
         for record in stocks:
             record["daily"] = [
                 bars[(record["ts_code"], date)]
-                for date in window_dates
+                for date in price_window_dates
                 if (record["ts_code"], date) in bars
             ]
-            record["latest"] = record["daily"][-1] if record["daily"] else None
+            record["latest"] = record["daily"][0] if record["daily"] else None
         date_groups.append(
             {
                 "date": review_date,
@@ -405,6 +535,7 @@ def extract_weekly_focus_groups(cur, norm_date: str) -> Dict[str, Any]:
 
     return {
         "window_dates": window_dates,
+        "price_window_dates": price_window_dates,
         "groups": [
             {"sector": sector, "stocks": sorted(stocks, key=lambda item: (item["name"], item["ts_code"]))}
             for sector, stocks in sorted(groups.items())
@@ -429,11 +560,11 @@ def fetch_daily_market_objective_data(trade_date: str) -> Dict[str, Any]:
                 # 1. 查询全市场广度 (上涨/下跌只数、涨跌停、总成交额)
                 cur.execute("""
                     SELECT 
-                        count(*) filter (where pct_chg > 0) as rising,
-                        count(*) filter (where pct_chg < 0) as falling,
-                        count(*) filter (where pct_chg = 0) as flat,
-                        count(*) filter (where pct_chg >= 9.8) as limit_up,
-                        count(*) filter (where pct_chg <= -9.8) as limit_down,
+                        count(*) filter (where asset_type = 'stock' and pct_chg > 0) as rising,
+                        count(*) filter (where asset_type = 'stock' and pct_chg < 0) as falling,
+                        count(*) filter (where asset_type = 'stock' and pct_chg = 0) as flat,
+                        count(*) filter (where asset_type = 'stock' and pct_chg >= 9.8) as limit_up,
+                        count(*) filter (where asset_type = 'stock' and pct_chg <= -9.8) as limit_down,
                         coalesce(sum(amount), 0) as total_amount
                     FROM screening_daily_bar
                     WHERE trade_date = %s AND (asset_code LIKE '%%.SH' OR asset_code LIKE '%%.SZ' OR asset_code LIKE '%%.BJ')
@@ -475,6 +606,19 @@ def fetch_daily_market_objective_data(trade_date: str) -> Dict[str, Any]:
                         }
                         for code in INDEX_QUOTES
                     ]
+
+                    # A review imported after the snapshot feature went live has
+                    # an immutable official THS board.  Historical reviews without
+                    # a snapshot retain the legacy calculated display only.
+                    cur.execute(
+                        """
+                        SELECT payload_json
+                        FROM imported_review_ths_concept_board_snapshots
+                        WHERE trade_date = %s
+                        """,
+                        (norm_date,),
+                    )
+                    frozen_concept_board_row = cur.fetchone()
 
                     # 3. 同花顺概念板块榜单 (THS Concept Boards)
                     cur.execute("""
@@ -552,6 +696,17 @@ def fetch_daily_market_objective_data(trade_date: str) -> Dict[str, Any]:
                         } for r in losers_rows
                     ]
 
+                    if frozen_concept_board_row is not None:
+                        frozen_payload = frozen_concept_board_row[0]
+                        if isinstance(frozen_payload, str):
+                            frozen_payload = json.loads(frozen_payload)
+                        if not isinstance(frozen_payload, dict):
+                            raise RuntimeError(f"invalid frozen THS concept-board snapshot for {norm_date}")
+                        top_gainers = frozen_payload.get("top_gainers")
+                        top_losers = frozen_payload.get("top_losers")
+                        if not isinstance(top_gainers, list) or not isinstance(top_losers, list):
+                            raise RuntimeError(f"incomplete frozen THS concept-board snapshot for {norm_date}")
+
                     # 4. 【核心观察股】：全量从【核心观察股表格】解析提取并绑定角色
                     prev_verify_stocks, today_stocks = extract_key_stocks_from_review_text(cur, norm_date, date_formatted)
                     weekly_focus = extract_weekly_focus_groups(cur, norm_date)
@@ -580,6 +735,14 @@ def fetch_daily_market_objective_data(trade_date: str) -> Dict[str, Any]:
                         "today_stocks": today_stocks,
                         "weekly_focus": weekly_focus,
                     }
+                # An imported review can arrive before the local daily-bar sync for
+                # that trading day.  Do not fabricate a previous-day snapshot and do
+                # not let this prevent the raw review article from being opened.
+                raise MarketObjectiveDataUnavailable(
+                    f"本地行情库尚未完成 {date_formatted} 的日线数据同步"
+                )
+        except MarketObjectiveDataUnavailable:
+            raise
         except Exception as exc:
             raise RuntimeError(f"无法生成 {date_formatted} 的客观市场数据: {exc}") from exc
         finally:
@@ -647,7 +810,7 @@ def get_fallback_market_data(trade_date: str) -> Dict[str, Any]:
             {"ts_code": "601991.SH", "name": "大唐发电", "close": "6.48", "pct_change": "-6.36%", "amount": "57.3亿元", "tag": "昨日强势观察组", "is_up": False},
         ],
         "today_stocks": [],
-        "weekly_focus": {"window_dates": [], "groups": [], "date_groups": [], "stock_count": 0},
+        "weekly_focus": {"window_dates": [], "price_window_dates": [], "groups": [], "date_groups": [], "stock_count": 0},
     }
     # 即使当日行情尚未入库，导入文章中的提及股票也必须可见；行情字段保持“待行情”，不伪造数据。
     conn = _get_db_connection()
@@ -660,7 +823,7 @@ def get_fallback_market_data(trade_date: str) -> Dict[str, Any]:
                 result["weekly_focus"] = extract_weekly_focus_groups(cur, normalized_date)
         except Exception:
             # 保留结构化空结果，避免把文章已导入事实伪装成行情成功。
-            result["weekly_focus"] = {"window_dates": [], "groups": [], "date_groups": [], "stock_count": 0}
+            result["weekly_focus"] = {"window_dates": [], "price_window_dates": [], "groups": [], "date_groups": [], "stock_count": 0}
         finally:
             conn.close()
     return result

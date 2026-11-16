@@ -177,6 +177,70 @@ class ScreeningDataSync:
         frame["week"] = periods[frame.index].astype(str)
         return frame.groupby("week")["trade_date"].max().sort_values().tolist()
 
+    def sync_30m_bar_for_asset(self, asset_code: str, trade_date: str) -> dict[str, Any]:
+        """Fetch one stock's completed 30-minute bars for an on-demand K-line view."""
+        code = asset_code.strip().upper()
+        if not code:
+            raise ScreeningError("asset_code is required")
+        if trade_date != datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y%m%d"):
+            raise ScreeningError("on-demand 30-minute sync is only supported for the current trading date")
+        with self.store.connect() as conn:
+            asset = conn.execute(
+                "select asset_type, name from screening_asset_master where asset_code = %s",
+                (code,),
+            ).fetchone()
+        if not asset:
+            raise ScreeningError(f"证券主数据中不存在 {code}")
+        if str(asset["asset_type"]) != "stock":
+            return {"asset_code": code, "status": "ETF_30M_DISABLED", "rows": 0}
+
+        now = datetime.now(ZoneInfo("Asia/Shanghai"))
+        expected_labels = _completed_30m_slots(now.time())
+        expected_slots = len(expected_labels)
+        if expected_slots == 0:
+            return {"asset_code": code, "status": "NOT_READY", "rows": 0, "expected_slots": []}
+
+        previous = self.store.get_min_sync_status(code, trade_date, "30min")
+        actual_slots = self.store.count_min_slots(code, trade_date, "30min")
+        if actual_slots >= expected_slots:
+            self.store.save_min_sync_status(code, trade_date, expected_slots, actual_slots, "COMPLETE")
+            return {"asset_code": code, "status": "COMPLETE", "rows": 0, "present_slots": actual_slots}
+        if (
+            previous
+            and int(previous.get("expected_slots") or 0) == expected_slots
+            and previous.get("status") in {"PARTIAL", "FAILED", "RATE_LIMITED", "EMPTY"}
+        ):
+            return {
+                "asset_code": code,
+                "status": str(previous["status"]),
+                "rows": 0,
+                "error": previous.get("last_error"),
+                "present_slots": actual_slots,
+                "expected_slots": expected_labels,
+            }
+
+        from backend.screening.akshare_source import AkshareScreeningSource
+        try:
+            frame = AkshareScreeningSource().min_bar(code, "stock", trade_date, trade_date, freq="30min")
+            if frame is None or frame.empty:
+                message = "AkShare returned no bars for requested date"
+                self.store.save_min_sync_status(code, trade_date, expected_slots, actual_slots, "EMPTY", message)
+                return {"asset_code": code, "status": "EMPTY", "rows": 0, "error": message, "expected_slots": expected_labels}
+            self.store.save_min_bars(frame, freq="30min")
+            actual_slots = self.store.count_min_slots(code, trade_date, "30min")
+            status = "COMPLETE" if actual_slots >= expected_slots else "PARTIAL"
+            self.store.save_min_sync_status(code, trade_date, expected_slots, actual_slots, status)
+            return {
+                "asset_code": code,
+                "status": status,
+                "rows": len(frame),
+                "present_slots": actual_slots,
+                "expected_slots": expected_labels,
+            }
+        except Exception as exc:
+            self.store.save_min_sync_status(code, trade_date, expected_slots, actual_slots, "FAILED", str(exc))
+            raise
+
     def sync_30m_bars_all(
         self,
         start_date: str,
@@ -191,6 +255,10 @@ class ScreeningDataSync:
         if not assets:
             self.sync_assets()
             assets = self.store.get_priority_assets()
+        if asset_types is None:
+            asset_types = {"stock"}
+        if "etf" in asset_types:
+            raise ScreeningError("ETF 只同步日线，30 分钟数据不提供同步")
         if asset_types is not None:
             if not asset_types or not asset_types <= {"stock", "etf"}:
                 raise ScreeningError("asset_types must contain stock and/or etf")
@@ -358,6 +426,8 @@ class ScreeningDataSync:
 
         if not asset_types or not asset_types <= {"stock", "etf"}:
             raise ScreeningError("asset_types must contain stock and/or etf")
+        if "etf" in asset_types:
+            raise ScreeningError("ETF 只同步日线，30 分钟数据不提供同步")
         assets = [item for item in self.store.get_all_assets() if item["asset_type"] in asset_types]
         if not assets:
             raise ScreeningError("no assets available for requested 30m backfill types")
@@ -454,6 +524,7 @@ class ScreeningDataSync:
         if not assets:
             self.sync_assets()
             assets = self.store.get_priority_assets()
+        assets = [item for item in assets if item["asset_type"] == "stock"]
 
         total = len(assets)
         synced_count = 0

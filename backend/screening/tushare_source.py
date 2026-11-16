@@ -38,6 +38,16 @@ class TushareScreeningSource:
         df = _require_frame(df, "trade_cal", {"cal_date", "is_open"})
         return sorted(df["cal_date"].astype(str).tolist())
 
+    def trading_calendar(self, start_date: str, end_date: str) -> pd.DataFrame:
+        """Fetch every calendar date and its open/closed flag for the SSE calendar."""
+        df = self.pro.trade_cal(
+            exchange="SSE",
+            start_date=start_date,
+            end_date=end_date,
+            fields="exchange,cal_date,is_open",
+        )
+        return _require_frame(df, "trade_cal", {"exchange", "cal_date", "is_open"})
+
     def stock_company(self) -> pd.DataFrame:
         fields = "ts_code,province,city,main_business,act_ent_type"
         df = self.pro.stock_company(fields=fields)
@@ -172,10 +182,10 @@ class TushareScreeningSource:
         return df
 
     def fina_indicator_vip(self, ts_code: str) -> pd.DataFrame:
-        fields = "ts_code,ann_date,end_date,profit_dedt,or_yoy,op_yoy,netprofit_yoy,dt_netprofit_yoy,grossprofit_margin"
+        fields = "ts_code,ann_date,end_date,profit_dedt,q_dtprofit,or_yoy,op_yoy,netprofit_yoy,dt_netprofit_yoy,grossprofit_margin"
         df = self.pro.fina_indicator_vip(ts_code=ts_code, fields=fields)
         df = _require_frame(df, "fina_indicator_vip", {"ts_code", "end_date"})
-        df = _to_number(df, ["profit_dedt", "or_yoy", "op_yoy", "netprofit_yoy", "dt_netprofit_yoy", "grossprofit_margin"])
+        df = _to_number(df, ["profit_dedt", "q_dtprofit", "or_yoy", "op_yoy", "netprofit_yoy", "dt_netprofit_yoy", "grossprofit_margin"])
         return df
 
     def forecast_vip(self, ts_code: str) -> pd.DataFrame:

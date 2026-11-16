@@ -10,7 +10,7 @@ from decimal import Decimal
 from typing import Any
 
 from openai import OpenAI
-from backend.screening.market_memory_service import get_or_create_market_memory
+from backend.screening.market_memory_service import get_cached_market_memory, get_or_create_market_memory
 from backend.screening.secondary_eval_engine import (
     compute_theme_relative_facts,
     evaluate_single_secondary_candidate,
@@ -85,6 +85,8 @@ def run_ai_stock_research(
     stock_knowledge = {
         "ts_code": ts_code,
         "stock_name": _load_stock_name(store, ts_code),
+        "industry": evidence.get("industry"),
+        "main_business": evidence.get("main_business"),
         "ths_concepts": [c["ths_name"] for c in concepts_info.get("concepts", [])],
         "concept_temporal_status": concepts_info.get("temporal_status", "PIT_SAFE"),
     }
@@ -118,14 +120,27 @@ def run_ai_stock_research(
         "close": kline_facts.get("latest_close"),
     }
 
-    theme_match_result = match_stock_theme(
-        store=store,
-        ts_code=ts_code,
-        as_of_date=as_of_date,
-        market_memory=market_memory_json,
-        stock_knowledge=stock_knowledge,
-        quarterly_facts_brief=quarterly_facts_brief,
-    )
+    saved_theme_match = store.get_ai_stock_theme_match(ts_code, as_of_date)
+    if not saved_theme_match:
+        raise RuntimeError("请先完成主题匹配，再开始 AI 分析")
+    theme_match_result = saved_theme_match.get("result_json") or {}
+    if isinstance(theme_match_result, str):
+        theme_match_result = json.loads(theme_match_result)
+    theme_match_result = dict(theme_match_result)
+    theme_match_result["_ai_usage"] = {
+        "input_tokens": int(saved_theme_match.get("input_tokens") or 0),
+        "output_tokens": int(saved_theme_match.get("output_tokens") or 0),
+        "total_tokens": int(saved_theme_match.get("total_tokens") or 0),
+        "elapsed_ms": int(saved_theme_match.get("elapsed_ms") or 0),
+        "web_search": False,
+        "reasoning": "none",
+    }
+    # AI 只能从真实同花顺概念标签中选择匹配项；不接受自行创造的主题名称。
+    allowed_ths_concepts = set(stock_knowledge.get("ths_concepts") or [])
+    theme_match_result["matched_ths_concepts"] = [
+        name for name in (theme_match_result.get("matched_ths_concepts") or [])
+        if isinstance(name, str) and name in allowed_ths_concepts
+    ]
 
     # -------------------------------------------------------------
     # 阶段 3: 程序全市场 Theme-relative Facts 计算
@@ -188,8 +203,8 @@ def run_ai_stock_research(
         "reasoning_tokens": int(theme_usage.get("reasoning_tokens", 0)) + int(final_usage.get("reasoning_tokens", 0)),
         "model_elapsed_ms": int(theme_usage.get("elapsed_ms", 0)) + int(final_usage.get("elapsed_ms", 0)),
         "elapsed_ms": round((time.perf_counter() - research_started) * 1000),
-        "web_search": True,
-        "reasoning": "low",
+        "web_search": use_web_search,
+        "reasoning": "none",
     }
 
     # -------------------------------------------------------------
@@ -347,6 +362,59 @@ def _build_financial_comparison_facts(quarter_facts: list[dict[str, Any]]) -> di
         "deducted_net_profit": comparison("deducted_net_profit"),
         "operating_cashflow": comparison("operating_cashflow"),
     }
+
+
+def run_ai_stock_theme_match(
+    store: PostgresScreeningStore,
+    ts_code: str,
+    as_of_date: str,
+) -> dict[str, Any]:
+    """独立执行主题匹配，不联网，也不读取复盘原文或行情技术序列。"""
+    normalized_code = ts_code.strip().upper()
+    normalized_date = str(as_of_date).strip().replace("-", "")
+    memory = get_cached_market_memory(store, normalized_date)
+    if memory is None:
+        raise RuntimeError("当前查看日尚未生成市场主题记忆，请先导入该日复盘并生成市场全景")
+    market_memory_json, _ = memory
+    concepts_info = get_stock_ths_concepts(store, normalized_code, normalized_date)
+    with store.connect() as conn:
+        profile = conn.execute(
+            "select name, raw_json->>'main_business' as main_business, raw_json->>'industry' as industry "
+            "from screening_asset_master where asset_code = %s",
+            (normalized_code,),
+        ).fetchone()
+    stock_knowledge = {
+        "ts_code": normalized_code,
+        "stock_name": _load_stock_name(store, normalized_code),
+        "industry": (profile or {}).get("industry"),
+        "main_business": (profile or {}).get("main_business"),
+        "ths_concepts": [c["ths_name"] for c in concepts_info.get("concepts", [])],
+        "concept_temporal_status": concepts_info.get("temporal_status", "PIT_SAFE"),
+    }
+    result = match_stock_theme(
+        store=store,
+        ts_code=normalized_code,
+        as_of_date=normalized_date,
+        market_memory=market_memory_json,
+        stock_knowledge=stock_knowledge,
+        use_web_search=False,
+    )
+    usage = result.pop("_ai_usage", {})
+    now = datetime.now(UTC)
+    store.save_ai_stock_theme_match({
+        "ts_code": normalized_code,
+        "as_of_date": normalized_date,
+        "created_at": now,
+        "model": os.getenv("AI_BASE_MODEL", "").strip() or os.getenv("AI_BASE_OPENAI_MODEL", "").strip() or "qwen3.8-max",
+        "result_json": json.dumps(_json_safe(result), ensure_ascii=False),
+        "input_tokens": usage.get("input_tokens", 0),
+        "output_tokens": usage.get("output_tokens", 0),
+        "total_tokens": usage.get("total_tokens", 0),
+        "elapsed_ms": usage.get("elapsed_ms", 0),
+        "web_search_used": False,
+        "status": "READY",
+    })
+    return {"result": result, "usage": usage, "as_of_date": normalized_date, "ts_code": normalized_code}
 
 
 def _sign_change_label(previous: Any, current: Any) -> str | None:
@@ -574,7 +642,8 @@ def _call_ai3_final_research(
     )
 
     model = (
-        os.getenv("AI_BASE_MODEL", "").strip()
+        os.getenv("AI_RESEARCH_MODEL", "").strip()
+        or os.getenv("AI_BASE_MODEL", "").strip()
         or os.getenv("AI_BASE_OPENAI_MODEL", "").strip()
         or "qwen3.8-max"
     )

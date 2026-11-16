@@ -17,7 +17,7 @@ from backend.market_review.errors import MarketReviewError
 from backend.market_review.postgres_storage import PostgresMarketReviewStore
 
 
-EXTRACTION_VERSION = "review-stock-entities-v4"
+EXTRACTION_VERSION = "review-stock-entities-v5"
 
 # Verified editorial aliases found in imported review prose.  These are explicit
 # mappings to official asset-master names, not fuzzy matching.
@@ -66,16 +66,68 @@ def canonicalize_theme(value: str) -> tuple[str, str]:
     return label, _theme_key(label)
 
 
+def scan_review_stock_links(store: PostgresMarketReviewStore, content: str) -> list[dict[str, str]]:
+    """Bind explicit security names/codes in Markdown without using an AI model.
+
+    This scanner is deliberately exact: a token is linkable only when it maps to
+    one unique local stock or ETF.  It is used for immediate article reading;
+    the later full-text extraction remains responsible for themes and narratives.
+    """
+    with store.connect() as conn:
+        rows = conn.execute(
+            """
+            select asset_code, name
+            from screening_asset_master
+            where asset_type in ('stock', 'etf')
+            order by asset_code
+            """
+        ).fetchall()
+
+    candidates: dict[str, tuple[str, str]] = {}
+    ambiguous: set[str] = set()
+
+    def add_candidate(label: str, code: str, name: str) -> None:
+        token = label.strip()
+        if len(token) < 2:
+            return
+        existing = candidates.get(token)
+        if existing is None:
+            candidates[token] = (code, name)
+        elif existing != (code, name):
+            ambiguous.add(token)
+
+    master_by_name: dict[str, tuple[str, str]] = {}
+    for row in rows:
+        code, name = str(row["asset_code"]), str(row["name"])
+        master_by_name[name] = (code, name)
+        add_candidate(name, code, name)
+        add_candidate(code, code, name)
+        add_candidate(code.split(".")[0], code, name)
+    for editorial_name, canonical_name in SECURITY_NAME_ALIASES.items():
+        resolved = master_by_name.get(canonical_name)
+        if resolved:
+            add_candidate(editorial_name, *resolved)
+    for token in ambiguous:
+        candidates.pop(token, None)
+
+    if not candidates or not content:
+        return []
+    matcher = re.compile("|".join(re.escape(token) for token in sorted(candidates, key=len, reverse=True)))
+    links: list[dict[str, str]] = []
+    emitted: set[tuple[str, str]] = set()
+    for match in matcher.finditer(content):
+        label = match.group(0)
+        code, name = candidates[label]
+        identity = (label, code)
+        if identity in emitted:
+            continue
+        emitted.add(identity)
+        links.append({"label": label, "code": code, "name": name})
+    return links
+
+
 def _normalized_text(value: str) -> str:
     return re.sub(r"\s+", "", value or "")
-
-
-def _source_excerpt_for_name(content: str, stock_name: str) -> str | None:
-    """Return an exact, locally verified source line containing the entity name."""
-    for line in content.splitlines():
-        if stock_name in line:
-            return line.strip()
-    return None
 
 
 def _load_known_themes(store: PostgresMarketReviewStore) -> list[str]:
@@ -92,9 +144,10 @@ def _load_known_themes(store: PostgresMarketReviewStore) -> list[str]:
 
 
 def _resolve_entity(store: PostgresMarketReviewStore, entity: ReviewStockEntity, content: str) -> tuple[dict[str, Any] | None, dict[str, str] | None]:
-    source_excerpt = _source_excerpt_for_name(content, entity.stock_name)
-    if source_excerpt is None:
-        return None, {"stock_name": entity.stock_name, "reason": "股票名称未在原文命中，已拒绝写入"}
+    # Extraction evidence helps users trace a mention back to the review, but an
+    # extra model-recognised stock must not make the entire daily import fail.
+    # Binding safety is enforced independently below against the local master.
+    source_excerpt = entity.source_excerpt.strip()
     if entity.stock_name in NON_TRACKABLE_REFERENCES:
         # A factual company reference, rather than an A-share/ETF that can open
         # a local K-line. It belongs to the extracted story, not the stock list.
@@ -276,16 +329,12 @@ def extract_and_store_review_stock_mentions(
         elif item:
             resolved.append(item)
 
-    result = store.replace_imported_review_stock_mentions(
+    return store.replace_imported_review_stock_mentions(
         trade_date=trade_date,
         mentions=resolved,
+        # 无法绑定的名称保留在提取运行记录中作为显式警告；不阻断其他已
+        # 精确绑定股票的写入，也不为它们猜测代码。
         unresolved=unresolved,
         source_stock_count=len(deduped),
         extraction_version=EXTRACTION_VERSION,
     )
-    if result["status"] != "COMPLETE":
-        raise MarketReviewError(
-            f"复盘股票提取存在 {len(unresolved)} 条无法安全绑定证券主数据的记录，未完成导入；"
-            f"请修正原文名称或主数据后重试。详情：{unresolved}"
-        )
-    return result

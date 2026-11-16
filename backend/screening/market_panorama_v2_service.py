@@ -21,7 +21,7 @@ _STATE_PROMPT = """你是一名专业的A股市场历史复盘分析器。
 
 Market Phase 只在风险偏好、成交、广度、风格、主线或市场级风险显著变化时切换。120天通常4至8个，特殊时3至10个；绝不按每天划阶段。
 Story 是否进入全景取决于整个窗口的重要性而非今天是否活跃。退潮但曾主导、形成赚钱效应、持续较长、影响风险偏好或有多轮行情的故事必须保留。Story 可有多轮 Episode；旧 Episode 已退潮、因新变量重启时必须新建 Episode。AI、医药等大型母题必须记录内部 Subtheme 的承载迁移。
-Style Evolution 必须是整个窗口的变化过程，不是当前偏好。Turning Point 必须说明此前、发生、改变、后续。Story Interaction 只能表述市场重心、相对强化、共振或竞争，不能臆测真实账户资金流。Window Pattern 只保留3至8条由窗口内案例真实支持的规律。窗口末端仅是历史终点。
+Style Evolution 必须是整个窗口的变化过程，不是当前偏好。Turning Point 必须说明此前、发生、改变、后续。Story Interaction 只能表述市场重心、相对强化、共振或竞争，不能臆测真实账户资金流。Window Pattern 必须输出3至8条由窗口内案例真实支持的规律；即使窗口较短，也要从不同维度提炼至少3条，不能只输出1至2条。窗口末端仅是历史终点。
 
 只输出符合系统提供的 MarketPanoramaHistory JSON，禁止 Markdown、解释、补造历史；不能让最近3至5天吞掉窗口早中期重要历史。"""
 
@@ -115,7 +115,7 @@ def _schema_hint(as_of_date: str, requested_start: str, reviews: list[dict[str, 
 
 market_phases 每项必须有 phase_id,start_date,end_date,title,summary,index_environment,liquidity,breadth,risk_appetite,dominant_styles,dominant_story_ids,ending_reason,important_dates。
 stories 每项必须有 story_id,display_name,importance,first_seen_in_window,last_seen_in_window,window_role_summary,episodes,subthemes,representative_stocks,related_phase_ids；importance 只能是 major/important/secondary/minor。episodes 每项必须有 episode_id,start_date,end_date,trigger,current_or_final_state,state_nodes；subthemes 每项必须有 subtheme_id,display_name,first_major_date,role_summary。
-turning_points 每项必须有 date,title,before,event,after,affected_story_ids,importance。style_evolution 必须含 large_vs_small,trend_vs_limitup,high_vs_low,capacity_vs_elasticity,limitup_structure,growth_vs_defensive,concentration_vs_rotation，且每项有 summary,nodes。story_interactions 每项必须有 date_range,story_ids,relationship,summary,confidence。window_patterns 每项必须有 pattern_id,summary,supporting_cases。window_end_state 必须有 summary,position_in_history。source_reviews 必须与输入复盘日期逐一对应。"""
+turning_points 每项必须有 date,title,before,event,after,affected_story_ids,importance。style_evolution 必须含 large_vs_small,trend_vs_limitup,high_vs_low,capacity_vs_elasticity,limitup_structure,growth_vs_defensive,concentration_vs_rotation，且每项有 summary,nodes。window_patterns 必须输出3至8项，每项必须有 pattern_id,summary,supporting_cases。story_interactions 每项必须有 date_range,story_ids,relationship,summary,confidence。window_end_state 必须有 summary,position_in_history。source_reviews 必须与输入复盘日期逐一对应。"""
 
 
 def _strip_json(text: str) -> str:
@@ -175,9 +175,35 @@ def validate_history(history: Any, as_of_date: str, requested_start: str, review
     return root
 
 
+def _apply_system_provenance(history: Any, as_of_date: str, reviews: list[dict[str, str]]) -> Any:
+    """Set system-owned review provenance after the model supplies its analysis.
+
+    A model analyses market structure; it is not the source of truth for which
+    reviews were actually supplied.  These fields are derived directly from the
+    database window so every stored history can be traced exactly to its inputs.
+    """
+    if not isinstance(history, dict):
+        return history
+    requested_start = _calendar_window_start(as_of_date)
+    result = dict(history)
+    result["schema_version"] = SCHEMA_VERSION
+    result["as_of"] = as_of_date
+    result["window"] = {
+        "window_days": WINDOW_CALENDAR_DAYS,
+        "window_type": "calendar_days",
+        "requested_start_date": requested_start,
+        "actual_first_review_date": str(reviews[0]["date"]),
+        "end_date": as_of_date,
+        "review_count": len(reviews),
+        "history_complete": str(reviews[0]["date"]) == requested_start,
+    }
+    result["source_reviews"] = [str(item["date"]) for item in reviews]
+    return result
+
+
 def _call_state_full(reviews: list[dict[str, str]], as_of_date: str) -> dict[str, Any]:
     prompt = f"观察截止：{as_of_date}\n默认窗口起点：{_calendar_window_start(as_of_date)}\n\n【按日期排序的原始复盘】\n" + "\n\n".join(f"【{item['date']}】\n{item['raw_text']}" for item in reviews) + "\n\n" + _schema_hint(as_of_date, _calendar_window_start(as_of_date), reviews)
-    return json.loads(_strip_json(_run_ai(prompt, instructions=_STATE_PROMPT)))
+    return json.loads(_strip_json(_run_ai(prompt, instructions=_STATE_PROMPT, json_output=True)))
 
 
 def _call_state_incremental(
@@ -198,16 +224,16 @@ def _call_state_incremental(
         f"【今日原始复盘（{today_review['date']}，本次唯一新增事实）】\n{today_review['raw_text']}\n\n"
         + _schema_hint(as_of_date, requested_start, reviews)
     )
-    return json.loads(_strip_json(_run_ai(prompt, instructions=_INCREMENTAL_PROMPT)))
+    return json.loads(_strip_json(_run_ai(prompt, instructions=_INCREMENTAL_PROMPT, json_output=True)))
 
 
 def _render_and_review(history: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     article = _run_ai(json.dumps(history, ensure_ascii=False), instructions=_RENDER_PROMPT).strip()
-    reviewer = json.loads(_strip_json(_run_ai(f"【历史状态】\n{json.dumps(history, ensure_ascii=False)}\n\n【文章】\n{article}", instructions=_REVIEW_PROMPT)))
+    reviewer = json.loads(_strip_json(_run_ai(f"【历史状态】\n{json.dumps(history, ensure_ascii=False)}\n\n【文章】\n{article}", instructions=_REVIEW_PROMPT, json_output=True)))
     _require_dict(reviewer, ("pass","scores","problems","required_fixes"), "Reviewer 输出")
     if not reviewer["pass"]:
         article = _run_ai(f"【历史状态】\n{json.dumps(history, ensure_ascii=False)}\n\n【Reviewer 必修项】\n{json.dumps(reviewer['required_fixes'], ensure_ascii=False)}", instructions=_RENDER_REPAIR_PROMPT).strip()
-        reviewer = json.loads(_strip_json(_run_ai(f"【历史状态】\n{json.dumps(history, ensure_ascii=False)}\n\n【文章】\n{article}", instructions=_REVIEW_PROMPT)))
+        reviewer = json.loads(_strip_json(_run_ai(f"【历史状态】\n{json.dumps(history, ensure_ascii=False)}\n\n【文章】\n{article}", instructions=_REVIEW_PROMPT, json_output=True)))
         _require_dict(reviewer, ("pass","scores","problems","required_fixes"), "Reviewer 输出")
     if not reviewer["pass"]:
         raise RuntimeError("市场全景文章未通过 V2.0 Reviewer，未写入")
@@ -270,7 +296,12 @@ def rebuild_v2(store: PostgresScreeningStore, as_of_date: str) -> tuple[dict[str
     norm = _normalize_date(as_of_date)
     init_v2_schema(store)
     reviews = _reviews_for_window(store, norm)
-    history = validate_history(_call_state_full(reviews, norm), norm, _calendar_window_start(norm), reviews)
+    history = validate_history(
+        _apply_system_provenance(_call_state_full(reviews, norm), norm, reviews),
+        norm,
+        _calendar_window_start(norm),
+        reviews,
+    )
     article, reviewer = _render_and_review(history)
     _write_snapshot(store, norm, reviews, history, article, reviewer, len(reviews), norm)
     return history, article, reviewer
@@ -284,6 +315,11 @@ def update_incremental_v2(store: PostgresScreeningStore, as_of_date: str) -> tup
     previous = _get_previous_snapshot(store, norm)
     if previous is None:
         return rebuild_v2(store, norm)
+    # Incremental input is only valid when the immediately preceding imported
+    # review already has a snapshot.  If a prior daily task failed, feeding just
+    # the newest review would silently skip the missing day's market facts.
+    if len(reviews) < 2 or previous["as_of_date"] != str(reviews[-2]["date"]):
+        return rebuild_v2(store, norm)
     with store.connect() as conn:
         new_review_count = conn.execute(
             "SELECT COUNT(*) AS count FROM imported_market_reviews WHERE trade_date > %s AND trade_date <= %s",
@@ -292,7 +328,11 @@ def update_incremental_v2(store: PostgresScreeningStore, as_of_date: str) -> tup
     if int(new_review_count) >= FULL_REBUILD_INTERVAL:
         return rebuild_v2(store, norm)
     history = validate_history(
-        _call_state_incremental(previous["history"], previous["article"], reviews[-1], norm, reviews),
+        _apply_system_provenance(
+            _call_state_incremental(previous["history"], previous["article"], reviews[-1], norm, reviews),
+            norm,
+            reviews,
+        ),
         norm,
         _calendar_window_start(norm),
         reviews,

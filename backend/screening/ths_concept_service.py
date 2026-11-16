@@ -4,6 +4,7 @@ import os
 import time
 from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from backend.screening.concept_filter import is_low_signal_ths_concept
 from backend.screening.storage import PostgresScreeningStore
@@ -177,30 +178,43 @@ def get_stock_ths_concepts(
     并精准输出时点有效性标记: PIT_SAFE / SNAPSHOT_APPROX / CURRENT_REFERENCE_ONLY。
     """
     with store.connect() as conn:
-        # 1. 查找 <= as_of_date 的最新 snapshot_date
-        snap_row = conn.execute(
+        refreshed_rows = conn.execute(
             """
-            select snapshot_date
-            from ths_concept_member_snapshot
-            where snapshot_date <= %s
-            order by snapshot_date desc limit 1
+            select r.snapshot_date, r.ths_code, coalesce(m.name, r.ths_name) as ths_name,
+                   r.ths_type, r.is_new
+            from ths_concept_stock_refresh r
+            left join ths_index_master m on r.ths_code = m.ths_code
+            where r.ts_code = %s
+            order by r.ths_type asc, ths_name asc
             """,
-            (as_of_date,),
-        ).fetchone()
-
-        target_snap_date = snap_row["snapshot_date"] if snap_row else None
-
-        if not target_snap_date:
-            # 回退查询任何最新快照
-            snap_row_latest = conn.execute(
-                "select snapshot_date from ths_concept_member_snapshot order by snapshot_date desc limit 1"
-            ).fetchone()
-            target_snap_date = snap_row_latest["snapshot_date"] if snap_row_latest else None
+            (ts_code,),
+        ).fetchall()
+        if refreshed_rows:
+            target_snap_date = refreshed_rows[0]["snapshot_date"]
+            rows = refreshed_rows
             temporal_status = "CURRENT_REFERENCE_ONLY"
-        elif target_snap_date == as_of_date:
-            temporal_status = "PIT_SAFE"
         else:
-            temporal_status = "SNAPSHOT_APPROX"
+            # 1. 查找 <= as_of_date 的最新完整快照
+            snap_row = conn.execute(
+                """
+                select snapshot_date
+                from ths_concept_member_snapshot
+                where snapshot_date <= %s
+                order by snapshot_date desc limit 1
+                """,
+                (as_of_date,),
+            ).fetchone()
+            target_snap_date = snap_row["snapshot_date"] if snap_row else None
+            if not target_snap_date:
+                snap_row_latest = conn.execute(
+                    "select snapshot_date from ths_concept_member_snapshot order by snapshot_date desc limit 1"
+                ).fetchone()
+                target_snap_date = snap_row_latest["snapshot_date"] if snap_row_latest else None
+                temporal_status = "CURRENT_REFERENCE_ONLY"
+            elif target_snap_date == as_of_date:
+                temporal_status = "PIT_SAFE"
+            else:
+                temporal_status = "SNAPSHOT_APPROX"
 
         if not target_snap_date:
             return {
@@ -212,17 +226,18 @@ def get_stock_ths_concepts(
                 "temporal_notice": "当前日期前没有保存过同花顺标签快照，因此暂未匹配到标签",
             }
 
-        # 2. 查询快照中的概念 (关联 ths_index_master 获取真正的同花顺概念名称)
-        rows = conn.execute(
-            """
-            select s.ths_code, coalesce(m.name, s.ths_name) as ths_name, s.ths_type, s.is_new
-            from ths_concept_member_snapshot s
-            left join ths_index_master m on s.ths_code = m.ths_code
-            where s.snapshot_date = %s and s.ts_code = %s
-            order by s.ths_type asc, ths_name asc
-            """,
-            (target_snap_date, ts_code),
-        ).fetchall()
+        if not refreshed_rows:
+            # 2. 查询完整快照中的概念 (关联 ths_index_master 获取真正的概念名称)
+            rows = conn.execute(
+                """
+                select s.ths_code, coalesce(m.name, s.ths_name) as ths_name, s.ths_type, s.is_new
+                from ths_concept_member_snapshot s
+                left join ths_index_master m on s.ths_code = m.ths_code
+                where s.snapshot_date = %s and s.ts_code = %s
+                order by s.ths_type asc, ths_name asc
+                """,
+                (target_snap_date, ts_code),
+            ).fetchall()
 
     type_mapping = {
         "N": "概念/主题",
@@ -252,7 +267,7 @@ def get_stock_ths_concepts(
     notice_map = {
         "PIT_SAFE": "同花顺标签来自该交易日保存的快照",
         "SNAPSHOT_APPROX": f"使用该日期前最近一次同花顺标签快照 ({target_snap_date})",
-        "CURRENT_REFERENCE_ONLY": "使用当前保存的同花顺标签，历史标签可能已有变化",
+        "CURRENT_REFERENCE_ONLY": f"使用该日期前最近一次同花顺标签快照 ({target_snap_date})" if refreshed_rows else "使用当前保存的同花顺标签，历史标签可能已有变化",
     }
 
     return {
@@ -262,6 +277,133 @@ def get_stock_ths_concepts(
         "temporal_status": temporal_status,
         "concepts": concepts,
         "temporal_notice": notice_map.get(temporal_status, ""),
+    }
+
+
+def refresh_stock_ths_concepts(
+    store: PostgresScreeningStore,
+    ts_code: str,
+) -> dict[str, Any]:
+    """从 Tushare 按股票代码刷新当前标签，不改写历史概念快照。"""
+    clean_code = str(ts_code).strip().upper()
+    if not clean_code:
+        raise ValueError("ts_code is required")
+    token = os.environ.get("TUSHARE_TOKEN", "").strip()
+    if not token:
+        raise RuntimeError("TUSHARE_TOKEN is required for stock THS concept refresh")
+
+    try:
+        import tushare as ts
+        pro = ts.pro_api(token)
+        frame = pro.ths_member(con_code=clean_code)
+    except Exception as exc:
+        if is_tushare_rate_limit_error(exc):
+            raise RuntimeError(f"THS_MEMBER_RATE_LIMIT:{clean_code}:{exc}") from exc
+        raise RuntimeError(f"THS_MEMBER_REFRESH_FAILED:{clean_code}:{exc}") from exc
+
+    if frame is None or frame.empty:
+        raise RuntimeError(f"THS_MEMBER_REFRESH_EMPTY:{clean_code}")
+
+    required_columns = {"ts_code", "con_code"}
+    missing_columns = sorted(required_columns.difference(set(frame.columns)))
+    if missing_columns:
+        raise RuntimeError(f"THS_MEMBER_REFRESH_SCHEMA_INVALID:{','.join(missing_columns)}")
+
+    # con_code 查询必须只接受 Tushare 返回的当前股票记录，避免把接口异常或
+    # 错误参数返回的数据写入该股票的概念集合。
+    returned_rows = []
+    for row in frame.to_dict("records"):
+        returned_code = str(row.get("con_code") or "").strip().upper()
+        concept_code = str(row.get("ts_code") or "").strip().upper()
+        if returned_code == clean_code and concept_code:
+            returned_rows.append(row)
+    if not returned_rows:
+        raise RuntimeError(f"THS_MEMBER_REFRESH_STOCK_MISMATCH:{clean_code}")
+
+    concept_codes = list(dict.fromkeys(str(row["ts_code"]).strip().upper() for row in returned_rows))
+    records = []
+    concept_master_rows: dict[str, dict[str, Any]] = {}
+    with store.connect() as conn:
+        snapshot_date = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y%m%d")
+        refreshed_at = datetime.now(UTC)
+        master_rows = conn.execute(
+            "select ths_code, name, type from ths_index_master where ths_code = any(%s)",
+            (concept_codes,),
+        ).fetchall() if concept_codes else []
+        concept_master_rows = {row["ths_code"]: row for row in master_rows}
+        missing_codes = sorted(set(concept_codes).difference(concept_master_rows))
+        if missing_codes:
+            try:
+                import tushare as ts
+                hot_rows_by_code: dict[str, list[dict[str, Any]]] = {}
+                for missing_code in missing_codes:
+                    hot_frame = ts.pro_api(token).ths_hot(ts_code=missing_code)
+                    hot_rows = hot_frame.to_dict("records") if hot_frame is not None else []
+                    hot_rows_by_code[missing_code] = hot_rows
+            except Exception as exc:
+                if is_tushare_rate_limit_error(exc):
+                    raise RuntimeError(f"THS_INDEX_MASTER_LOOKUP_RATE_LIMIT:{missing_codes}:{exc}") from exc
+                raise RuntimeError(f"THS_INDEX_MASTER_LOOKUP_FAILED:{missing_codes}:{exc}") from exc
+
+            for missing_code in missing_codes:
+                names = {
+                    str(row.get("ts_name") or "").strip()
+                    for row in hot_rows_by_code[missing_code]
+                    if str(row.get("ts_name") or "").strip()
+                }
+                if len(names) != 1:
+                    raise RuntimeError(f"THS_INDEX_MASTER_NAME_INVALID:{missing_code}:{sorted(names)}")
+                concept_master_rows[missing_code] = {
+                    "ths_code": missing_code,
+                    "name": next(iter(names)),
+                    "type": "N",
+                }
+
+            for missing_code in missing_codes:
+                master = concept_master_rows[missing_code]
+                conn.execute(
+                    """
+                    insert into ths_index_master (ths_code, name, type, exchange, count, sync_time)
+                    values (%s, %s, %s, %s, %s, %s)
+                    on conflict (ths_code) do update set
+                        name = excluded.name,
+                        type = excluded.type,
+                        sync_time = excluded.sync_time
+                    """,
+                    (missing_code, master["name"], master["type"], "A", 0, refreshed_at),
+                )
+
+        for concept_code in concept_codes:
+            master = concept_master_rows[concept_code]
+            source_row = next(row for row in returned_rows if str(row["ts_code"]).strip().upper() == concept_code)
+            records.append((
+                clean_code,
+                snapshot_date,
+                concept_code,
+                master["name"],
+                master["type"],
+                str(source_row.get("con_name") or clean_code).strip(),
+                source_row.get("is_new"),
+                refreshed_at,
+            ))
+        conn.execute("delete from ths_concept_stock_refresh where ts_code = %s", (clean_code,))
+        with conn.cursor() as cur:
+            cur.executemany(
+                """
+                insert into ths_concept_stock_refresh
+                (ts_code, snapshot_date, ths_code, ths_name, ths_type, stock_name, is_new, refreshed_at)
+                values (%s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                records,
+            )
+        conn.commit()
+
+    return {
+        "status": "SUCCESS",
+        "ts_code": clean_code,
+        "snapshot_date": snapshot_date,
+        "concept_count": len(records),
+        "message": f"已更新 {clean_code} 的同花顺概念标签，共 {len(records)} 项",
     }
 
 

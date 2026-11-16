@@ -4,7 +4,9 @@ import hashlib
 import json
 import os
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -106,20 +108,31 @@ def get_or_create_market_memory(
 
     # 1. 读取当日复盘原文（只取当日这 1 篇）
     today_review = _fetch_single_review(store, norm_date)
+    # The full window is also used to verify that an incremental base is truly
+    # contiguous.  A missing daily memory snapshot must never make us skip that
+    # day's original review when processing a later import.
+    window_reviews = _fetch_market_reviews_for_memory(store, norm_date, lookback_sessions)
 
     # 2. 尝试读取最近一次已缓存的全景（前一日或更早）
     prev_memory = _fetch_latest_cached_memory_before(store, norm_date)
 
     # 3. 构建哈希，判断是否需要重新推演
-    if prev_memory is not None:
+    previous_review_date = str(window_reviews[-2]["date"]) if len(window_reviews) >= 2 else None
+    incremental_is_contiguous = (
+        prev_memory is not None
+        and previous_review_date is not None
+        and str(prev_memory["as_of_date"]) == previous_review_date
+    )
+    if incremental_is_contiguous:
         prev_json_str = json.dumps(prev_memory["memory_json"], ensure_ascii=False, sort_keys=True)
         prev_md_hash = hashlib.md5(prev_memory.get("summary_markdown", "").encode("utf-8")).hexdigest()
         digest_source = prev_json_str + "|" + prev_md_hash + "|" + (today_review["raw_text"] if today_review else "")
         mode = "incremental"
         all_reviews = None
     else:
-        # 无前日全景 → 全量初始化，哈希基于所有历史复盘
-        all_reviews = _fetch_market_reviews_for_memory(store, norm_date, lookback_sessions)
+        # No previous snapshot, or a gap after a failed daily task: rebuild from
+        # every review in the permitted window rather than skipping facts.
+        all_reviews = window_reviews
         digest_source = "|".join([f"{r['date']}:{len(r['raw_text'])}" for r in all_reviews])
         mode = "full_init"
 
@@ -140,6 +153,12 @@ def get_or_create_market_memory(
             memory_json = row["memory_json"] if isinstance(row["memory_json"], dict) else json.loads(row["memory_json"])
             return memory_json, row["summary_markdown"]
 
+    # Theme-cycle stock names are bound against this table below. Keep the
+    # security master current before asking the model to produce a snapshot:
+    # otherwise a renamed/newly-listed security can make the whole shared
+    # theme+capital-flow cache fail validation even though the review is valid.
+    _sync_asset_master_for_snapshot(store)
+
     # 5. 构造 Prompt 并调用 AI
     if mode == "incremental" and today_review is not None:
         output_text = _call_ai_incremental(prev_memory, today_review, norm_date)
@@ -159,6 +178,7 @@ def get_or_create_market_memory(
 
     # 6. 解析并存储
     memory_json, summary_markdown = _parse_market_memory_output(output_text, norm_date, session_count)
+    _bind_theme_phase_core_stocks_to_security_master(store, memory_json)
 
     with store.connect() as conn:
         conn.execute(
@@ -186,6 +206,40 @@ def get_or_create_market_memory(
         conn.commit()
 
     return memory_json, summary_markdown
+
+
+def _sync_asset_master_for_snapshot(store: PostgresScreeningStore) -> None:
+    """Refresh and validate the listed-stock/ETF master before a new snapshot."""
+    project_root = Path(__file__).resolve().parents[2]
+    from backend.screening.config import TushareConfig
+    from backend.screening.data_sync import ScreeningDataSync
+    from backend.screening.tushare_source import TushareScreeningSource
+
+    config = TushareConfig.from_project_env(project_root)
+    sync = ScreeningDataSync(TushareScreeningSource(config.token), store)
+    started_at = datetime.now(UTC)
+    source_counts = sync.sync_assets()
+
+    with store.connect() as conn:
+        refreshed_counts = conn.execute(
+            """
+            SELECT asset_type, COUNT(*) AS count
+            FROM screening_asset_master
+            WHERE updated_at >= %s
+            GROUP BY asset_type
+            """,
+            (started_at,),
+        ).fetchall()
+
+    refreshed = {str(row["asset_type"]): int(row["count"]) for row in refreshed_counts}
+    missing = {
+        asset_type: int(expected) - refreshed.get(asset_type, 0)
+        for asset_type, expected in source_counts.items()
+        if refreshed.get(asset_type, 0) < int(expected)
+    }
+    if missing:
+        details = ", ".join(f"{asset_type} 缺少 {count} 条" for asset_type, count in sorted(missing.items()))
+        raise RuntimeError(f"证券主数据刷新后入库数量校验失败：{details}")
 
 
 # ── 内部辅助函数 ──────────────────────────────────────────────────────────────
@@ -335,7 +389,8 @@ _OUTPUT_FORMAT = """
           "time_range": "8.04-8.06",
           "stage_name": "阶段名称（如科技修复启动）",
           "description": "该阶段的历史事实与强弱变化",
-          "core_stocks": [{{"name": "股票名称", "ts_code": "000001.SZ"}}]
+          "core_stocks": [{{"name": "股票名称", "security_type": "listed_security"}}],
+          "non_security_entities": [{{"name": "未上市公司或产业主体", "reason": "未上市/非 A 股可交易证券"}}]
         }}
       ]
     }}
@@ -431,7 +486,7 @@ def _call_ai_incremental(
 2. 必须【完整保留并传承】前次纪实中沉淀的历史大周期演变脉络（一、二、三、四各章节的历史阶段与母题图谱不可删减，而是在宏观大格局中追加/融合最新演变）。
 3. 严格遵守【纯历史回放与客观总结】定位：严禁输出任何明日预测、后市推演或未来展望；严禁对最新单日进行孤立的流水账式日报复述。
 4. 在 JSON 结构中：`capital_flows` 必须【全量保留】既有所有历史阶段并在尾部追加/更新最新阶段；`themes` 必须维护全量题材的最新状态。
-5. `themes[].phases` 必须按时间顺序完整记录该题材在历史复盘中出现的阶段变化（启动、扩散、高位分歧、退潮、修复等）；每个阶段必须给出时间范围、阶段名称、事实描述和核心股票。核心股票必须同时提供股票名称与标准交易代码（如 300308.SZ），只能使用原文明确提及的股票，不能猜测或补写。
+5. `themes[].phases` 必须按时间顺序完整记录该题材在历史复盘中出现的阶段变化（启动、扩散、高位分歧、退潮、修复等）；每个阶段必须给出时间范围、阶段名称、事实描述和核心股票。核心股票只输出原文中的准确股票名称，不能猜测、补写或输出股票代码；股票代码由系统依据本地证券主数据统一绑定。`core_stocks` 只放 A 股或 ETF 等可交易证券；未上市公司、海外公司或产业主体放入 `non_security_entities`，每项必须包含 `name` 和 `reason`，不得伪装成股票。
 
 {output_format}"""
     return _run_ai(user_prompt)
@@ -545,8 +600,8 @@ def refresh_market_overview_markdown(
     }
 
 
-def _run_ai(user_prompt: str, instructions: str | None = None) -> str:
-    """直连阿里云百炼 Responses API，使用 stream=True + reasoning.effort='none' + max_output_tokens=8000"""
+def _run_ai(user_prompt: str, instructions: str | None = None, json_output: bool = False) -> str:
+    """直连阿里云百炼 Responses API；结构化调用启用原生 JSON 输出约束。"""
     import httpx
     api_key = (
         os.getenv("DASHSCOPE_API_KEY", "").strip()
@@ -575,12 +630,39 @@ def _run_ai(user_prompt: str, instructions: str | None = None) -> str:
     )
 
     # 启用 stream=True 流式监听，显式关闭思考模式
+    request: dict[str, Any] = {
+        "model": model,
+        "instructions": instructions or _SYSTEM_PROMPT,
+        "input": user_prompt,
+        # 市场全景的完整历史状态包含阶段、故事、转折和逐日来源，默认输出上限
+        # 会截断 JSON。这里显式保留足够空间，后续仍以 Schema 校验决定是否写入。
+        "max_output_tokens": 131072,
+        "reasoning": {"effort": "none"},
+    }
+    if json_output:
+        # DashScope compatible-mode does not expose Responses `text.format` for
+        # every configured model (DeepSeek currently rejects it as unavailable).
+        # JSON shape remains enforced by the task prompt and the strict parsers / 
+        # domain validators at each call site; do not send an unsupported format.
+        response = client.responses.create(**request)
+        status = str(getattr(response, "status", "") or "")
+        if status and status != "completed":
+            raise RuntimeError(f"百炼结构化输出未完整完成（状态：{status}），未写入")
+        full_output = str(getattr(response, "output_text", "") or "").strip()
+        if not full_output:
+            raise RuntimeError("百炼结构化输出未返回有效内容")
+        usage = getattr(response, "usage", None)
+        if usage:
+            print(
+                "[QWEN_RESPONSES] Completed: "
+                f"input_tokens={getattr(usage, 'input_tokens', 0)}, "
+                f"output_tokens={getattr(usage, 'output_tokens', 0)}"
+            )
+        return full_output
+
+    request["stream"] = True
     response_stream = client.responses.create(
-        model=model,
-        instructions=instructions or _SYSTEM_PROMPT,
-        input=user_prompt,
-        reasoning={"effort": "none"},
-        stream=True,
+        **request,
     )
 
     output_chunks: list[str] = []
@@ -758,10 +840,113 @@ def _parse_market_memory_output(
             if not isinstance(stocks, list):
                 raise RuntimeError(f"题材周期第 {idx + 1} 项的阶段 {phase_idx + 1} 缺少核心股票，未写入缓存")
             for stock_idx, stock in enumerate(stocks):
-                if not isinstance(stock, dict) or not isinstance(stock.get("name"), str) or not isinstance(stock.get("ts_code"), str):
-                    raise RuntimeError(f"题材周期第 {idx + 1} 项的阶段 {phase_idx + 1} 核心股票 {stock_idx + 1} 缺少名称或交易代码，未写入缓存")
+                if not isinstance(stock, dict) or not isinstance(stock.get("name"), str) or not stock["name"].strip():
+                    raise RuntimeError(f"题材周期第 {idx + 1} 项的阶段 {phase_idx + 1} 核心股票 {stock_idx + 1} 缺少股票名称，未写入缓存")
+                security_type = str(stock.get("security_type") or "").strip().lower()
+                if security_type and security_type not in {"listed_security", "stock", "etf", "non_listed_company", "non_security_entity", "unlisted_company"}:
+                    raise RuntimeError(f"题材周期第 {idx + 1} 项的阶段 {phase_idx + 1} 核心股票 {stock_idx + 1} 的证券类型无效，未写入缓存")
+            entities = phase.get("non_security_entities", [])
+            if not isinstance(entities, list):
+                raise RuntimeError(f"题材周期第 {idx + 1} 项的阶段 {phase_idx + 1} 非证券主体字段格式无效，未写入缓存")
+            for entity_idx, entity in enumerate(entities):
+                if not isinstance(entity, dict) or not isinstance(entity.get("name"), str) or not entity["name"].strip():
+                    raise RuntimeError(f"题材周期第 {idx + 1} 项的阶段 {phase_idx + 1} 非证券主体 {entity_idx + 1} 缺少名称，未写入缓存")
+                if not isinstance(entity.get("reason"), str) or not entity["reason"].strip():
+                    raise RuntimeError(f"题材周期第 {idx + 1} 项的阶段 {phase_idx + 1} 非证券主体 {entity_idx + 1} 缺少原因，未写入缓存")
 
     return memory_json, summary_markdown
+
+
+def _bind_theme_phase_core_stocks_to_security_master(
+    store: PostgresScreeningStore,
+    memory_json: dict[str, Any],
+) -> None:
+    """Canonically bind AI-mentioned theme stocks to the local security master.
+
+    A language model may recognize a company name but must never be treated as the
+    authority for its exchange code. The name is resolved against the local stock
+    master and the canonical code replaces the model-provided value before a theme
+    snapshot can be persisted. Missing or non-unique names remain a hard failure
+    for entries classified as tradable securities. Explicitly classified
+    non-listed companies are retained as evidence-only entities and never receive
+    a fabricated code or a K-line binding.
+    """
+    occurrences: list[tuple[int, int, int, dict[str, Any]]] = []
+    names: set[str] = set()
+    for theme_index, theme in enumerate(memory_json.get("themes", [])):
+        if not isinstance(theme, dict):
+            continue
+        for phase_index, phase in enumerate(theme.get("phases", [])):
+            if not isinstance(phase, dict):
+                continue
+            for stock_index, stock in enumerate(phase.get("core_stocks", [])):
+                if not isinstance(stock, dict):
+                    continue
+                stock_name = str(stock.get("name") or "").strip()
+                if not stock_name:
+                    raise RuntimeError(
+                        f"题材周期第 {theme_index + 1} 项阶段 {phase_index + 1} 的核心股票 {stock_index + 1} 缺少证券名称，未写入缓存"
+                    )
+                occurrences.append((theme_index, phase_index, stock_index, stock))
+                names.add(stock_name)
+
+    if not names:
+        return
+
+    with store.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT name, asset_code
+            FROM screening_asset_master
+            WHERE asset_type = 'stock' AND name = ANY(%s)
+            ORDER BY name, asset_code
+            """,
+            (list(names),),
+        ).fetchall()
+
+    bindings: dict[str, list[str]] = {}
+    for row in rows:
+        bindings.setdefault(str(row["name"]), []).append(str(row["asset_code"]).upper())
+
+    failures: list[str] = []
+    warnings: list[str] = []
+    for theme_index, phase_index, stock_index, stock in occurrences:
+        stock_name = str(stock["name"]).strip()
+        codes = bindings.get(stock_name, [])
+        if len(codes) != 1:
+            if str(stock.get("security_type") or "").strip().lower() in {
+                "non_listed_company",
+                "non_security_entity",
+                "unlisted_company",
+            }:
+                stock["ts_code"] = None
+                stock["security_status"] = "NON_SECURITY_ENTITY"
+                stock["binding_reason"] = "模型明确标记为未上市/非 A 股可交易主体"
+                continue
+            if str(stock.get("security_type") or "").strip().lower() in {"listed_security", "stock", "etf"}:
+                reason = "未在证券主数据中找到" if not codes else f"匹配到多个代码：{', '.join(codes)}"
+                failures.append(
+                    f"题材周期第 {theme_index + 1} 项阶段 {phase_index + 1} 核心股票 {stock_index + 1} “{stock_name}”{reason}"
+                )
+                continue
+            # 兼容旧模型输出：未携带 security_type 的主体不能安全绑定，
+            # 但不能再让一条产业公司名称阻断整份题材周期。显式留下警告，
+            # 前端按不可交易主体展示，不生成代码，也不提供 K 线入口。
+            stock["ts_code"] = None
+            stock["security_status"] = "UNRESOLVED_NON_SECURITY_ENTITY"
+            stock["binding_reason"] = "未在证券主数据中找到唯一证券；保留为非交易主体，需人工核对"
+            warnings.append(
+                f"题材周期第 {theme_index + 1} 项阶段 {phase_index + 1} 核心股票 “{stock_name}”未绑定证券代码，已按非交易主体保留"
+            )
+            continue
+        stock["ts_code"] = codes[0]
+        stock["security_type"] = "listed_security"
+        stock["security_status"] = "BOUND"
+
+    if warnings:
+        memory_json.setdefault("binding_warnings", []).extend(warnings)
+    if failures:
+        raise RuntimeError("；".join(failures) + "。题材周期未写入缓存")
 
 
 # ── 独立市场全景状态机 ────────────────────────────────────────────────────────

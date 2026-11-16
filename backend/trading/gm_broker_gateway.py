@@ -11,7 +11,7 @@ from http.client import RemoteDisconnected
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
 
 from .broker import BrokerGateway
 
@@ -24,13 +24,17 @@ class BrokerNodeRequestError(RuntimeError):
 
 
 class GMBrokerHttpGateway(BrokerGateway):
-    def __init__(self, base_url: str | None = None, api_token: str | None = None, timeout: float = 10.0):
+    def __init__(self, base_url: str | None = None, api_token: str | None = None, timeout: float = 30.0):
         self.base_url = base_url or os.environ.get("BROKER_NODE_URL")
         self.api_token = api_token
         if not self.base_url:
             raise ValueError("BROKER_NODE_URL is required")
         self.base_url = self.base_url.rstrip("/")
         self.timeout = timeout
+        # Broker Node endpoints are private LAN/Tailscale services.  A desktop
+        # HTTP proxy can return its own 502 for these addresses, so this
+        # dedicated broker channel must connect directly to the configured node.
+        self._http = build_opener(ProxyHandler({}))
 
     def _request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         body = json.dumps(payload).encode("utf-8") if payload is not None else None
@@ -39,7 +43,7 @@ class GMBrokerHttpGateway(BrokerGateway):
             headers["Authorization"] = f"Bearer {self.api_token}"
         request = Request(self.base_url + path, data=body, method=method, headers=headers)
         try:
-            with urlopen(request, timeout=self.timeout) as response:
+            with self._http.open(request, timeout=self.timeout) as response:
                 payload = json.loads(response.read().decode("utf-8"))
                 if not isinstance(payload, dict):
                     raise RuntimeError("Broker Node response must be a JSON object")
@@ -57,7 +61,19 @@ class GMBrokerHttpGateway(BrokerGateway):
         return self._request("GET", "/api/v1/health")
 
     def get_capabilities(self) -> dict[str, Any]:
-        return {"status": "CONNECTED", "native_orders": ["LIMIT"], "conditional_execution": [], "algorithms": []}
+        orders_by_exchange = {
+            "SH": ["LIMIT", "MARKET", "MARKET_BOC", "MARKET_BOP", "MARKET_B5TC", "MARKET_B5TL"],
+            "SZ": ["LIMIT", "MARKET", "MARKET_BOC", "MARKET_BOP", "MARKET_FAK", "MARKET_FOK", "MARKET_B5TC"],
+        }
+        return {
+            "status": "CONNECTED",
+            "native_orders": sorted({order_type for types in orders_by_exchange.values() for order_type in types}),
+            "order_types_by_exchange": orders_by_exchange,
+            "verified_order_types": ["LIMIT"],
+            "unverified_order_types": sorted({order_type for types in orders_by_exchange.values() for order_type in types} - {"LIMIT"}),
+            "conditional_execution": [],
+            "algorithms": [],
+        }
 
     def get_status(self) -> dict[str, Any]:
         return self._request("GET", "/api/v1/status")
@@ -89,6 +105,11 @@ class GMBrokerHttpGateway(BrokerGateway):
         if after_seq < 0 or limit <= 0:
             raise ValueError("after_seq must be non-negative and limit must be positive")
         return self._request("GET", f"/api/v1/events?after_seq={after_seq}&limit={limit}")
+
+    def get_command(self, command_id: str) -> dict[str, Any]:
+        if not str(command_id).strip():
+            raise ValueError("command_id is required")
+        return self._request("GET", f"/api/v1/commands/{quote(str(command_id), safe='')}")
 
     def set_execution_quote_subscription(self, execution_plan_id: str, instruments: list[dict[str, str]], lease_seconds: int = 120) -> dict[str, Any]:
         return self._request("PUT", f"/api/v1/execution-quotes/subscriptions/{execution_plan_id}", {"symbols": instruments, "lease_seconds": lease_seconds})

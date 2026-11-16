@@ -174,12 +174,14 @@ class PostgresScreeningStore:
                 create table if not exists screening_watchlist_groups (
                     group_id bigserial primary key,
                     group_name text not null,
+                    group_icon text not null default 'folder',
                     parent_id bigint references screening_watchlist_groups(group_id) on delete cascade,
                     sort_order int default 0,
                     created_at timestamptz not null default now()
                 )
                 """
             )
+            conn.execute("alter table screening_watchlist_groups add column if not exists group_icon text not null default 'folder'")
             conn.execute(
                 """
                 create table if not exists screening_user_watchlist (
@@ -204,6 +206,18 @@ class PostgresScreeningStore:
             conn.execute("alter table screening_user_watchlist add column if not exists source_stage text")
             conn.execute("alter table screening_user_watchlist add column if not exists source_snapshot_date text")
             conn.execute("alter table screening_user_watchlist add column if not exists source_recorded_at timestamptz")
+            conn.execute(
+                """
+                create table if not exists screening_watchlist_profile_refresh_job (
+                    asset_code text primary key,
+                    status text not null check (status in ('PENDING', 'RUNNING', 'SUCCESS', 'FAILED')),
+                    requested_at timestamptz not null,
+                    started_at timestamptz,
+                    completed_at timestamptz,
+                    last_error text
+                )
+                """
+            )
             conn.execute(
                 """
                 update screening_user_watchlist
@@ -412,6 +426,18 @@ class PostgresScreeningStore:
                 )
                 """
             )
+            conn.execute("""
+                create table if not exists early_turn_observation_log (
+                    run_id text not null,
+                    ts_code text not null,
+                    trade_date text not null,
+                    observation_version text not null,
+                    observation_json jsonb not null,
+                    recorded_at timestamptz not null,
+                    primary key (run_id, ts_code)
+                )
+            """)
+            conn.execute("create index if not exists idx_early_observation_date on early_turn_observation_log(trade_date, ts_code)")
             conn.execute("create index if not exists idx_early_turn_res_date on early_turn_result(trade_date)")
             conn.execute("create index if not exists idx_early_turn_res_state on early_turn_result(run_id, state)")
 
@@ -764,6 +790,22 @@ class PostgresScreeningStore:
             )
             conn.execute(
                 """
+                create table if not exists ths_concept_stock_refresh (
+                    ts_code text not null,
+                    snapshot_date text not null,
+                    ths_code text not null,
+                    ths_name text not null,
+                    ths_type text not null,
+                    stock_name text,
+                    is_new text,
+                    refreshed_at timestamptz not null,
+                    primary key (ts_code, ths_code)
+                )
+                """
+            )
+            conn.execute("alter table ths_concept_stock_refresh add column if not exists is_new text")
+            conn.execute(
+                """
                 create table if not exists stock_business_segment (
                     ts_code text not null,
                     period text not null,
@@ -825,6 +867,7 @@ class PostgresScreeningStore:
                     op_yoy numeric,
                     netprofit_yoy numeric,
                     profit_dedt numeric,
+                    q_dtprofit numeric,
                     dt_netprofit_yoy numeric,
                     grossprofit_margin numeric,
                     raw_json jsonb not null,
@@ -834,6 +877,7 @@ class PostgresScreeningStore:
                 """
             )
             conn.execute("alter table stock_fina_indicator add column if not exists profit_dedt numeric")
+            conn.execute("alter table stock_fina_indicator add column if not exists q_dtprofit numeric")
             conn.execute(
                 """
                 create table if not exists stock_forecast (
@@ -960,6 +1004,88 @@ class PostgresScreeningStore:
             )
             conn.execute(
                 """
+                create table if not exists ai_stock_theme_match (
+                    ts_code text not null,
+                    as_of_date text not null,
+                    created_at timestamptz not null,
+                    model text not null,
+                    result_json jsonb not null,
+                    input_tokens integer not null default 0,
+                    output_tokens integer not null default 0,
+                    total_tokens integer not null default 0,
+                    elapsed_ms integer not null default 0,
+                    web_search_used boolean not null default false,
+                    status text not null default 'READY',
+                    primary key (ts_code, as_of_date)
+                )
+                """
+            )
+            # 当前股票档案与自动选股历史快照分离：前者始终只保留每只证券的
+            # 最新结论，后者继续由 candidate_secondary_* 按选股日期留存。
+            conn.execute(
+                """
+                create table if not exists stock_current_fundamental_profile (
+                    ts_code text primary key,
+                    source_fingerprint text not null,
+                    source_latest_announcement_date text,
+                    result_json jsonb not null,
+                    status text not null,
+                    refreshed_at timestamptz not null
+                )
+                """
+            )
+            conn.execute(
+                """
+                create table if not exists stock_current_theme_profile (
+                    ts_code text primary key,
+                    market_theme_fingerprint text not null,
+                    market_memory_date text not null,
+                    concept_fingerprint text not null,
+                    result_json jsonb not null,
+                    status text not null,
+                    refreshed_at timestamptz not null
+                )
+                """
+            )
+            conn.execute(
+                """
+                create table if not exists stock_current_market_profile (
+                    ts_code text primary key,
+                    market_trade_date text not null,
+                    source_fingerprint text not null,
+                    result_json jsonb not null,
+                    status text not null,
+                    refreshed_at timestamptz not null
+                )
+                """
+            )
+            conn.execute(
+                """
+                create table if not exists stock_current_ai_research_profile (
+                    ts_code text primary key,
+                    source_fingerprint text not null,
+                    result_markdown text not null,
+                    priority text not null,
+                    source_manifest_json jsonb not null,
+                    status text not null,
+                    refreshed_at timestamptz not null
+                )
+                """
+            )
+            conn.execute(
+                """
+                create table if not exists stock_current_company_profile (
+                    ts_code text primary key,
+                    source_fingerprint text not null,
+                    result_json jsonb not null,
+                    source_manifest_json jsonb not null,
+                    status text not null,
+                    refreshed_at timestamptz not null
+                )
+                """
+            )
+            conn.execute(
+                """
                 create table if not exists user_research_watchlist (
                     ts_code text not null,
                     as_of_date text not null,
@@ -980,6 +1106,7 @@ class PostgresScreeningStore:
             conn.execute("create index if not exists idx_cand_sec_date on candidate_secondary_snapshot(as_of_date)")
             conn.execute("create index if not exists idx_ths_member_snap_stock on ths_concept_member_snapshot(snapshot_date, ts_code)")
             conn.execute("create index if not exists idx_ai_research_stock on ai_stock_research(ts_code, as_of_date)")
+            conn.execute("create index if not exists idx_ai_theme_match_date on ai_stock_theme_match(as_of_date)")
 
             conn.execute("create index if not exists idx_screening_run_date on screening_run(trade_date)")
             conn.execute("create index if not exists idx_pool_candidate_v2_run on pool_candidate_snapshot_v2(run_id)")
@@ -1302,6 +1429,7 @@ class PostgresScreeningStore:
                 _nullable_float(record.get("op_yoy")),
                 _nullable_float(record.get("netprofit_yoy")),
                 _nullable_float(record.get("profit_dedt")),
+                _nullable_float(record.get("q_dtprofit")),
                 _nullable_float(record.get("dt_netprofit_yoy")),
                 _nullable_float(record.get("grossprofit_margin")),
                 json_dumps(record),
@@ -1315,15 +1443,16 @@ class PostgresScreeningStore:
                     """
                     insert into stock_fina_indicator (
                         ts_code, end_date, available_date, ann_date, or_yoy, op_yoy,
-                        netprofit_yoy, profit_dedt, dt_netprofit_yoy, grossprofit_margin, raw_json, sync_time
+                        netprofit_yoy, profit_dedt, q_dtprofit, dt_netprofit_yoy, grossprofit_margin, raw_json, sync_time
                     )
-                    values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+                    values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
                     on conflict (ts_code, end_date, available_date) do update set
                         ann_date = excluded.ann_date,
                         or_yoy = excluded.or_yoy,
                         op_yoy = excluded.op_yoy,
                         netprofit_yoy = excluded.netprofit_yoy,
                         profit_dedt = excluded.profit_dedt,
+                        q_dtprofit = excluded.q_dtprofit,
                         dt_netprofit_yoy = excluded.dt_netprofit_yoy,
                         grossprofit_margin = excluded.grossprofit_margin,
                         raw_json = excluded.raw_json,
@@ -2127,12 +2256,13 @@ class PostgresScreeningStore:
             "enabled": True,
             "timezone": "Asia/Shanghai",
             "trading_days_only": True,
-            "intraday_enabled": True,
+            "intraday_enabled": False,
             "intraday_interval_minutes": 30,
             "intraday_start_time": "09:30",
             "intraday_end_time": "15:30",
             "daily_enabled": True,
             "daily_run_times": ["18:00"],
+            "weekly_enabled": True,
             "concept_enabled": True,
             "concept_interval_hours": 24,
             "industry_enabled": True,
@@ -2141,7 +2271,7 @@ class PostgresScreeningStore:
             "retry_attempts": 3,
             "request_delay_seconds": 0.12,
             "stock_30m_enabled": True,
-            "etf_30m_enabled": True,
+            "etf_30m_enabled": False,
             "sync_log_retention_days": 30,
             "sync_log_max_rows": 10000,
         }
@@ -2633,7 +2763,11 @@ class PostgresScreeningStore:
         hi = max(float(row["high"]) for row in completed_rows)
         lo = min(float(row["low"]) for row in completed_rows)
         cl = float(last["close"])
-        vol = sum(float(row["vol"]) for row in completed_rows)
+        # Tushare 正式日线的 vol 单位是“手”，而 AkShare 30 分钟线的
+        # volume 是“股”。临时日线必须转换到与正式日线一致的单位，
+        # 否则当日合成柱会被放大约 100 倍。原始 30 分钟数据保持不变，
+        # 仅在这里生成日线展示/计算用的合计值时换算。
+        vol = sum(float(row["vol"]) for row in completed_rows) / 100.0
         amt = sum(float(row["amount"]) for row in completed_rows)
 
         adjust_status = "none"
@@ -2940,6 +3074,19 @@ class PostgresScreeningStore:
             ).fetchone()
             max_daily = row_daily["trade_date"] if row_daily else None
 
+            row_weekly = conn.execute(
+                """
+                select trade_date
+                from screening_weekly_bar
+                where asset_type = 'stock'
+                group by trade_date
+                having count(*) >= 4000
+                order by trade_date desc
+                limit 1
+                """
+            ).fetchone()
+            max_weekly = row_weekly["trade_date"] if row_weekly else None
+
             max_min = conn.execute("select max(trade_time) as mt from screening_min_bar").fetchone()["mt"]
             max_candidate = conn.execute("select max(trade_date) as mc from screening_candidate_snapshot").fetchone()["mc"]
 
@@ -2950,6 +3097,7 @@ class PostgresScreeningStore:
             # 日线日期必须来自完整 screening_daily_bar，不能被分钟线日期冒充。
             "daily_market_date": max_daily or "未知",
             "official_daily_date": max_daily or "未知",
+            "weekly_market_date": max_weekly or "未知",
             # 对外“最新行情”可以使用当天已落库的 30 分钟数据；正式日线日期仍单独保留。
             "latest_open_trade_date": latest_open_date or "未知",
             "intraday_market_date": latest_min_date or "未知",
@@ -3661,6 +3809,22 @@ class PostgresScreeningStore:
                 """,
                 rows,
             )
+            # Preserve actual batch observations separately from deletable snapshot rows.
+            run_ids = list({r["run_id"] for r in results})
+            conn.execute("delete from early_turn_observation_log where run_id = any(%s)", (run_ids,))
+            observation_rows = [
+                (r["run_id"], r["ts_code"], r["trade_date"],
+                 r["features_json"]["early_observation"]["version"],
+                 json_dumps(r["features_json"]["early_observation"]), now)
+                for r in results if (r.get("features_json") or {}).get("early_observation", {}).get("active")
+            ]
+            if observation_rows:
+                with conn.cursor() as cursor:
+                    cursor.executemany("""
+                        insert into early_turn_observation_log
+                            (run_id, ts_code, trade_date, observation_version, observation_json, recorded_at)
+                        values (%s, %s, %s, %s, %s::jsonb, %s)
+                    """, observation_rows)
             conn.commit()
 
     def query_early_turn_results(
@@ -3672,6 +3836,7 @@ class PostgresScreeningStore:
         query_text: str | None = None,
         industry: str | None = None,
         concept: str | None = None,
+        bottom_structure: str | None = None,
         ts_codes: list[str] | None = None,
         exclude_st: bool = False,
         fundamental_state: str | None = None,
@@ -3710,17 +3875,23 @@ class PostgresScreeningStore:
             def add_base_filters(
                 clauses: list[str], values: list[Any], include_industry: bool = True,
                 include_concept: bool = True, include_fundamental: bool = True,
+                include_bottom_structure: bool = True,
             ) -> None:
                 # OUTSIDE_A_PRE 仅用于生命周期回放，不能进入用户侧的 A-Pre
                 # 股票列表、筛选计数或基本面研究范围。
-                clauses.append("r.state <> 'OUTSIDE_A_PRE'")
-                if state and state != "ALL":
-                    clauses.append("r.state = %s")
-                    values.append(state)
+                if state == "EARLY_OBSERVATION":
+                    clauses.append("r.state = 'OUTSIDE_A_PRE' and r.features_json->'early_observation'->>'active' = 'true'")
+                elif state == "SECOND_OPPORTUNITY":
+                    clauses.append("r.features_json->'second_opportunity'->>'active' = 'true'")
+                else:
+                    clauses.append("r.state <> 'OUTSIDE_A_PRE'")
+                    if state and state != "ALL":
+                        clauses.append("r.state = %s")
+                        values.append(state)
                 if background_type and background_type != "ALL":
                     clauses.append("r.background_type = %s")
                     values.append(background_type)
-                if min_score is not None:
+                if min_score is not None and state not in ("EARLY_OBSERVATION", "SECOND_OPPORTUNITY"):
                     clauses.append("r.total_score >= %s")
                     values.append(min_score)
                 if ts_codes is not None:
@@ -3754,10 +3925,21 @@ class PostgresScreeningStore:
                         values.extend([concept_snapshot_date, concept])
                 if include_fundamental and fundamental_state and fundamental_state != "ALL":
                     if fundamental_state == "UNRESEARCHED":
-                        clauses.append("e.ts_code is null")
+                        clauses.append("f.ts_code is null")
                     else:
-                        clauses.append("e.fundamental_filter_state = %s")
+                        clauses.append("f.result_json->>'fundamental_filter_state' = %s")
                         values.append(fundamental_state)
+                if include_bottom_structure and bottom_structure and bottom_structure != "ALL":
+                    if bottom_structure == "ANY":
+                        clauses.append("r.features_json->>'bottom_structure_quality' in ('POSSIBLE', 'CLEAR')")
+                    elif bottom_structure in ("POSSIBLE", "CLEAR"):
+                        clauses.append("r.features_json->>'bottom_structure_quality' = %s")
+                        values.append(bottom_structure)
+                    elif bottom_structure in ("DAILY", "SHORT"):
+                        clauses.append("r.features_json->>'bottom_structure_type' = %s")
+                        values.append("STANDARD_DOUBLE_BOTTOM" if bottom_structure == "DAILY" else "MICRO_DOUBLE_BOTTOM")
+                    else:
+                        clauses.append("false")
 
             add_base_filters(where_clauses, params)
 
@@ -3767,8 +3949,7 @@ class PostgresScreeningStore:
                 select count(*) as cnt
                 from early_turn_result r
                 left join screening_asset_master a on a.asset_code = r.ts_code
-                left join early_turn_run er on er.run_id = r.run_id
-                left join company_evidence_snapshot e on e.as_of_date = er.trade_date and e.ts_code = r.ts_code
+                left join stock_current_fundamental_profile f on f.ts_code = r.ts_code
                 {where_sql}
             """
 
@@ -3786,14 +3967,14 @@ class PostgresScreeningStore:
                        r.turn_episode_state, r.signal_status,
                        r.entry_extension_state, r.first_trigger_date, r.first_trigger_close,
                        r.return_since_first_trigger, r.structural_damage_flag,
-                       e.fundamental_filter_state, e.fundamental_filter_reasons_json,
+                       f.result_json->>'fundamental_filter_state' as fundamental_filter_state,
+                       f.result_json->'fundamental_filter_reasons_json' as fundamental_filter_reasons_json,
                        a.name, a.asset_type,
                        a.raw_json->>'industry' as industry,
                        a.raw_json->>'main_business' as main_business
                 from early_turn_result r
                 left join screening_asset_master a on a.asset_code = r.ts_code
-                left join early_turn_run er on er.run_id = r.run_id
-                left join company_evidence_snapshot e on e.as_of_date = er.trade_date and e.ts_code = r.ts_code
+                left join stock_current_fundamental_profile f on f.ts_code = r.ts_code
                 {where_sql}
                 order by r.total_score desc, r.ts_code asc
                 {pagination_sql}
@@ -3814,6 +3995,21 @@ class PostgresScreeningStore:
                 (run_id,),
             ).fetchall()
             counts = {r["state"]: r["cnt"] for r in counts_row}
+            observation_summary = conn.execute("""
+                select count(*) filter (where features_json->'early_observation'->>'active' = 'true') as active_count,
+                       count(*) filter (where features_json->'second_opportunity'->>'active' = 'true') as second_count,
+                       count(*) filter (where features_json ? 'second_opportunity') as second_computed_count,
+                       count(*) filter (where features_json ? 'early_observation') as computed_count,
+                       count(*) filter (where features_json ? 'bottom_structure_age_bars') as bottom_computed_count,
+                       count(*) as total_count
+                from early_turn_result where run_id = %s
+            """, (run_id,)).fetchone()
+            counts["EARLY_OBSERVATION"] = int(observation_summary["active_count"])
+            counts["SECOND_OPPORTUNITY"] = int(observation_summary["second_count"])
+            second_computed = int(observation_summary["second_computed_count"])
+            observation_computed = int(observation_summary["computed_count"])
+            observation_total = int(observation_summary["total_count"])
+            bottom_computed = int(observation_summary["bottom_computed_count"])
 
             # 行业分布 counts 统计 (忽略当前 industry 筛选，但保留 state/bg_type/min_score/query_text/concept 筛选)
             ind_where_clauses = ["r.run_id = %s"]
@@ -3826,8 +4022,7 @@ class PostgresScreeningStore:
                 select a.raw_json->>'industry' as ind, count(*) as cnt
                 from early_turn_result r
                 left join screening_asset_master a on a.asset_code = r.ts_code
-                left join early_turn_run er on er.run_id = r.run_id
-                left join company_evidence_snapshot e on e.as_of_date = er.trade_date and e.ts_code = r.ts_code
+                left join stock_current_fundamental_profile f on f.ts_code = r.ts_code
                 {ind_where_sql}
                 group by ind
             """
@@ -3845,8 +4040,7 @@ class PostgresScreeningStore:
                     select coalesce(im.name, cm.ths_name) as concept_name, count(r.ts_code) as cnt
                     from early_turn_result r
                     left join screening_asset_master a on a.asset_code = r.ts_code
-                    left join early_turn_run er on er.run_id = r.run_id
-                    left join company_evidence_snapshot e on e.as_of_date = er.trade_date and e.ts_code = r.ts_code
+                    left join stock_current_fundamental_profile f on f.ts_code = r.ts_code
                     join ths_concept_member_snapshot cm
                       on cm.snapshot_date = %s and cm.ts_code = r.ts_code
                     left join ths_index_master im on im.ths_code = cm.ths_code
@@ -3870,17 +4064,51 @@ class PostgresScreeningStore:
             )
             fundamental_rows = conn.execute(
                 f"""
-                select coalesce(e.fundamental_filter_state, 'UNRESEARCHED') as filter_state, count(*) as cnt
+                select coalesce(f.result_json->>'fundamental_filter_state', 'UNRESEARCHED') as filter_state, count(*) as cnt
                 from early_turn_result r
                 left join screening_asset_master a on a.asset_code = r.ts_code
-                left join early_turn_run er on er.run_id = r.run_id
-                left join company_evidence_snapshot e on e.as_of_date = er.trade_date and e.ts_code = r.ts_code
+                left join stock_current_fundamental_profile f on f.ts_code = r.ts_code
                 where {' and '.join(fundamental_where_clauses)}
-                group by coalesce(e.fundamental_filter_state, 'UNRESEARCHED')
+                group by coalesce(f.result_json->>'fundamental_filter_state', 'UNRESEARCHED')
                 """,
                 fundamental_params,
             ).fetchall()
             fundamental_counts = {row["filter_state"]: row["cnt"] for row in fundamental_rows}
+
+            # 双底筛选项的数量沿用其它筛选条件，但不把当前双底选项本身再次套进去。
+            bottom_where_clauses = ["r.run_id = %s"]
+            bottom_params: list[Any] = [run_id]
+            add_base_filters(
+                bottom_where_clauses,
+                bottom_params,
+                include_industry=True,
+                include_concept=True,
+                include_fundamental=True,
+                include_bottom_structure=False,
+            )
+            bottom_where_sql = " where " + " and ".join(bottom_where_clauses)
+            bottom_rows = conn.execute(
+                f"""
+                select
+                    count(*) filter (where r.features_json->>'bottom_structure_quality' in ('POSSIBLE', 'CLEAR')) as any_count,
+                    count(*) filter (where r.features_json->>'bottom_structure_quality' = 'CLEAR') as clear_count,
+                    count(*) filter (where r.features_json->>'bottom_structure_quality' = 'POSSIBLE') as possible_count,
+                    count(*) filter (where r.features_json->>'bottom_structure_type' = 'STANDARD_DOUBLE_BOTTOM') as daily_count,
+                    count(*) filter (where r.features_json->>'bottom_structure_type' = 'MICRO_DOUBLE_BOTTOM') as short_count
+                from early_turn_result r
+                left join screening_asset_master a on a.asset_code = r.ts_code
+                left join stock_current_fundamental_profile f on f.ts_code = r.ts_code
+                {bottom_where_sql}
+                """,
+                bottom_params,
+            ).fetchone()
+            bottom_structure_counts = {
+                "ANY": int(bottom_rows["any_count"] or 0),
+                "CLEAR": int(bottom_rows["clear_count"] or 0),
+                "POSSIBLE": int(bottom_rows["possible_count"] or 0),
+                "DAILY": int(bottom_rows["daily_count"] or 0),
+                "SHORT": int(bottom_rows["short_count"] or 0),
+            }
 
         items = []
         for row in rows:
@@ -3894,6 +4122,11 @@ class PostgresScreeningStore:
             "industry_counts": industry_counts,
             "concept_counts": concept_counts,
             "fundamental_counts": fundamental_counts,
+            "bottom_structure_counts": bottom_structure_counts,
+            "observation_computed": observation_computed,
+            "observation_total": observation_total,
+            "second_computed": second_computed,
+            "bottom_computed": bottom_computed,
             "concept_snapshot_date": concept_snapshot_date,
             "items": items,
             "limit": limit,
@@ -4716,7 +4949,7 @@ def get_watchlist_groups(self) -> list[dict[str, Any]]:
     with self.connect() as conn:
         rows = conn.execute(
             """
-            select group_id, group_name, parent_id, sort_order, created_at
+            select group_id, group_name, group_icon, parent_id, sort_order, created_at
             from screening_watchlist_groups
             order by parent_id nulls first, sort_order asc, group_id asc
             """
@@ -4737,7 +4970,7 @@ def get_watchlist_group_nodes(self) -> list[dict[str, Any]]:
     with self.connect() as conn:
         manual_rows = conn.execute(
             """
-            select group_id, group_name, parent_id, sort_order, created_at
+            select group_id, group_name, group_icon, parent_id, sort_order, created_at
             from screening_watchlist_groups
             order by parent_id nulls first, sort_order asc, group_id asc
             """
@@ -4757,6 +4990,7 @@ def get_watchlist_group_nodes(self) -> list[dict[str, Any]]:
                 "group_id": r["group_id"],
                 "group_key": f"manual:{r['group_id']}",
                 "group_name": r["group_name"],
+                "group_icon": r["group_icon"],
                 "group_type": "manual",
                 "parent_id": r["parent_id"],
                 "sort_order": r["sort_order"],
@@ -4778,20 +5012,21 @@ def get_watchlist_group_nodes(self) -> list[dict[str, Any]]:
         )
         return nodes
 
-def create_watchlist_group(self, group_name: str, parent_id: int | None = None) -> dict[str, Any]:
+def create_watchlist_group(self, group_name: str, parent_id: int | None = None, group_icon: str = "folder") -> dict[str, Any]:
     with self.connect() as conn:
         row = conn.execute(
             """
-            insert into screening_watchlist_groups (group_name, parent_id, created_at)
-            values (%s, %s, now())
-            returning group_id, group_name, parent_id, sort_order, created_at
+            insert into screening_watchlist_groups (group_name, group_icon, parent_id, created_at)
+            values (%s, %s, %s, now())
+            returning group_id, group_name, group_icon, parent_id, sort_order, created_at
             """,
-            (group_name, parent_id),
+            (group_name, group_icon, parent_id),
         ).fetchone()
         conn.commit()
         return {
             "group_id": row["group_id"],
             "group_name": row["group_name"],
+            "group_icon": row["group_icon"],
             "parent_id": row["parent_id"],
             "sort_order": row["sort_order"],
             "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
@@ -5013,6 +5248,98 @@ def get_watchlist_code_set(self) -> set[str]:
         rows = conn.execute("select distinct asset_code from screening_user_watchlist").fetchall()
         return {r["asset_code"] for r in rows}
 
+
+def enqueue_watchlist_profile_refresh(self, asset_code: str) -> None:
+    """Persist an analysis request created by adding a stock to the watchlist."""
+    clean_code = asset_code.strip().upper()
+    if not clean_code:
+        raise ValueError("asset_code is required")
+    with self.connect() as conn:
+        conn.execute(
+            """
+            insert into screening_watchlist_profile_refresh_job
+                (asset_code, status, requested_at, started_at, completed_at, last_error)
+            values (%s, 'PENDING', now(), null, null, null)
+            on conflict (asset_code) do update set
+                status = 'PENDING',
+                requested_at = excluded.requested_at,
+                started_at = null,
+                completed_at = null,
+                last_error = null
+            """,
+            (clean_code,),
+        )
+        conn.commit()
+
+
+def claim_next_watchlist_profile_refresh_job(self) -> str | None:
+    """Claim exactly one pending watchlist analysis job for a single worker."""
+    with self.connect() as conn:
+        row = conn.execute(
+            """
+            with candidate as (
+                select asset_code
+                from screening_watchlist_profile_refresh_job
+                where status = 'PENDING'
+                order by requested_at, asset_code
+                for update skip locked
+                limit 1
+            )
+            update screening_watchlist_profile_refresh_job as job
+            set status = 'RUNNING', started_at = now(), completed_at = null, last_error = null
+            from candidate
+            where job.asset_code = candidate.asset_code
+            returning job.asset_code
+            """
+        ).fetchone()
+        conn.commit()
+    return str(row["asset_code"]) if row else None
+
+
+def recover_watchlist_profile_refresh_jobs(self) -> int:
+    """Return interrupted jobs to the durable queue after a process restart."""
+    with self.connect() as conn:
+        row = conn.execute(
+            """
+            with recovered as (
+                update screening_watchlist_profile_refresh_job
+                set status = 'PENDING', started_at = null, completed_at = null,
+                    last_error = '服务重启后恢复执行'
+                where status = 'RUNNING'
+                returning 1
+            )
+            select count(*) as recovered_count from recovered
+            """
+        ).fetchone()
+        conn.commit()
+    return int(row["recovered_count"] or 0)
+
+
+def complete_watchlist_profile_refresh_job(self, asset_code: str) -> None:
+    with self.connect() as conn:
+        conn.execute(
+            """
+            update screening_watchlist_profile_refresh_job
+            set status = 'SUCCESS', completed_at = now(), last_error = null
+            where asset_code = %s and status = 'RUNNING'
+            """,
+            (asset_code.strip().upper(),),
+        )
+        conn.commit()
+
+
+def fail_watchlist_profile_refresh_job(self, asset_code: str, error: str) -> None:
+    with self.connect() as conn:
+        conn.execute(
+            """
+            update screening_watchlist_profile_refresh_job
+            set status = 'FAILED', completed_at = now(), last_error = %s
+            where asset_code = %s and status = 'RUNNING'
+            """,
+            (error, asset_code.strip().upper()),
+        )
+        conn.commit()
+
 def get_ai_analysis_pool(self) -> list[dict[str, Any]]:
     with self.connect() as conn:
         rows = conn.execute(
@@ -5081,6 +5408,210 @@ def replace_ai_analysis_pool(self, asset_codes: list[str]) -> list[dict[str, Any
         conn.commit()
     return self.get_ai_analysis_pool()
 
+def get_ai_stock_theme_match(self, ts_code: str, as_of_date: str) -> dict[str, Any] | None:
+    with self.connect() as conn:
+        row = conn.execute(
+            """
+            select ts_code, as_of_date, created_at, model, result_json,
+                   input_tokens, output_tokens, total_tokens, elapsed_ms,
+                   web_search_used, status
+            from ai_stock_theme_match
+            where ts_code = %s and replace(as_of_date, '-', '') = replace(%s, '-', '')
+            """,
+            (ts_code.strip().upper(), as_of_date),
+        ).fetchone()
+    if not row:
+        return None
+    item = dict(row)
+    if hasattr(item.get("created_at"), "isoformat"):
+        item["created_at"] = item["created_at"].isoformat()
+    return item
+
+def save_ai_stock_theme_match(self, record: dict[str, Any]) -> dict[str, Any]:
+    with self.connect() as conn:
+        conn.execute(
+            """
+            insert into ai_stock_theme_match (
+                ts_code, as_of_date, created_at, model, result_json,
+                input_tokens, output_tokens, total_tokens, elapsed_ms,
+                web_search_used, status
+            ) values (%s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s)
+            on conflict (ts_code, as_of_date) do update set
+                created_at = excluded.created_at,
+                model = excluded.model,
+                result_json = excluded.result_json,
+                input_tokens = excluded.input_tokens,
+                output_tokens = excluded.output_tokens,
+                total_tokens = excluded.total_tokens,
+                elapsed_ms = excluded.elapsed_ms,
+                web_search_used = excluded.web_search_used,
+                status = excluded.status
+            """,
+            (
+                record["ts_code"], record["as_of_date"], record["created_at"],
+                record["model"], record["result_json"], record.get("input_tokens", 0),
+                record.get("output_tokens", 0), record.get("total_tokens", 0),
+                record.get("elapsed_ms", 0), record.get("web_search_used", False),
+                record.get("status", "READY"),
+            ),
+        )
+        conn.commit()
+    saved = self.get_ai_stock_theme_match(record["ts_code"], record["as_of_date"])
+    if not saved:
+        raise RuntimeError("主题匹配结果保存后无法读取")
+    return saved
+
+def get_current_stock_profiles(self, ts_code: str) -> dict[str, dict[str, Any] | None]:
+    """Return the current, cross-page stock profiles for one security."""
+    normalized_code = str(ts_code).strip().upper()
+    tables = {
+        "fundamental": "stock_current_fundamental_profile",
+        "theme": "stock_current_theme_profile",
+        "market": "stock_current_market_profile",
+        "ai_research": "stock_current_ai_research_profile",
+        "company": "stock_current_company_profile",
+    }
+    result: dict[str, dict[str, Any] | None] = {}
+    with self.connect() as conn:
+        for key, table in tables.items():
+            row = conn.execute(f"select * from {table} where ts_code = %s", (normalized_code,)).fetchone()
+            result[key] = dict(row) if row else None
+    return result
+
+def get_current_stock_profiles_for_codes(self, ts_codes: list[str]) -> dict[str, dict[str, dict[str, Any] | None]]:
+    """Load current cross-page profiles for a set of securities in five queries.
+
+    The caller receives an entry for every requested code, including explicit
+    ``None`` values when a current profile has not been generated yet.  This is
+    intentionally separate from date-keyed screening snapshots.
+    """
+    codes = sorted({str(code).strip().upper() for code in ts_codes if str(code).strip()})
+    if not codes:
+        return {}
+    tables = {
+        "fundamental": "stock_current_fundamental_profile",
+        "theme": "stock_current_theme_profile",
+        "market": "stock_current_market_profile",
+        "ai_research": "stock_current_ai_research_profile",
+        "company": "stock_current_company_profile",
+    }
+    result: dict[str, dict[str, dict[str, Any] | None]] = {
+        code: {key: None for key in tables} for code in codes
+    }
+    with self.connect() as conn:
+        for key, table in tables.items():
+            rows = conn.execute(
+                f"select * from {table} where ts_code = any(%s)",
+                (codes,),
+            ).fetchall()
+            for row in rows:
+                item = dict(row)
+                result[item["ts_code"]][key] = item
+    return result
+
+def get_current_stock_profile(self, profile_type: str, ts_code: str) -> dict[str, Any] | None:
+    profiles = self.get_current_stock_profiles(ts_code)
+    if profile_type not in profiles:
+        raise ValueError(f"unsupported profile type: {profile_type}")
+    return profiles[profile_type]
+
+def save_current_fundamental_profile(self, ts_code: str, source_fingerprint: str, source_latest_announcement_date: str | None, result: dict[str, Any], status: str) -> None:
+    now = _now()
+    with self.connect() as conn:
+        conn.execute(
+            """
+            insert into stock_current_fundamental_profile
+                (ts_code, source_fingerprint, source_latest_announcement_date, result_json, status, refreshed_at)
+            values (%s, %s, %s, %s::jsonb, %s, %s)
+            on conflict (ts_code) do update set
+                source_fingerprint = excluded.source_fingerprint,
+                source_latest_announcement_date = excluded.source_latest_announcement_date,
+                result_json = excluded.result_json,
+                status = excluded.status,
+                refreshed_at = excluded.refreshed_at
+            """,
+            (ts_code.strip().upper(), source_fingerprint, source_latest_announcement_date, json_dumps(result), status, now),
+        )
+        conn.commit()
+
+def save_current_theme_profile(self, ts_code: str, market_theme_fingerprint: str, market_memory_date: str, concept_fingerprint: str, result: dict[str, Any], status: str) -> None:
+    now = _now()
+    with self.connect() as conn:
+        conn.execute(
+            """
+            insert into stock_current_theme_profile
+                (ts_code, market_theme_fingerprint, market_memory_date, concept_fingerprint, result_json, status, refreshed_at)
+            values (%s, %s, %s, %s, %s::jsonb, %s, %s)
+            on conflict (ts_code) do update set
+                market_theme_fingerprint = excluded.market_theme_fingerprint,
+                market_memory_date = excluded.market_memory_date,
+                concept_fingerprint = excluded.concept_fingerprint,
+                result_json = excluded.result_json,
+                status = excluded.status,
+                refreshed_at = excluded.refreshed_at
+            """,
+            (ts_code.strip().upper(), market_theme_fingerprint, market_memory_date, concept_fingerprint, json_dumps(result), status, now),
+        )
+        conn.commit()
+
+def save_current_market_profile(self, ts_code: str, market_trade_date: str, source_fingerprint: str, result: dict[str, Any], status: str) -> None:
+    now = _now()
+    with self.connect() as conn:
+        conn.execute(
+            """
+            insert into stock_current_market_profile
+                (ts_code, market_trade_date, source_fingerprint, result_json, status, refreshed_at)
+            values (%s, %s, %s, %s::jsonb, %s, %s)
+            on conflict (ts_code) do update set
+                market_trade_date = excluded.market_trade_date,
+                source_fingerprint = excluded.source_fingerprint,
+                result_json = excluded.result_json,
+                status = excluded.status,
+                refreshed_at = excluded.refreshed_at
+            """,
+            (ts_code.strip().upper(), market_trade_date, source_fingerprint, json_dumps(result), status, now),
+        )
+        conn.commit()
+
+def save_current_ai_research_profile(self, ts_code: str, source_fingerprint: str, result_markdown: str, priority: str, source_manifest: dict[str, Any], status: str) -> None:
+    now = _now()
+    with self.connect() as conn:
+        conn.execute(
+            """
+            insert into stock_current_ai_research_profile
+                (ts_code, source_fingerprint, result_markdown, priority, source_manifest_json, status, refreshed_at)
+            values (%s, %s, %s, %s, %s::jsonb, %s, %s)
+            on conflict (ts_code) do update set
+                source_fingerprint = excluded.source_fingerprint,
+                result_markdown = excluded.result_markdown,
+                priority = excluded.priority,
+                source_manifest_json = excluded.source_manifest_json,
+                status = excluded.status,
+                refreshed_at = excluded.refreshed_at
+            """,
+            (ts_code.strip().upper(), source_fingerprint, result_markdown, priority, json_dumps(source_manifest), status, now),
+        )
+        conn.commit()
+
+def save_current_company_profile(self, ts_code: str, source_fingerprint: str, result: dict[str, Any], source_manifest: dict[str, Any], status: str) -> None:
+    now = _now()
+    with self.connect() as conn:
+        conn.execute(
+            """
+            insert into stock_current_company_profile
+                (ts_code, source_fingerprint, result_json, source_manifest_json, status, refreshed_at)
+            values (%s, %s, %s::jsonb, %s::jsonb, %s, %s)
+            on conflict (ts_code) do update set
+                source_fingerprint = excluded.source_fingerprint,
+                result_json = excluded.result_json,
+                source_manifest_json = excluded.source_manifest_json,
+                status = excluded.status,
+                refreshed_at = excluded.refreshed_at
+            """,
+            (ts_code.strip().upper(), source_fingerprint, json_dumps(result), json_dumps(source_manifest), status, now),
+        )
+        conn.commit()
+
 PostgresScreeningStore.get_watchlist_groups = get_watchlist_groups
 PostgresScreeningStore.get_watchlist_group_nodes = get_watchlist_group_nodes
 PostgresScreeningStore.create_watchlist_group = create_watchlist_group
@@ -5091,6 +5622,21 @@ PostgresScreeningStore.get_watchlist_stocks_by_group_key = get_watchlist_stocks_
 PostgresScreeningStore.get_watchlist_stocks_with_research = get_watchlist_stocks_with_research
 PostgresScreeningStore.toggle_watchlist_stock = toggle_watchlist_stock
 PostgresScreeningStore.get_watchlist_code_set = get_watchlist_code_set
+PostgresScreeningStore.enqueue_watchlist_profile_refresh = enqueue_watchlist_profile_refresh
+PostgresScreeningStore.claim_next_watchlist_profile_refresh_job = claim_next_watchlist_profile_refresh_job
+PostgresScreeningStore.recover_watchlist_profile_refresh_jobs = recover_watchlist_profile_refresh_jobs
+PostgresScreeningStore.complete_watchlist_profile_refresh_job = complete_watchlist_profile_refresh_job
+PostgresScreeningStore.fail_watchlist_profile_refresh_job = fail_watchlist_profile_refresh_job
 PostgresScreeningStore.get_ai_analysis_pool = get_ai_analysis_pool
 PostgresScreeningStore.toggle_ai_analysis_pool = toggle_ai_analysis_pool
 PostgresScreeningStore.replace_ai_analysis_pool = replace_ai_analysis_pool
+PostgresScreeningStore.get_ai_stock_theme_match = get_ai_stock_theme_match
+PostgresScreeningStore.save_ai_stock_theme_match = save_ai_stock_theme_match
+PostgresScreeningStore.get_current_stock_profiles = get_current_stock_profiles
+PostgresScreeningStore.get_current_stock_profiles_for_codes = get_current_stock_profiles_for_codes
+PostgresScreeningStore.get_current_stock_profile = get_current_stock_profile
+PostgresScreeningStore.save_current_fundamental_profile = save_current_fundamental_profile
+PostgresScreeningStore.save_current_theme_profile = save_current_theme_profile
+PostgresScreeningStore.save_current_market_profile = save_current_market_profile
+PostgresScreeningStore.save_current_ai_research_profile = save_current_ai_research_profile
+PostgresScreeningStore.save_current_company_profile = save_current_company_profile

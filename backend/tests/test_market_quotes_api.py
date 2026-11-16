@@ -1,8 +1,14 @@
 import pytest
 from fastapi.testclient import TestClient
-from backend.market_review.api import create_app, _MARKET_QUOTES_CACHE
+from backend.market_review.api import create_app, _MARKET_QUOTES_CACHE, _trade_plan_action_type
 
 client = TestClient(create_app())
+
+
+def test_execution_plan_uses_canonical_child_action_type():
+    assert _trade_plan_action_type({"action_type": "REDUCE", "input_json": {"quantity": 100}}) == "REDUCE"
+    assert _trade_plan_action_type({"action_type": "CLOSE", "input_json": {"reason_text": "退出"}}) == "CLOSE"
+    assert _trade_plan_action_type({"input_json": {"action_type": "OPEN"}}) == "OPEN"
 
 @pytest.fixture(autouse=True)
 def mock_cache():

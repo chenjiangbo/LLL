@@ -24,9 +24,8 @@ LOCK_KEY = "lll.market_data.standalone_sync"
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="独立运行股票日线与30分钟K线增量同步")
+    parser = argparse.ArgumentParser(description="独立运行股票与 ETF 日线增量同步")
     parser.add_argument("--trade-date", default=datetime.now().strftime("%Y%m%d"), help="目标交易日 YYYYMMDD")
-    parser.add_argument("--delay", type=float, default=0.12, help="每个标的请求间隔秒数；30分钟源为AkShare，默认0.12")
     parser.add_argument("--database-url", default="", help="PostgreSQL URL，默认读取项目 .env")
     return parser.parse_args()
 
@@ -49,7 +48,7 @@ def main() -> int:
         store = PostgresScreeningStore(database_url)
         config = TushareConfig.from_project_env(PROJECT_ROOT)
         sync = ScreeningDataSync(TushareScreeningSource(config.token), store)
-        result: dict[str, object] = {"trade_date": target, "daily": None, "intraday_30m": None}
+        result: dict[str, object] = {"trade_date": target, "daily": None, "intraday_30m": {"status": "ON_DEMAND"}}
 
         if store.has_daily_data(target):
             result["daily"] = {"status": "already_complete", "trade_date": target}
@@ -59,22 +58,12 @@ def main() -> int:
                 result["daily"] = {"status": "synced", **sync.sync_trade_date(target)}
                 print(f"[daily] {target} 日线同步完成", flush=True)
             except Exception as exc:
-                # 盘中允许尚未发布当日日线，但不能把它伪装成成功；继续补当日30分钟并在结果中显式标记。
+                # 正式日线尚未发布时明确记录不可用；分钟线由单只股票 K 线按需获取。
                 result["daily"] = {"status": "unavailable", "error": str(exc)}
                 print(f"[daily] {target} 尚无可用日线: {exc}", flush=True)
 
-        def progress(index: int, total: int, code: str) -> None:
-            if index == 1 or index % 25 == 0 or index == total:
-                print(f"[30m] {index}/{total} {code}", flush=True)
-
-        intraday = sync.sync_30m_bars_all(
-            start_date=target,
-            end_date=target,
-            delay_seconds=args.delay,
-            progress_callback=progress,
-        )
-        result["intraday_30m"] = intraday
-        result["status"] = "success" if intraday.get("status") == "PASS" else "partial"
+        result["status"] = "success" if result["daily"].get("status") in {"synced", "already_complete"} else "daily_unavailable"
+        print("[30m] 股票 K 线数据将在打开时按需获取；ETF 不同步 30 分钟数据", flush=True)
         print(json.dumps(result, ensure_ascii=False), flush=True)
         return 0 if result["status"] == "success" else 1
     except (ScreeningError, Exception) as exc:

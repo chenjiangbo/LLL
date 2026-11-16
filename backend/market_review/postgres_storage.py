@@ -144,6 +144,55 @@ class PostgresMarketReviewStore:
                 )
                 """
             )
+            # 导入复盘时固化同花顺概念板块的当日官方结果。历史复盘页面只读取
+            # 该不可变快照，不能在查看时用后来变化的概念成分重新计算。
+            conn.execute(
+                """
+                create table if not exists imported_review_ths_concept_board_snapshots (
+                    trade_date text primary key,
+                    source text not null,
+                    source_row_count integer not null,
+                    payload_json jsonb not null,
+                    captured_at timestamptz not null
+                )
+                """
+            )
+            # 导入复盘后衍生生成的三项内容必须具有可恢复的状态。服务重启不能
+            # 让已经写入的复盘原文失去后续的市场全景、题材周期和资金脉络快照。
+            conn.execute(
+                """
+                create table if not exists market_review_snapshot_update_jobs (
+                    trade_date text primary key,
+                    panorama_status text not null,
+                    memory_status text not null,
+                    panorama_error text,
+                    memory_error text,
+                    requested_at timestamptz not null,
+                    started_at timestamptz,
+                    completed_at timestamptz,
+                    updated_at timestamptz not null
+                )
+                """
+            )
+            # The review itself is available as soon as its Markdown has been
+            # saved.  These two enrichments are intentionally independent of
+            # that save so an AI or external-data delay never prevents reading
+            # the newly imported article.
+            conn.execute(
+                """
+                create table if not exists market_review_import_enrichment_jobs (
+                    trade_date text primary key,
+                    stock_extraction_status text not null,
+                    concept_board_status text not null,
+                    stock_extraction_error text,
+                    concept_board_error text,
+                    requested_at timestamptz not null,
+                    started_at timestamptz,
+                    completed_at timestamptz,
+                    updated_at timestamptz not null
+                )
+                """
+            )
             conn.execute(
                 "create index if not exists idx_raw_snapshots_trade_date on raw_snapshots(trade_date)"
             )
@@ -153,7 +202,290 @@ class PostgresMarketReviewStore:
             conn.execute(
                 "create index if not exists idx_review_stock_mentions_theme on imported_review_stock_mentions(trade_date, theme_key)"
             )
+            conn.execute(
+                "create index if not exists idx_review_snapshot_update_jobs_pending on market_review_snapshot_update_jobs(panorama_status, memory_status)"
+            )
+            conn.execute(
+                "create index if not exists idx_review_import_enrichment_jobs_pending on market_review_import_enrichment_jobs(stock_extraction_status, concept_board_status)"
+            )
             conn.commit()
+
+    def enqueue_import_enrichment_job(self, trade_date: str) -> None:
+        """Queue non-blocking review enrichments after Markdown is saved."""
+        now = datetime.utcnow()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                insert into market_review_import_enrichment_jobs (
+                    trade_date, stock_extraction_status, concept_board_status,
+                    stock_extraction_error, concept_board_error,
+                    requested_at, started_at, completed_at, updated_at
+                ) values (%s, 'PENDING', 'PENDING', null, null, %s, null, null, %s)
+                on conflict(trade_date) do update set
+                    stock_extraction_status = 'PENDING',
+                    concept_board_status = 'PENDING',
+                    stock_extraction_error = null,
+                    concept_board_error = null,
+                    requested_at = excluded.requested_at,
+                    started_at = null,
+                    completed_at = null,
+                    updated_at = excluded.updated_at
+                """,
+                (trade_date, now, now),
+            )
+            conn.commit()
+
+    def recover_import_enrichment_jobs(self) -> list[str]:
+        """Requeue incomplete enrichments after a backend restart."""
+        now = datetime.utcnow()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                update market_review_import_enrichment_jobs
+                set stock_extraction_status = case when stock_extraction_status = 'RUNNING' then 'PENDING' else stock_extraction_status end,
+                    concept_board_status = case when concept_board_status = 'RUNNING' then 'PENDING' else concept_board_status end,
+                    started_at = null,
+                    updated_at = %s
+                where stock_extraction_status = 'RUNNING' or concept_board_status = 'RUNNING'
+                """,
+                (now,),
+            )
+            rows = conn.execute(
+                """
+                select trade_date
+                from market_review_import_enrichment_jobs
+                where stock_extraction_status = 'PENDING' or concept_board_status = 'PENDING'
+                order by trade_date asc
+                """
+            ).fetchall()
+            conn.commit()
+        return [str(row["trade_date"]) for row in rows]
+
+    def claim_import_enrichment_part(self, trade_date: str, part: str) -> bool:
+        if part not in {"stock_extraction", "concept_board"}:
+            raise ValueError("import enrichment part must be stock_extraction or concept_board")
+        status_column = f"{part}_status"
+        now = datetime.utcnow()
+        with self.connect() as conn:
+            row = conn.execute(
+                f"""
+                update market_review_import_enrichment_jobs
+                set {status_column} = 'RUNNING',
+                    {part}_error = null,
+                    started_at = coalesce(started_at, %s),
+                    updated_at = %s
+                where trade_date = %s and {status_column} = 'PENDING'
+                returning trade_date
+                """,
+                (now, now, trade_date),
+            ).fetchone()
+            conn.commit()
+        return row is not None
+
+    def finish_import_enrichment_part(self, trade_date: str, part: str, error: str | None = None) -> None:
+        if part not in {"stock_extraction", "concept_board"}:
+            raise ValueError("import enrichment part must be stock_extraction or concept_board")
+        status_column = f"{part}_status"
+        error_column = f"{part}_error"
+        other_status_column = "concept_board_status" if part == "stock_extraction" else "stock_extraction_status"
+        now = datetime.utcnow()
+        with self.connect() as conn:
+            conn.execute(
+                f"""
+                update market_review_import_enrichment_jobs
+                    set {status_column} = %s,
+                    {error_column} = %s,
+                    completed_at = case
+                        when {other_status_column} in ('SUCCESS', 'FAILED') then %s
+                        else completed_at
+                    end,
+                    updated_at = %s
+                where trade_date = %s
+                """,
+                ("FAILED" if error else "SUCCESS", error, now, now, trade_date),
+            )
+            conn.commit()
+
+    def load_import_enrichment_job(self, trade_date: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                select trade_date, stock_extraction_status, concept_board_status,
+                       stock_extraction_error, concept_board_error,
+                       requested_at, started_at, completed_at, updated_at
+                from market_review_import_enrichment_jobs
+                where trade_date = %s
+                """,
+                (trade_date,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_imported_review_stock_links(self, trade_date: str) -> list[dict[str, str]]:
+        """Return the completed AI extraction bindings used by the article renderer."""
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                select mention_name, asset_name, asset_code
+                from imported_review_stock_mentions
+                where trade_date = %s
+                order by length(mention_name) desc, mention_name, asset_code
+                """,
+                (trade_date,),
+            ).fetchall()
+        return [
+            {
+                "label": str(row["mention_name"]),
+                "name": str(row["asset_name"]),
+                "code": str(row["asset_code"]),
+            }
+            for row in rows
+        ]
+
+    def enqueue_snapshot_update_job(self, trade_date: str) -> None:
+        """Request a fresh set of derived review snapshots for one imported review."""
+        now = datetime.utcnow()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                insert into market_review_snapshot_update_jobs (
+                    trade_date, panorama_status, memory_status, panorama_error, memory_error,
+                    requested_at, started_at, completed_at, updated_at
+                ) values (%s, 'PENDING', 'PENDING', null, null, %s, null, null, %s)
+                on conflict(trade_date) do update set
+                    panorama_status = 'PENDING',
+                    memory_status = 'PENDING',
+                    panorama_error = null,
+                    memory_error = null,
+                    requested_at = excluded.requested_at,
+                    started_at = null,
+                    completed_at = null,
+                    updated_at = excluded.updated_at
+                """,
+                (trade_date, now, now),
+            )
+            conn.commit()
+
+    def recover_snapshot_update_jobs(self) -> list[str]:
+        """Requeue interrupted and missing derived snapshots after a service restart."""
+        now = datetime.utcnow()
+        with self.connect() as conn:
+            # A RUNNING state belongs to a previous process after startup. It has
+            # no surviving worker and must be made runnable again.
+            conn.execute(
+                """
+                update market_review_snapshot_update_jobs
+                set panorama_status = case when panorama_status = 'RUNNING' then 'PENDING' else panorama_status end,
+                    memory_status = case when memory_status = 'RUNNING' then 'PENDING' else memory_status end,
+                    started_at = null,
+                    updated_at = %s
+                where panorama_status = 'RUNNING' or memory_status = 'RUNNING'
+                """,
+                (now,),
+            )
+            # Reviews imported before durable jobs existed are also recovered.
+            conn.execute(
+                """
+                insert into market_review_snapshot_update_jobs (
+                    trade_date, panorama_status, memory_status, requested_at, updated_at
+                )
+                select r.trade_date,
+                    case when p.as_of_date is null then 'PENDING' else 'SUCCESS' end,
+                    case when m.as_of_date is null then 'PENDING' else 'SUCCESS' end,
+                    %s, %s
+                from imported_market_reviews r
+                left join screening_market_panorama_v2_snapshot p on p.as_of_date = r.trade_date
+                left join screening_market_memory_cache m on m.as_of_date = r.trade_date
+                where r.trade_date = (select max(trade_date) from imported_market_reviews)
+                on conflict(trade_date) do nothing
+                """,
+                (now, now),
+            )
+            rows = conn.execute(
+                """
+                select trade_date from market_review_snapshot_update_jobs
+                where panorama_status = 'PENDING' or memory_status = 'PENDING'
+                order by trade_date asc
+                """
+            ).fetchall()
+            conn.commit()
+        return [str(row["trade_date"]) for row in rows]
+
+    def claim_snapshot_update_part(self, trade_date: str, part: str) -> bool:
+        if part not in {"panorama", "memory"}:
+            raise ValueError("snapshot update part must be panorama or memory")
+        status_column = f"{part}_status"
+        with self.connect() as conn:
+            row = conn.execute(
+                f"""
+                update market_review_snapshot_update_jobs
+                set {status_column} = 'RUNNING',
+                    {part}_error = null,
+                    started_at = coalesce(started_at, %s),
+                    updated_at = %s
+                where trade_date = %s and {status_column} = 'PENDING'
+                returning trade_date
+                """,
+                (datetime.utcnow(), datetime.utcnow(), trade_date),
+            ).fetchone()
+            conn.commit()
+        return row is not None
+
+    def retry_snapshot_update_part(self, trade_date: str, part: str) -> None:
+        """Explicitly requeue one failed derived-snapshot part without touching the other part."""
+        if part not in {"panorama", "memory"}:
+            raise ValueError("snapshot update part must be panorama or memory")
+        now = datetime.utcnow()
+        with self.connect() as conn:
+            conn.execute(
+                f"""
+                update market_review_snapshot_update_jobs
+                set {part}_status = 'PENDING',
+                    {part}_error = null,
+                    completed_at = null,
+                    updated_at = %s
+                where trade_date = %s
+                """,
+                (now, trade_date),
+            )
+            conn.commit()
+
+    def finish_snapshot_update_part(self, trade_date: str, part: str, error: str | None = None) -> None:
+        if part not in {"panorama", "memory"}:
+            raise ValueError("snapshot update part must be panorama or memory")
+        status_column = f"{part}_status"
+        error_column = f"{part}_error"
+        now = datetime.utcnow()
+        final_status = "FAILED" if error else "SUCCESS"
+        other_status_column = "memory_status" if part == "panorama" else "panorama_status"
+        with self.connect() as conn:
+            conn.execute(
+                f"""
+                update market_review_snapshot_update_jobs
+                set {status_column} = %s,
+                    {error_column} = %s,
+                    completed_at = case
+                        when {other_status_column} in ('SUCCESS', 'FAILED') then %s
+                        else completed_at
+                    end,
+                    updated_at = %s
+                where trade_date = %s
+                """,
+                (final_status, error, now, now, trade_date),
+            )
+            conn.commit()
+
+    def get_snapshot_update_job(self, trade_date: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                select trade_date, panorama_status, memory_status, panorama_error, memory_error,
+                       requested_at, started_at, completed_at, updated_at
+                from market_review_snapshot_update_jobs
+                where trade_date = %s
+                """,
+                (trade_date,),
+            ).fetchone()
+        return dict(row) if row else None
 
     def save_raw_snapshot(self, trade_date: str, snapshot_type: str, source: str, payload: Any) -> None:
         now = datetime.utcnow()
@@ -441,6 +773,55 @@ class PostgresMarketReviewStore:
             "updated_at": now.isoformat(),
         }
 
+    def load_imported_review_ths_concept_board_snapshot(self, trade_date: str) -> dict[str, Any] | None:
+        """Return the immutable official THS concept-board snapshot for one review date."""
+        norm_date = trade_date.replace("-", "").strip()
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                select trade_date, source, source_row_count, payload_json, captured_at
+                from imported_review_ths_concept_board_snapshots
+                where trade_date = %s
+                """,
+                (norm_date,),
+            ).fetchone()
+        if row is None:
+            return None
+        payload = row["payload_json"]
+        return {
+            "trade_date": row["trade_date"],
+            "source": row["source"],
+            "source_row_count": int(row["source_row_count"]),
+            "payload": json_load(payload) if isinstance(payload, str) else payload,
+            "captured_at": row["captured_at"].isoformat(),
+        }
+
+    def save_imported_review_ths_concept_board_snapshot(
+        self,
+        trade_date: str,
+        source: str,
+        source_row_count: int,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Persist the first official board captured for a review date; never overwrite it."""
+        norm_date = trade_date.replace("-", "").strip()
+        captured_at = datetime.utcnow()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                insert into imported_review_ths_concept_board_snapshots (
+                    trade_date, source, source_row_count, payload_json, captured_at
+                ) values (%s, %s, %s, %s::jsonb, %s)
+                on conflict(trade_date) do nothing
+                """,
+                (norm_date, source, source_row_count, json_dump(payload), captured_at),
+            )
+            conn.commit()
+        saved = self.load_imported_review_ths_concept_board_snapshot(norm_date)
+        if saved is None:
+            raise RuntimeError(f"failed to persist THS concept-board snapshot for {norm_date}")
+        return saved
+
     def replace_imported_review_stock_mentions(
         self,
         trade_date: str,
@@ -449,9 +830,14 @@ class PostgresMarketReviewStore:
         source_stock_count: int,
         extraction_version: str,
     ) -> dict[str, Any]:
-        """Replace one review's verified stock mentions and persist extraction quality."""
+        """Replace one review's verified stock-mention index.
+
+        Resolved mentions are written atomically.  Unresolved model references are
+        retained in the extraction-run warning JSON, so one unbindable name does
+        not discard the other deterministically bound securities.
+        """
         now = datetime.utcnow()
-        status = "COMPLETE" if not unresolved else "PARTIAL"
+        status = "COMPLETE"
         with self.connect() as conn:
             conn.execute(
                 "delete from imported_review_stock_mentions where trade_date = %s",

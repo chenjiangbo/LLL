@@ -48,6 +48,11 @@ class SnapshotWriter:
         if missing:
             raise ValueError(f"missing node state fields: {', '.join(missing)}")
         with connect(self.durable_db) as connection:
+            # State writes are partial updates assembled from the current
+            # row.  Serialize the read/merge/write sequence so a heartbeat
+            # cannot read an old protection state and overwrite a newer
+            # successful initialization or reconciliation.
+            connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute(
                 "SELECT * FROM node_state WHERE node_id = ?", (state["node_id"],)
             ).fetchone()

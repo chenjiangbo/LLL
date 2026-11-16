@@ -12,7 +12,8 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Callable
 
 from .broker import BrokerGateway
-from .execution import OrderInput, PreTradeRisk, PreTradeRiskResult
+from .execution import OrderInput, PreTradeRisk, PreTradeRiskResult, execution_plan_start_reached
+from .order_types import canonical_order_type, validate_order_price, validate_order_type_for_exchange
 
 
 @dataclass(frozen=True)
@@ -62,6 +63,8 @@ class ExecutionEngine:
     def evaluate(self, plan: dict[str, Any], quote: dict[str, Any]) -> ExecutionDecision:
         if plan.get("status") != "ACTIVE":
             return ExecutionDecision("WAIT", "EXECUTION_PLAN_NOT_ACTIVE")
+        if not execution_plan_start_reached(plan):
+            return ExecutionDecision("WAIT", "SCHEDULED_START_NOT_REACHED")
         expected_symbol = _quote_symbol(str(plan["symbol"]))
         if quote.get("symbol_key") != expected_symbol:
             raise ValueError("quote does not belong to execution plan instrument")
@@ -90,6 +93,10 @@ class ExecutionEngine:
             return ExecutionDecision("READY" if inside else "WAIT", "IN_RANGE" if inside else "OUT_OF_RANGE", snapshot)
         if execution_type not in {"LIMIT", "PERSISTENT_LIMIT"}:
             raise ValueError(f"unsupported execution type: {execution_type}")
+        exchange = expected_symbol.split(":", 1)[0]
+        order_type = validate_order_type_for_exchange(exchange, params.get("order_type"))
+        if execution_type == "PERSISTENT_LIMIT" and order_type != "LIMIT":
+            raise ValueError("持续限价执行方式只能使用普通限价委托")
         return ExecutionDecision("READY", "LIMIT_READY", snapshot)
 
     def submit(
@@ -109,19 +116,18 @@ class ExecutionEngine:
         if decision.status != "READY":
             return None
         params = plan.get("execution_params") or plan.get("execution_params_json") or {}
-        limit_price = params.get("limit_price")
-        if limit_price is None:
-            raise ValueError("limit_price is required when an execution condition triggers")
-        max_acceptable = params.get("max_acceptable_price")
-        if plan["side"] == "BUY" and max_acceptable is not None and _decimal(limit_price, "limit_price") > _decimal(max_acceptable, "max_acceptable_price"):
-            raise ValueError("limit_price exceeds max_acceptable_price")
+        order_type = canonical_order_type(params.get("order_type"))
+        exchange, _ = _quote_symbol(str(plan["symbol"])).split(":", 1)
+        order_type = validate_order_type_for_exchange(exchange, order_type)
+        price_key = "limit_price" if order_type == "LIMIT" else "protection_price"
+        price = validate_order_price(exchange, order_type, params.get(price_key))
         order_input = OrderInput(
             execution_plan_id=int(plan["id"]),
             symbol=str(plan["symbol"]),
             side=str(plan["side"]),
-            order_type="LIMIT",
+            order_type=order_type,
             quantity=int(plan["remaining_qty"]),
-            price=float(_decimal(limit_price, "limit_price")),
+            price=price,
         )
         risk = PreTradeRisk.check(account, risk_profile, plan, order_input, positions, active_orders, datetime.now(UTC))
         if risk.status == "BLOCK":
@@ -130,21 +136,24 @@ class ExecutionEngine:
             "request_id": request_id,
             "client_order_id": client_order_id,
             "broker_account_key": broker_account_key,
+            # Broker Node V1.2 validates code/exchange at the top level.
+            "code": _quote_symbol(str(plan["symbol"])).split(":", 1)[1],
+            "exchange": _quote_symbol(str(plan["symbol"])).split(":", 1)[0],
             "instrument": {
                 "code": _quote_symbol(str(plan["symbol"])).split(":", 1)[1],
                 "exchange": _quote_symbol(str(plan["symbol"])).split(":", 1)[0],
             },
             "side": plan["side"],
-            "order_type": "LIMIT",
-            "price": str(_decimal(limit_price, "limit_price")),
+            "order_type": order_type,
             "quantity": order_input.quantity,
-            "source": {"execution_plan_id": plan["id"], "execution_type": plan["execution_type"]},
+            "source": {"execution_plan_id": plan["id"], "execution_type": plan["execution_type"], "order_type": order_type},
             "safety_constraints": {
                 **params.get("safety_constraints", {}),
-                **({"max_acceptable_price": str(_decimal(max_acceptable, "max_acceptable_price"))} if max_acceptable is not None else {}),
             },
             "trigger_snapshot": decision.trigger_snapshot,
         }
+        if price is not None:
+            payload["price"] = str(price)
         local_order = create_order(payload)
         broker_response = self.gateway.submit_order(payload)
         return ExecutionSubmission(decision, risk, local_order, broker_response)

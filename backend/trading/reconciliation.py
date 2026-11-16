@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .account import normalize_symbol
 from .execution import ExecutionStore
 
 
@@ -15,16 +16,38 @@ class ReconciliationService:
         self.account_id = account_id
 
     def compare_positions(self, local_positions: list[dict[str, Any]], broker_positions: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        local = {item["symbol"]: item for item in local_positions}
-        broker = {item["symbol"]: item for item in broker_positions}
+        qualified_symbols = any(
+            any(marker in str(item.get("symbol") or "") for marker in (":", "."))
+            for item in [*local_positions, *broker_positions]
+        )
+
+        def key(item: dict[str, Any]) -> str:
+            value = str(item.get("symbol") or "").strip().upper()
+            # Preserve plain-code test/data keys for backward compatibility;
+            # whenever either side carries an exchange-qualified symbol,
+            # compare both sides in the canonical EXCHANGE:CODE form.
+            return normalize_symbol(value) if qualified_symbols else value
+
+        local = {key(item): item for item in local_positions}
+        broker = {key(item): item for item in broker_positions}
         issues: list[dict[str, Any]] = []
         for symbol in sorted(set(local) | set(broker)):
             local_item = local.get(symbol)
             broker_item = broker.get(symbol)
+            if local_item is not None and (local_item.get("quantity") is None or local_item.get("available_quantity") is None):
+                raise ValueError(f"Local position snapshot missing quantity fields for {symbol}")
+            if broker_item is not None and (broker_item.get("quantity") is None or broker_item.get("available_quantity") is None):
+                raise ValueError(f"Broker position snapshot missing quantity fields for {symbol}")
             local_qty = int(local_item.get("quantity", 0)) if local_item else 0
             broker_qty = int(broker_item.get("quantity", 0)) if broker_item else 0
+            local_available = int(local_item.get("available_quantity", 0)) if local_item else 0
+            broker_available = int(broker_item.get("available_quantity", 0)) if broker_item else 0
             if local_qty != broker_qty:
                 issues.append(self.store.add_reconciliation_issue(self.account_id, {"issue_type": "POSITION_QUANTITY_MISMATCH", "symbol": symbol, "local_value": {"quantity": local_qty}, "broker_value": {"quantity": broker_qty}}))
+            elif local_available != broker_available:
+                issues.append(self.store.add_reconciliation_issue(self.account_id, {"issue_type": "POSITION_AVAILABLE_QUANTITY_MISMATCH", "symbol": symbol, "local_value": {"quantity": local_qty, "available_quantity": local_available}, "broker_value": {"quantity": broker_qty, "available_quantity": broker_available}}))
+            elif hasattr(self.store, "resolve_position_mismatch"):
+                self.store.resolve_position_mismatch(self.account_id, symbol, local_qty, broker_qty, local_available, broker_available)
         return issues
 
     def compare_orders(self, local_orders: list[dict[str, Any]], broker_orders: list[dict[str, Any]]) -> list[dict[str, Any]]:

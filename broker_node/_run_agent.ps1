@@ -1,7 +1,7 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$ConfigPath,
-    [string]$PythonPath = 'C:\Program Files\Python39\python.exe'
+    [string]$PythonPath = 'D:\QMT\Python39\python.exe'
 )
 
 if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {

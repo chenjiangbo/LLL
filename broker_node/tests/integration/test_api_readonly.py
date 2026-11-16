@@ -35,6 +35,25 @@ def test_health_and_status_are_available_over_the_private_network(client: TestCl
     assert response.json()["reconciliation_required"] is True
 
 
+def test_status_exposes_disconnect_and_failure_details(client: TestClient) -> None:
+    import os
+    config = json.loads(Path(os.environ["BROKER_NODE_CONFIG"]).read_text())
+    durable = Path(config["runtime"]["durable_db"])
+    SnapshotWriter(durable).write_node_state({
+        "node_id": "node", "broker_account_key": "sim", "account_mode": "SIM",
+        "paused": True, "pause_reason": "RECONCILIATION_REQUIRED", "reconciliation_required": True,
+        "updated_at": "2026-11-08T00:00:00+00:00",
+    })
+    events = EventWriter(durable)
+    events.append("BROKER_CONNECTION_CHANGED", {"channel": "MARKET", "status": "DISCONNECTED"}, "CALLBACK")
+    events.append("BROKER_CONNECTION_CHANGED", {"channel": "MARKET", "status": "CONNECTED"}, "CALLBACK")
+    events.append("RECONCILIATION_FAILED", {"error_type": "RuntimeError", "message": "query failed"}, "RECONCILE")
+    response = client.get("/api/v1/status").json()
+    assert response["pause_reason"] == "RECONCILIATION_REQUIRED"
+    assert response["last_disconnect"]["payload"] == {"channel": "MARKET", "status": "DISCONNECTED"}
+    assert response["last_error"]["payload"]["message"] == "query failed"
+
+
 def test_snapshot_and_event_endpoints_expose_real_state(client: TestClient, tmp_path: Path) -> None:
     durable = Path(json.loads((Path(__file__).parents[2] / "config" / "config.example.json").read_text())["runtime"]["durable_db"])
     # The fixture setup uses a temporary path; obtain it from the app's config environment.
@@ -59,13 +78,77 @@ def test_sync_request_is_idempotent(client: TestClient) -> None:
 
 
 def test_order_request_is_idempotent_and_conflict_is_rejected(client: TestClient) -> None:
-    payload = {"request_id": "order-request-1", "client_order_id": "client-1", "broker_account_key": "guotou_sim_01", "code": "000661", "exchange": "SZ", "side": "BUY", "price": "70.00", "quantity": 100}
+    payload = {"request_id": "order-request-1", "client_order_id": "client-1", "broker_account_key": "guotou_sim_01", "code": "000661", "exchange": "SZ", "side": "BUY", "order_type": "LIMIT", "price": "70.00", "quantity": 100}
     first = client.post("/api/v1/orders", json=payload)
     second = client.post("/api/v1/orders", json=payload)
     assert first.status_code == 202
     assert second.json()["deduplicated"] is True
     changed = dict(payload, price="71.00")
     assert client.post("/api/v1/orders", json=changed).status_code == 409
+
+
+def test_node_accepts_odd_lot_sell_without_position_snapshot(client: TestClient) -> None:
+    response = client.post("/api/v1/orders", json={
+        "request_id": "odd-lot-sell", "client_order_id": "odd-lot-sell",
+        "broker_account_key": "guotou_sim_01", "code": "000661", "exchange": "SZ",
+        "side": "SELL", "order_type": "LIMIT", "price": "70.00", "quantity": 23,
+    })
+    assert response.status_code == 202
+
+
+def test_command_archive_rejects_unfinished_order_without_deleting_it(client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/orders",
+        json={
+            "request_id": "archive-order-request",
+            "client_order_id": "archive-order",
+            "broker_account_key": "guotou_sim_01",
+            "code": "000661",
+            "exchange": "SZ",
+            "side": "BUY",
+            "order_type": "LIMIT",
+            "price": "70.00",
+            "quantity": 100,
+        },
+    )
+    command_id = response.json()["command_id"]
+    archive = client.post(
+        f"/api/v1/commands/{command_id}/archive",
+        headers={"Authorization": "Bearer test-token"},
+        json={"reason": "cleanup test", "archived_by": "test"},
+    )
+    assert archive.status_code == 409
+    assert archive.json()["detail"]["code"] == "COMMAND_NOT_TERMINAL"
+    command = client.get(
+        f"/api/v1/commands/{command_id}",
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert command.status_code == 200
+    assert command.json()["status"] == "QUEUED"
+    assert command.json()["archived_at"] is None
+
+
+def test_command_archive_records_audit_without_removing_terminal_command(client: TestClient) -> None:
+    durable = Path(json.loads(Path(__import__("os").environ["BROKER_NODE_CONFIG"]).read_text())["runtime"]["durable_db"])
+    with connect(durable) as connection:
+        connection.execute(
+            "INSERT INTO commands(command_id,request_id,command_type,payload_hash,payload_json,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+            ("archive-sync", "archive-sync-request", "SYNC_ALL", "hash", "{}", "FAILED_SAFE", "now", "now"),
+        )
+    archive = client.post(
+        "/api/v1/commands/archive-sync/archive",
+        headers={"Authorization": "Bearer test-token"},
+        json={"reason": "completed audit", "archived_by": "test"},
+    )
+    assert archive.status_code == 200
+    assert archive.json()["status"] == "ARCHIVED"
+    command = client.get(
+        "/api/v1/commands/archive-sync",
+        headers={"Authorization": "Bearer test-token"},
+    ).json()
+    assert command["status"] == "FAILED_SAFE"
+    assert command["archived_from_status"] == "FAILED_SAFE"
+    assert command["archive_reason"] == "completed audit"
 
 
 def test_pause_and_cancel_open_orders_pauses_and_queues_each_system_order(client: TestClient) -> None:

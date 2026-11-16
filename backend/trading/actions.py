@@ -12,7 +12,6 @@ class TradeActionValidationError(ValueError):
 @dataclass(frozen=True)
 class AddPlanInput:
     reference_price: float
-    max_acceptable_price: float
     risk_reference_price: float
     manual_quantity: int | None = None
     action_risk_budget_pct: float | None = None
@@ -34,6 +33,8 @@ class AddAccountContext:
     current_risk_reference_price: float | None = None
     current_risk_reference_note: str | None = None
     existing_legs: tuple[dict[str, Any], ...] = ()
+    max_single_order_notional: float | None = None
+    max_single_order_quantity: float | None = None
 
 
 def _positive(value: float, field: str) -> float:
@@ -54,7 +55,7 @@ class AddPlanCalculator:
     @staticmethod
     def calculate(plan: AddPlanInput, context: AddAccountContext, quantity_step: int = 100) -> dict[str, Any]:
         errors: list[str] = []
-        for value, field in ((plan.reference_price, "reference_price"), (plan.max_acceptable_price, "max_acceptable_price"), (plan.risk_reference_price, "risk_reference_price")):
+        for value, field in ((plan.reference_price, "reference_price"), (plan.risk_reference_price, "risk_reference_price")):
             try:
                 _positive(value, field)
             except TradeActionValidationError as exc:
@@ -78,8 +79,6 @@ class AddPlanCalculator:
                 errors.append(str(exc))
         if quantity_step <= 0:
             errors.append("quantity_step must be greater than 0")
-        if plan.max_acceptable_price < plan.reference_price:
-            errors.append("max_acceptable_price must be greater than or equal to reference_price")
         if errors:
             return {"blocking_errors": errors, "warnings": []}
 
@@ -101,7 +100,9 @@ class AddPlanCalculator:
             action_budget = context.equity * _nonnegative(plan.action_risk_budget_pct, "action_risk_budget_pct")
         if action_budget is not None:
             action_budget = _nonnegative(action_budget, "action_risk_budget_amount")
-        risk_budget = action_budget if action_budget is not None else remaining_trade_risk
+            if action_budget > remaining_trade_risk:
+                errors.append("action_risk_budget_amount exceeds remaining Trade risk budget")
+        risk_budget = min(action_budget, remaining_trade_risk) if action_budget is not None else remaining_trade_risk
 
         limits: dict[str, float] = {}
         if unit_add_risk > 0:
@@ -112,8 +113,10 @@ class AddPlanCalculator:
         limits["SINGLE_POSITION_LIMIT"] = single_capacity / plan.reference_price
         limits["TOTAL_POSITION_LIMIT"] = total_capacity / plan.reference_price
         limits["CASH_LIMIT"] = context.available_cash / plan.reference_price
-        if plan.max_acceptable_price > plan.reference_price:
-            limits["PRICE_LIMIT"] = float("inf")
+        if context.max_single_order_notional is not None:
+            limits["SINGLE_ORDER_AMOUNT_LIMIT"] = _positive(float(context.max_single_order_notional), "max_single_order_notional") / plan.reference_price
+        if context.max_single_order_quantity is not None:
+            limits["SINGLE_ORDER_QUANTITY_LIMIT"] = _positive(float(context.max_single_order_quantity), "max_single_order_quantity")
 
         limiting_factor = min(limits, key=limits.get)
         unrounded_qty = int(math.floor(limits[limiting_factor]))
@@ -129,10 +132,12 @@ class AddPlanCalculator:
         if plan.manual_quantity is not None:
             for name, raw_limit in limits.items():
                 if math.isfinite(raw_limit) and planned_qty > raw_limit + 1e-9:
-                    errors.append(f"manual quantity exceeds {name.lower()}")
+                    errors.append({"SINGLE_ORDER_AMOUNT_LIMIT": "计划金额超过单笔最大金额，请减少计划数量或调整账户设置", "SINGLE_ORDER_QUANTITY_LIMIT": "计划数量超过单笔最大数量，请减少计划数量或调整账户设置"}.get(name, f"manual quantity exceeds {name.lower()}"))
 
         total_qty = context.current_position_qty + planned_qty
-        total_notional = context.current_invested_amount + planned_qty * plan.reference_price
+        post_trade_invested_amount = context.current_invested_amount + planned_qty * plan.reference_price
+        current_position_cost = context.current_position_qty * context.current_average_cost
+        post_trade_position_cost = current_position_cost + planned_qty * plan.reference_price
         incremental_risk = unit_add_risk * planned_qty
         post_trade_capital_risk = current_capital_risk + incremental_risk
         return {
@@ -144,6 +149,8 @@ class AddPlanCalculator:
             "action_risk_budget_amount": action_budget,
             "qty_by_risk": None if unit_add_risk == 0 else int(math.floor(risk_budget / unit_add_risk)),
             "qty_by_single_position": int(math.floor(limits["SINGLE_POSITION_LIMIT"])),
+            "qty_by_single_order_amount": int(math.floor(limits["SINGLE_ORDER_AMOUNT_LIMIT"])) if "SINGLE_ORDER_AMOUNT_LIMIT" in limits else None,
+            "qty_by_single_order_quantity": int(math.floor(limits["SINGLE_ORDER_QUANTITY_LIMIT"])) if "SINGLE_ORDER_QUANTITY_LIMIT" in limits else None,
             "qty_by_total_position": int(math.floor(limits["TOTAL_POSITION_LIMIT"])),
             "qty_by_cash": int(math.floor(limits["CASH_LIMIT"])),
             "unrounded_recommended_qty": unrounded_qty,
@@ -151,9 +158,9 @@ class AddPlanCalculator:
             "planned_qty": planned_qty,
             "planned_notional": planned_qty * plan.reference_price,
             "planned_position_pct": (planned_qty * plan.reference_price) / context.equity,
-            "post_trade_total_position_pct": total_notional / context.equity,
+            "post_trade_total_position_pct": post_trade_invested_amount / context.equity,
             "post_trade_position_qty": total_qty,
-            "post_trade_average_cost": total_notional / total_qty if total_qty else context.current_average_cost,
+            "post_trade_average_cost": post_trade_position_cost / total_qty if total_qty else context.current_average_cost,
             "post_trade_capital_risk": post_trade_capital_risk,
             "risk_budget_used_pct": post_trade_capital_risk / context.trade_risk_budget_amount if context.trade_risk_budget_amount else None,
             "limiting_factor": limiting_factor,

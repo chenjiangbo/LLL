@@ -393,9 +393,11 @@ def evaluate_single_secondary_candidate(
     sec_snapshot = {
         "as_of_date": as_of_date,
         "ts_code": ts_code,
-        "aprev2_score": aprev2_info.get("total_score") if aprev2_info else 75.0,
-        "aprev2_status": aprev2_info.get("state") if aprev2_info else "EARLY_TURN",
-        "turn_type": aprev2_info.get("background_type") if aprev2_info else "BOTTOM_REBOUND",
+        # 复盘文章中的股票不一定来自 A-PreV2。没有对应选股结果时，
+        # 技术分和生命周期必须保持为空，不能伪装成默认的选股结论。
+        "aprev2_score": aprev2_info.get("total_score") if aprev2_info else None,
+        "aprev2_status": aprev2_info.get("state") if aprev2_info else None,
+        "turn_type": aprev2_info.get("background_type") if aprev2_info else None,
         "company_evidence_state": evidence["evidence_state"],
         "leadership_state": leadership["leadership_state"],
         "leadership_rank_value": leadership["leadership_rank_value"],
@@ -525,7 +527,7 @@ def _single_quarter_value(
     if prev is None and field == "total_revenue":
         prev = _safe_float(prev_row.get("revenue"))
     if prev is None:
-        return current
+        return None
     return current - prev
 
 
@@ -561,7 +563,11 @@ def _build_quarter_facts(periods: dict[str, Any]) -> list[dict[str, Any]]:
             "gross_profit": _calc_gross_profit(income_by_period, end_date),
             "gross_margin": _pct_to_ratio(indicator.get("grossprofit_margin")),
             "parent_net_profit": _single_quarter_value(income_by_period, end_date, "n_income_attr_p"),
-            "deducted_net_profit": _single_quarter_value(indicator_by_period, end_date, "profit_dedt"),
+            "deducted_net_profit": (
+                _safe_float(indicator.get("q_dtprofit"))
+                if _safe_float(indicator.get("q_dtprofit")) is not None
+                else _single_quarter_value(indicator_by_period, end_date, "profit_dedt")
+            ),
             "operating_cashflow": _single_quarter_value(cashflow_by_period, end_date, "n_cashflow_act"),
             "source": {
                 "income": bool(income),
@@ -579,14 +585,6 @@ def _build_quarter_facts(periods: dict[str, Any]) -> list[dict[str, Any]]:
         for field in ("revenue", "gross_profit", "parent_net_profit", "deducted_net_profit", "operating_cashflow"):
             fact[f"{field}_yoy"] = _ratio(_safe_float(fact.get(field)), _safe_float((yoy_fact or {}).get(field)))
         
-        # 兜底官方财务比率表 (indicator_vip) 的 YoY 增长率
-        if fact.get("revenue_yoy") is None and indicator.get("or_yoy") is not None:
-            fact["revenue_yoy"] = _pct_to_ratio(indicator.get("or_yoy"))
-        if fact.get("parent_net_profit_yoy") is None and indicator.get("netprofit_yoy") is not None:
-            fact["parent_net_profit_yoy"] = _pct_to_ratio(indicator.get("netprofit_yoy"))
-        if fact.get("deducted_net_profit_yoy") is None and indicator.get("dt_netprofit_yoy") is not None:
-            fact["deducted_net_profit_yoy"] = _pct_to_ratio(indicator.get("dt_netprofit_yoy"))
-
         facts.append(fact)
 
     return facts

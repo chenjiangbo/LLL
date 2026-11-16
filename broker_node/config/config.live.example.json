@@ -22,7 +22,8 @@
     "unfinished_order_sync_seconds": 5,
     "account_position_sync_seconds": 15,
     "full_reconcile_seconds": 60,
-    "agent_offline_seconds": 5
+    "agent_offline_seconds": 5,
+    "agent_startup_grace_seconds": 120
   },
   "execution_quote": {
     "enabled": true,
@@ -31,10 +32,7 @@
     "freshness_ms": 3000
   },
   "safety": {
-    "start_paused": true,
     "allow_live_orders": false,
-    "max_single_order_notional": null,
-    "max_single_order_quantity": null,
     "allowed_exchanges": ["SH", "SZ"],
     "allowed_security_types": ["STOCK", "ETF"]
   }

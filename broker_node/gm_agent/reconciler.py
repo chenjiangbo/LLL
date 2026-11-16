@@ -20,6 +20,7 @@ class Reconciler:
         self.snapshots = snapshots
 
     def startup(self) -> dict[str, Any]:
+        self._refresh_link_statuses_from_events()
         result = {
             "unknown_commands": self._protect_dispatching_commands(),
             "missing_links": self._find_missing_order_links(),
@@ -58,7 +59,12 @@ class Reconciler:
                 {"command_id": row["command_id"], "status": "UNKNOWN"},
                 "RECONCILE",
             )
-        return len(rows)
+        # Include previously unknown commands as well: restarting the Agent
+        # must not make an unresolved broker outcome disappear.
+        with connect(self.durable_db) as connection:
+            return int(connection.execute(
+                "SELECT COUNT(*) FROM commands WHERE status = 'UNKNOWN'"
+            ).fetchone()[0])
 
     def _broker_order_ids_from_snapshot(self) -> set[str]:
         snapshot = self.snapshots
@@ -79,15 +85,20 @@ class Reconciler:
         broker_ids = self._broker_order_ids_from_snapshot()
         if not broker_ids:
             return 0
+        terminal_statuses = {"FILLED", "CANCELLED", "CANCELED", "REJECTED", "EXPIRED"}
         with connect(self.durable_db) as connection:
             rows = connection.execute(
                 """
-                SELECT client_order_id, broker_order_id
+                SELECT client_order_id, broker_order_id, last_broker_status
                 FROM order_links
-                WHERE broker_order_id IS NOT NULL
+                WHERE origin = 'SYSTEM' AND broker_order_id IS NOT NULL
                 """
             ).fetchall()
-        missing = [row for row in rows if row["broker_order_id"] not in broker_ids]
+        missing = [
+            row for row in rows
+            if row["last_broker_status"] not in terminal_statuses
+            and row["broker_order_id"] not in broker_ids
+        ]
         for row in missing:
             self.events.append(
                 "RECONCILIATION_ALERT",
@@ -97,6 +108,52 @@ class Reconciler:
                 broker_order_id=row["broker_order_id"],
             )
         return len(missing)
+
+    def _refresh_link_statuses_from_events(self) -> None:
+        """Restore link status from durable callbacks before reconciliation.
+
+        A callback can arrive before the link row is updated, and external
+        orders intentionally have no local command.  The event log is the
+        authoritative durable audit for a broker status already observed;
+        using it prevents a known terminal/rejected order from being treated
+        as a live missing link after Agent restart.
+        """
+        with connect(self.durable_db) as connection:
+            # Reserve the writer before reading: another Node request may
+            # otherwise commit between this snapshot and the status update.
+            connection.execute("BEGIN IMMEDIATE")
+            links = connection.execute(
+                "SELECT client_order_id, broker_order_id FROM order_links WHERE broker_order_id IS NOT NULL"
+            ).fetchall()
+            for link in links:
+                event = connection.execute(
+                    """
+                    SELECT payload_json
+                    FROM broker_events
+                    WHERE event_type = 'ORDER_STATUS' AND broker_order_id = ?
+                    ORDER BY seq DESC
+                    LIMIT 1
+                    """,
+                    (link["broker_order_id"],),
+                ).fetchone()
+                if not event:
+                    continue
+                payload = json.loads(event["payload_json"])
+                normalized = payload.get("normalized", {}) if isinstance(payload, dict) else {}
+                status = normalized.get("status")
+                raw_status = normalized.get("raw_status")
+                # Older deployed mappers recorded GM raw status 8 as
+                # UNKNOWN even though the broker payload contains a concrete
+                # rejection reason.  Preserve the raw event and normalize
+                # only this documented terminal status for reconciliation.
+                if status == "UNKNOWN" and raw_status == 8:
+                    status = "REJECTED"
+                if not status:
+                    continue
+                connection.execute(
+                    "UPDATE order_links SET last_broker_status=?, last_raw_status=?, updated_at=? WHERE client_order_id=?",
+                    (status, raw_status, _now(), link["client_order_id"]),
+                )
 
     def _find_external_orders(self) -> int:
         broker_ids = self._broker_order_ids_from_snapshot()

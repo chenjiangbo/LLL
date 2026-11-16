@@ -8,6 +8,17 @@ from typing import Any
 from broker_node.shared.db import connect
 
 
+class CommandArchiveError(ValueError):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+TERMINAL_COMMAND_STATUSES = {"ACKED", "FAILED_SAFE"}
+TERMINAL_ORDER_STATUSES = {"FILLED", "CANCELLED", "REJECTED", "EXPIRED"}
+
+
 class NodeRepository:
     def __init__(self, durable_db: Path):
         self.durable_db = durable_db
@@ -15,6 +26,30 @@ class NodeRepository:
     def get_node_state(self) -> dict[str, Any] | None:
         with connect(self.durable_db) as connection:
             row = connection.execute("SELECT * FROM node_state LIMIT 1").fetchone()
+        return dict(row) if row else None
+
+    def last_diagnostic_event(self, kind: str) -> dict[str, Any] | None:
+        if kind == "disconnect":
+            condition = "event_type IN ('BROKER_CONNECTION_CHANGED','ACCOUNT_STATUS_CHANGED') AND json_extract(payload_json, '$.status') IN ('DISCONNECTED','UNKNOWN')"
+        elif kind == "error":
+            condition = "event_type IN ('RECONCILIATION_FAILED','BROKER_SYNC_FAILED','QUOTE_SUBSCRIPTION_FAILED','GM_ERROR')"
+        else:
+            raise ValueError("unsupported diagnostic event kind")
+        with connect(self.durable_db) as connection:
+            row = connection.execute(
+                f"SELECT event_type, payload_json, occurred_at, received_at FROM broker_events WHERE {condition} ORDER BY seq DESC LIMIT 1"
+            ).fetchone()
+        if not row:
+            return None
+        event = dict(row)
+        event["payload"] = json.loads(event.pop("payload_json"))
+        return event
+
+    def last_failed_command(self) -> dict[str, Any] | None:
+        with connect(self.durable_db) as connection:
+            row = connection.execute(
+                "SELECT command_id, client_order_id, command_type, status, error_code, error_message, updated_at FROM commands WHERE status IN ('UNKNOWN','FAILED_SAFE') ORDER BY updated_at DESC LIMIT 1"
+            ).fetchone()
         return dict(row) if row else None
 
     def get_snapshot(self, snapshot_type: str) -> dict[str, Any] | None:
@@ -63,6 +98,85 @@ class NodeRepository:
                 "SELECT COUNT(*) AS count FROM commands WHERE status = 'UNKNOWN'"
             ).fetchone()
         return int(row["count"])
+
+    def get_command(self, command_id: str) -> dict[str, Any] | None:
+        """Return command lifecycle metadata without exposing its payload."""
+        with connect(self.durable_db) as connection:
+            row = connection.execute(
+                """
+                SELECT c.command_id, c.request_id, c.command_type,
+                       c.client_order_id, c.status, c.broker_order_id,
+                       c.error_code, c.error_message, c.created_at,
+                       c.validated_at, c.claimed_at, c.dispatched_at,
+                       c.completed_at, c.updated_at,
+                       a.previous_status AS archived_from_status,
+                       a.archive_reason, a.archived_by, a.archived_at
+                FROM commands c
+                LEFT JOIN command_archive_audit a ON a.command_id = c.command_id
+                WHERE c.command_id = ?
+                """,
+                (command_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def archive_command(self, command_id: str, reason: str, archived_by: str, now: str) -> dict[str, Any]:
+        """Record archival without deleting the command or its audit trail."""
+        with connect(self.durable_db) as connection:
+            row = connection.execute(
+                "SELECT * FROM commands WHERE command_id = ?", (command_id,)
+            ).fetchone()
+            if not row:
+                raise CommandArchiveError("COMMAND_NOT_FOUND", "command does not exist")
+            existing = connection.execute(
+                "SELECT * FROM command_archive_audit WHERE command_id = ?", (command_id,)
+            ).fetchone()
+            if existing:
+                if existing["archive_reason"] != reason or existing["archived_by"] != archived_by:
+                    raise CommandArchiveError("ARCHIVE_ALREADY_RECORDED", "command archive audit already exists")
+                return self.get_command(command_id) or {}
+            if row["status"] not in TERMINAL_COMMAND_STATUSES:
+                raise CommandArchiveError(
+                    "COMMAND_NOT_TERMINAL",
+                    f"command status {row['status']} is not terminal; it must remain queryable",
+                )
+            if row["client_order_id"]:
+                link = connection.execute(
+                    "SELECT * FROM order_links WHERE client_order_id = ?",
+                    (row["client_order_id"],),
+                ).fetchone()
+                if not link or not link["broker_order_id"]:
+                    raise CommandArchiveError(
+                        "ORDER_AUDIT_INCOMPLETE",
+                        "order command has no broker order link and cannot be archived",
+                    )
+                broker_status = link["last_broker_status"]
+                snapshot = connection.execute(
+                    "SELECT payload_json FROM snapshots WHERE snapshot_type = 'ORDERS'"
+                ).fetchone()
+                if snapshot:
+                    payload = json.loads(snapshot["payload_json"])
+                    for item in payload:
+                        normalized = item.get("normalized", {})
+                        if (
+                            normalized.get("client_order_id") == row["client_order_id"]
+                            or normalized.get("broker_order_id") == link["broker_order_id"]
+                        ):
+                            broker_status = normalized.get("status") or broker_status
+                            break
+                if broker_status not in TERMINAL_ORDER_STATUSES:
+                    raise CommandArchiveError(
+                        "ORDER_NOT_TERMINAL",
+                        "linked broker order is not in a terminal status; command remains referenced",
+                    )
+            connection.execute(
+                """
+                INSERT INTO command_archive_audit(
+                    command_id, previous_status, archive_reason, archived_by, archived_at
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (command_id, row["status"], reason, archived_by, now),
+            )
+        return self.get_command(command_id) or {}
 
     def enqueue_sync(self, request_id: str, now: str) -> dict[str, Any]:
         import hashlib

@@ -1,0 +1,1954 @@
+'use client';
+
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
+import type { ImportedReviewResponse } from './components/ImportModal';
+import dynamic from 'next/dynamic';
+import RunScreeningModal from './components/RunScreeningModal';
+import RunHistoryModal from './components/RunHistoryModal';
+import { History } from 'lucide-react';
+
+const EarlyTurnFunnel = dynamic(() => import('./components/EarlyTurnFunnel'), { ssr: false });
+const SingleStockTestView = dynamic(() => import('./components/SingleStockTestView'), { ssr: false });
+const WatchlistView = dynamic(() => import('./components/WatchlistView'), { ssr: false });
+const KLineModal = dynamic(() => import('./components/KLineModal'), { ssr: false });
+const PoolStageFunnel = dynamic(() => import('./components/PoolStageFunnel'), { ssr: false });
+const ImportModal = dynamic(() => import('./components/ImportModal'), { ssr: false });
+const ImportedDashboard = dynamic(() => import('./components/ImportedDashboard'), { ssr: false });
+const ReverseBreakoutPage = dynamic(() => import('./components/ReverseBreakoutPage'), { ssr: false });
+const MarketQuotesPage = dynamic(() => import('./components/MarketQuotesPage'), { ssr: false });
+const TechnicalClassificationPage = dynamic(() => import('./components/TechnicalClassificationPage'), { ssr: false });
+const TradingSystemShell = dynamic(() => import('./components/TradingSystemShell'), { ssr: false });
+const GlobalSettingsPage = dynamic(() => import('./components/TradingSystemShell').then((module) => module.SettingsPage), { ssr: false });
+const SecondaryStockDetailDrawer = dynamic(() => import('./components/SecondaryStockDetailDrawer'), { ssr: false });
+import {
+  Activity,
+  AlertTriangle,
+  BarChart3,
+  Calendar,
+  Cable,
+  ChevronLeft,
+  ChevronRight,
+  CheckCircle2,
+  CirclePause,
+  ExternalLink,
+  LineChart,
+  Landmark,
+  Loader2,
+  PlayCircle,
+  RefreshCw,
+  Search,
+  Settings,
+  Sparkles,
+  Star,
+  Moon,
+  Sun,
+  Target,
+  TrendingDown,
+  TrendingUp,
+  Filter,
+  ChevronDown,
+  X,
+  Plus,
+  BriefcaseBusiness,
+  FlaskConical,
+  WalletCards,
+  ChartNoAxesCombined,
+  Shield,
+} from 'lucide-react';
+
+type WatchlistTradePlanPrefill = {
+  symbol: string;
+  securityName: string;
+  sourceType: 'MANUAL' | 'STRATEGY' | 'UNKNOWN';
+  strategy?: string | null;
+  stage?: string | null;
+  snapshotDate?: string | null;
+};
+
+type TradingAccountSummary = {
+  id: number;
+  name: string;
+  account_type: 'SIMULATION' | 'LIVE' | 'PLANNING' | string;
+  status: string;
+  is_default: boolean;
+  connection_status?: string | null;
+  icon_key?: string | null;
+};
+
+const accountIconMap = {
+  landmark: Landmark,
+  briefcase: BriefcaseBusiness,
+  flask: FlaskConical,
+  wallet: WalletCards,
+  chart: ChartNoAxesCombined,
+  shield: Shield,
+} as const;
+
+function AccountIcon({ iconKey }: { iconKey?: string | null }) {
+  const Icon = accountIconMap[iconKey as keyof typeof accountIconMap] || Landmark;
+  return <Icon className="h-4 w-4" strokeWidth={1.8} />;
+}
+
+type ReturnMap = Record<string, number | null>;
+
+type TimeframeSummary = {
+  daily: string;
+  short_term: string;
+  medium_term: string;
+  long_term: string;
+};
+
+type IndexRow = {
+  id: string;
+  name: string;
+  symbol: string;
+  quote_url: string;
+  close: number;
+  amount: number;
+  returns: ReturnMap;
+  rankings: Record<string, number>;
+  drawdowns: Record<string, number | null>;
+  moving_averages: Record<string, {
+    available: boolean;
+    position?: string;
+    slope?: string;
+    distance_pct?: number;
+  }>;
+  amount_vs_20w_avg_pct: number | null;
+  internal_breadth: {
+    up_ratio: number | null;
+    median_return: number | null;
+    equal_weight_return: number | null;
+  };
+  attribution: {
+    available: boolean;
+    reason?: string;
+    covered_weight_pct?: number;
+    weight_effective_date?: string;
+    estimated_return_pct?: number;
+    actual_return_pct?: number | null;
+    top_positive_contributors?: Array<{
+      code: string;
+      name: string | null;
+      contribution_pct_points: number;
+    }>;
+    top_negative_contributors?: Array<{
+      code: string;
+      name: string | null;
+      contribution_pct_points: number;
+    }>;
+    direction?: 'up' | 'down';
+    key_constituents?: Array<{
+      code: string;
+      name: string | null;
+      return_pct: number;
+      industry: string;
+    }>;
+  };
+};
+
+type IndustryRow = {
+  name: string;
+  close: number;
+  returns: ReturnMap;
+  rankings: Record<string, number>;
+  internal_breadth: number;
+  up_count: number;
+  down_count: number;
+  summary_change_pct: number;
+};
+
+type OverviewReport = {
+  is_imported?: boolean;
+  raw_content?: string;
+  imported_payload?: any;
+  article_stock_links?: Array<{ label: string; code: string; name: string }>;
+  trade_date: string;
+  mode?: 'daily' | 'weekly';
+  updated_at?: string;
+  core_conclusion: {
+    summary: string;
+    headline: string;
+    timeframes: TimeframeSummary;
+    evidence: string[];
+    conflicts: string[];
+    risks: string[];
+    changes_from_previous_review: string[];
+    industry_groups: {
+      top_gainers: string[];
+      top_decliners: string[];
+    };
+  };
+  indices: IndexRow[];
+  breadth: {
+    trade_date: string;
+    snapshot_time: string;
+    stock_count: number;
+    rising_count: number;
+    falling_count: number;
+    flat_count: number;
+    rising_ratio: number;
+    total_amount: number;
+    limit_up_count: number;
+    limit_down_count: number | null;
+    quadrant: string;
+    five_index_equal_weight_daily_return: number;
+    limit_down_empty_with_no_columns: boolean;
+    technical: {
+      above_ma20_count: number;
+      above_ma20_ratio: number;
+      above_ma20_eligible_count: number;
+      above_ma60_count: number;
+      above_ma60_ratio: number;
+      above_ma60_eligible_count: number;
+      new_high_20_count: number;
+      new_high_20_ratio: number;
+      new_low_20_count: number;
+      new_low_20_ratio: number;
+      new_high_low_eligible_count: number;
+    };
+    history: {
+      avg_rising_ratio_5d: number | null;
+      avg_rising_ratio_20d: number | null;
+      turnover_change_vs_previous_pct: number | null;
+      turnover_avg_5d: number | null;
+      turnover_avg_20d: number | null;
+      turnover_vs_20d_pct: number | null;
+      turnover_one_year_percentile: number | null;
+      available_days: number;
+    };
+  };
+  industries: IndustryRow[];
+  industry_scope: {
+    actual_industries: number;
+    is_full_universe: boolean;
+  };
+  data_sources: Record<string, string>;
+  data_quality: {
+    status: 'intraday' | 'closing_pending' | 'final' | 'partial' | 'error';
+    label: string;
+    message: string;
+    is_final: boolean;
+    missing_fields: string[];
+    snapshot_time?: string;
+    captured_at?: string;
+    industry_taxonomy: string;
+  };
+  market_classification: {
+    daily_state: string;
+    size_style: string;
+    growth_style: string;
+    risk_appetite: string;
+    evidence: string[];
+    conflicting_evidence: string[];
+    period: string;
+  };
+  ai_analysis?: {
+    data_quality: {status: string; message: string};
+    headline: string;
+    timeframes: TimeframeSummary;
+    market_structure: {
+      common_direction: string;
+      relative_strength: string;
+      style_interpretation: string;
+      confidence: string;
+    };
+    index_attribution: Array<{
+      index_name: string;
+      summary: string;
+      data_limitations: string[];
+    }>;
+    breadth_and_turnover: {
+      summary: string;
+      breadth_interpretation: string;
+      turnover_interpretation: string;
+      short_term_vs_medium_term: string;
+    };
+    industries: {
+      top_gainers: string[];
+      top_decliners: string[];
+      breadth_interpretation: string;
+      summary: string;
+    };
+    changes_from_previous_review: string[];
+    conflicting_evidence: string[];
+    unknowns: string[];
+    next_observations: string[];
+    full_review: string;
+    meta: {
+      model: string;
+      generated_at: string;
+      cached: boolean;
+      report_type: 'daily' | 'weekly';
+    };
+  };
+};
+
+type HistoryItem = {
+  trade_date: string;
+  summary: string;
+  data_status: string | null;
+  report_type: string | null;
+  updated_at: string;
+};
+
+type ScreeningPool = 'A-Pre' | 'A' | 'B' | 'C';
+
+type ScreeningCandidate = {
+  trade_date: string;
+  asset_code: string;
+  name: string | null;
+  asset_type: 'stock' | 'etf';
+  primary_pool: 'A-Pre' | 'A' | 'B' | 'C';
+  stage: string;
+  score: number;
+  pools: Array<{
+    pool: string;
+    stage: string;
+    score: number;
+    score_detail?: Record<string, number>;
+    passed_rules?: string[];
+    failed_rules?: string[];
+  }>;
+  reasons: string[];
+  risks: string[];
+  status_change: string;
+  features: Record<string, number | string | boolean | null>;
+  is_selected?: boolean;
+  user_note?: string;
+  industry?: string | null;
+  market?: string | null;
+  ent_type?: string | null;
+  province?: string | null;
+  city?: string | null;
+  main_business?: string | null;
+  fund_type?: string | null;
+  management?: string | null;
+};
+
+type ScreeningPayload = {
+  trade_date: string;
+  ruleset_version: string;
+  pool: ScreeningPool;
+  counts: Record<string, number>;
+  industry_counts?: Record<string, number>;
+  coverage: {
+    listed: Record<'stock' | 'etf', number>;
+    daily: Record<'stock' | 'etf', number>;
+    scanned: Record<'stock' | 'etf', number>;
+  };
+  items: ScreeningCandidate[];
+  pagination: {
+    page: number;
+    page_size: number;
+    total: number;
+    total_pages: number;
+  };
+  filters: {
+    min_score: number | null;
+    max_score: number | null;
+    query: string;
+  };
+  run?: {
+    candidate_count: number;
+    counts: Record<string, number>;
+    outputs: Record<string, string>;
+  };
+};
+
+type ScreeningRequest = {
+  page: number;
+  pageSize: number;
+  minScore: number | null;
+  maxScore: number | null;
+  query: string;
+  industry: string;
+};
+
+const DEFAULT_SCREENING_REQUEST: ScreeningRequest = {
+  page: 1,
+  pageSize: 50,
+  minScore: null,
+  maxScore: null,
+  query: '',
+  industry: '',
+};
+
+type ScreeningHistoryItem = {
+  trade_date: string;
+};
+
+const API_BASE = process.env.NEXT_PUBLIC_MARKET_REVIEW_API_URL;
+
+function formatDate(value: string) {
+  if (!value || value.length !== 8) return value;
+  return `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6)}`;
+}
+
+function normalizeReviewTradeDate(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().replace(/-/g, '');
+  if (!/^\d{8}$/.test(normalized)) return null;
+  return `${normalized.slice(0, 4)}-${normalized.slice(4, 6)}-${normalized.slice(6, 8)}`;
+}
+
+function formatPct(value: number | null | undefined, digits = 2) {
+  if (value === null || value === undefined || Number.isNaN(value)) return '暂无';
+  return `${value >= 0 ? '+' : ''}${value.toFixed(digits)}%`;
+}
+
+function formatRatio(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(value)) return '暂无';
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+function formatAmount(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(value)) return '暂无';
+  return `${(value / 100000000).toFixed(0)}亿`;
+}
+
+function toneClass(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(value)) return 'text-[#4a4e4a]';
+  return value >= 0 ? 'text-[#b83230]' : 'text-[#237a4b]';
+}
+
+async function fetchJson<T>(path: string): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await fetch(`${API_BASE}${path}`, {cache: 'no-store'});
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `HTTP ${response.status}`);
+      }
+      return response.json();
+    } catch (error) {
+      lastError = error;
+      // 后端重启或端口短暂切换时，给服务一个短暂恢复窗口。
+      if (attempt < 2 && error instanceof TypeError) {
+        await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('数据接口暂时无法连接');
+}
+
+async function postJson<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+export default function MarketReviewApp() {
+  type ActiveView = 'market' | 'review' | 'screening' | 'watchlist' | 'technical-classification' | 'trading-system' | 'trading-overview';
+  const [activeView, setActiveView] = useState<ActiveView>('market');
+  const [activeViewRestored, setActiveViewRestored] = useState(false);
+  // 自动选股首次打开后保留组件实例，切换到其他模块时只隐藏它，
+  // 以保留用户已经筛选出的列表、滚动位置和抽屉状态。
+  const [screeningMounted, setScreeningMounted] = useState(false);
+  const [tradePlanPrefill, setTradePlanPrefill] = useState<WatchlistTradePlanPrefill | null>(null);
+  const [report, setReport] = useState<OverviewReport | null>(null);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [screening, setScreening] = useState<ScreeningPayload | null>(null);
+  const [screeningHistory, setScreeningHistory] = useState<ScreeningHistoryItem[]>([]);
+  const [screeningLoading, setScreeningLoading] = useState(true);
+  const [screeningError, setScreeningError] = useState<string | null>(null);
+  const [screeningPool, setScreeningPool] = useState<ScreeningPool>('A');
+  const [screeningOnlySelected, setScreeningOnlySelected] = useState(false);
+  const [screeningSubTab, setScreeningSubTab] = useState<'SECONDARY' | 'EARLY_TURN' | 'SAMPLES' | 'SINGLE_STOCK_TEST'>('EARLY_TURN');
+  const [screeningRunning, setScreeningRunning] = useState(false);
+  const [screeningRequest, setScreeningRequest] = useState<ScreeningRequest>(DEFAULT_SCREENING_REQUEST);
+  const [taskStatus, setTaskStatus] = useState<{ status: string; progress: number; step_message: string } | null>(null);
+  const [theme, setTheme] = useState<'default' | 'dark'>('default');
+  const [tradingAccounts, setTradingAccounts] = useState<TradingAccountSummary[]>([]);
+  const [selectedTradingAccountId, setSelectedTradingAccountId] = useState<number | null>(null);
+  const [tradingAccountRestoring, setTradingAccountRestoring] = useState(true);
+  const [tradingAccountsLoading, setTradingAccountsLoading] = useState(false);
+  const [tradingAccountsError, setTradingAccountsError] = useState<string | null>(null);
+  const [tradingAccountsRefreshKey, setTradingAccountsRefreshKey] = useState(0);
+  const [globalSettingsOpen, setGlobalSettingsOpen] = useState(false);
+  const [createAccountFromMenu, setCreateAccountFromMenu] = useState(false);
+  const [tradingMenuOpen, setTradingMenuOpen] = useState(false);
+  const [stockSearch, setStockSearch] = useState('');
+  const [stockSearchItems, setStockSearchItems] = useState<Array<{code: string; name: string}>>([]);
+  const [stockSearchOpen, setStockSearchOpen] = useState(false);
+  const [stockSearchLoading, setStockSearchLoading] = useState(false);
+  const [globalStock, setGlobalStock] = useState<{code: string; name: string} | null>(null);
+  const stockSearchRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const saved = window.sessionStorage.getItem('lll-trading-account-id');
+    if (!saved || !/^[1-9]\d*$/.test(saved) || !Number.isSafeInteger(Number(saved))) {
+      setTradingAccountRestoring(false);
+      return;
+    }
+    setTradingAccountRestoring(true);
+    setTradingAccountsError(null);
+    fetchJson<{ status: string; items: TradingAccountSummary[] }>('/api/trading/accounts')
+      .then((result) => {
+        if (cancelled) return;
+        if (result.status !== 'SUCCESS' || !Array.isArray(result.items)) throw new Error('交易账号读取失败');
+        setTradingAccounts(result.items);
+        if (window.sessionStorage.getItem('lll-trading-account-id') !== saved) return;
+        const account = result.items.find((item) => item.id === Number(saved));
+        if (account) setSelectedTradingAccountId(account.id);
+        else window.sessionStorage.removeItem('lll-trading-account-id');
+      })
+      .catch((reason) => { if (!cancelled) setTradingAccountsError(reason instanceof Error ? reason.message : '交易账号读取失败'); })
+      .finally(() => { if (!cancelled) setTradingAccountRestoring(false); });
+    return () => { cancelled = true; };
+  }, [tradingAccountsRefreshKey]);
+
+  useEffect(() => {
+    const saved = window.sessionStorage.getItem('lll-active-view');
+    const validViews: ActiveView[] = ['market', 'review', 'screening', 'watchlist', 'technical-classification', 'trading-system', 'trading-overview'];
+    if (saved && validViews.includes(saved as ActiveView)) {
+      setActiveView(saved as ActiveView);
+    }
+    setActiveViewRestored(true);
+  }, []);
+
+  useEffect(() => {
+    if (activeViewRestored) {
+      window.sessionStorage.setItem('lll-active-view', activeView);
+    }
+  }, [activeView, activeViewRestored]);
+  const tradingMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const query = stockSearch.trim();
+    if (!query) {
+      setStockSearchItems([]);
+      setStockSearchLoading(false);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setStockSearchLoading(true);
+      fetchJson<{items: Array<{code: string; name: string}>}>(`/api/stocks/search?q=${encodeURIComponent(query)}`)
+        .then((result) => { if (!cancelled) setStockSearchItems(result.items); })
+        .catch(() => { if (!cancelled) setStockSearchItems([]); })
+        .finally(() => { if (!cancelled) setStockSearchLoading(false); });
+    }, 180);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [stockSearch]);
+
+  useEffect(() => {
+    const close = (event: MouseEvent) => {
+      if (stockSearchRef.current && !stockSearchRef.current.contains(event.target as Node)) setStockSearchOpen(false);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, []);
+
+  // 首次进入自动选股时才挂载筛选组件；之后切换到其他模块仅隐藏它，
+  // 以保留已加载的批次、筛选条件和列表状态。
+  useEffect(() => {
+    if (activeView === 'screening') setScreeningMounted(true);
+  }, [activeView]);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('app-theme') as 'default' | 'dark' | null;
+    if (saved === 'dark') {
+      setTheme('dark');
+      document.documentElement.setAttribute('data-theme', 'dark');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!tradingMenuOpen) return;
+    const closeMenu = (event: MouseEvent) => {
+      if (tradingMenuRef.current && !tradingMenuRef.current.contains(event.target as Node)) {
+        setTradingMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', closeMenu);
+    return () => document.removeEventListener('mousedown', closeMenu);
+  }, [tradingMenuOpen]);
+
+  const toggleTheme = (e: React.MouseEvent<HTMLButtonElement>) => {
+    const nextTheme = theme === 'default' ? 'dark' : 'default';
+
+    const updateDOM = () => {
+      setTheme(nextTheme);
+      if (nextTheme === 'dark') {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      } else {
+        document.documentElement.removeAttribute('data-theme');
+      }
+      localStorage.setItem('app-theme', nextTheme);
+    };
+
+    if (!(document as any).startViewTransition) {
+      updateDOM();
+      return;
+    }
+
+    const btn = (typeof document !== 'undefined' ? document.getElementById('theme-toggle-btn') : null) || e.currentTarget;
+    const rect = btn ? btn.getBoundingClientRect() : { left: window.innerWidth - 50, top: 25, width: 32, height: 32 };
+    const x = Math.round(rect.left + rect.width / 2);
+    const y = Math.round(rect.top + rect.height / 2);
+    const endRadius = Math.hypot(
+      Math.max(x, window.innerWidth - x),
+      Math.max(y, window.innerHeight - y)
+    );
+
+    const transition = (document as any).startViewTransition(() => {
+      updateDOM();
+    });
+
+    transition.ready.then(() => {
+      const clipPath = [
+        `circle(0px at ${x}px ${y}px)`,
+        `circle(${endRadius}px at ${x}px ${y}px)`
+      ];
+      document.documentElement.animate(
+        {
+          clipPath: clipPath
+        },
+        {
+          duration: 550,
+          easing: 'cubic-bezier(0.4, 0, 0.2, 1)',
+          pseudoElement: '::view-transition-new(root)',
+        }
+      );
+    });
+  };
+
+  useEffect(() => {
+    let timer: NodeJS.Timeout;
+    const checkStatus = async () => {
+      try {
+        const res = await fetchJson<{ status: string; progress: number; step_message: string }>('/api/screening/status');
+        setTaskStatus(res);
+        if (res.status === 'running' || res.status === 'RUNNING') {
+          setScreeningRunning(true);
+        } else if ((res.status === 'success' || res.status === 'DONE') && screeningRunning) {
+          setScreeningRunning(false);
+          const historyPayload = await fetchJson<{ items: ScreeningHistoryItem[] }>('/api/screening/history');
+          setScreeningHistory(historyPayload.items);
+          loadScreening(screeningPool, undefined, DEFAULT_SCREENING_REQUEST);
+        } else if ((res.status === 'failed' || res.status === 'ERROR') && screeningRunning) {
+          setScreeningRunning(false);
+          setScreeningError(res.step_message || '选股运行失败');
+        }
+      } catch (e) {
+        console.error('轮询后台选股任务状态异常', e);
+      }
+    };
+
+    checkStatus();
+    timer = setInterval(checkStatus, 1500);
+    return () => clearInterval(timer);
+  }, [screeningRunning, screeningPool]);
+
+  async function loadData(tradeDate?: unknown) {
+    setLoading(true);
+    setError(null);
+    try {
+      const normalizedTradeDate = tradeDate === undefined ? null : normalizeReviewTradeDate(tradeDate);
+      if (tradeDate !== undefined && !normalizedTradeDate) {
+        throw new Error('复盘日期格式无效，请重新选择日期');
+      }
+      const [overview, historyPayload] = await Promise.all([
+        fetchJson<OverviewReport>(normalizedTradeDate ? `/api/market-review/overview/${normalizedTradeDate}` : '/api/market-review/overview/latest'),
+        fetchJson<{items: HistoryItem[]}>('/api/market-review/history?limit=100'),
+      ]);
+      setReport(overview);
+      setHistory(historyPayload.items);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '数据读取失败');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadData();
+    loadScreening();
+  }, []);
+
+  useEffect(() => {
+    if (activeView === 'screening') setScreeningMounted(true);
+  }, [activeView, tradingAccountsRefreshKey]);
+
+  async function loadScreening(
+    pool: ScreeningPool = screeningPool,
+    tradeDate?: string,
+    request: ScreeningRequest = screeningRequest,
+    onlySelected: boolean = screeningOnlySelected,
+    silent: boolean = false,
+  ) {
+    if (!silent) {
+      setScreeningLoading(true);
+    }
+    setScreeningError(null);
+    try {
+      const params = new URLSearchParams({
+        pool,
+        page: String(request.page),
+        page_size: String(request.pageSize),
+      });
+      if (request.minScore !== null) params.set('min_score', String(request.minScore));
+      if (request.maxScore !== null) params.set('max_score', String(request.maxScore));
+      if (request.query.trim()) params.set('q', request.query.trim());
+      if (request.industry?.trim()) params.set('industry', request.industry.trim());
+      if (onlySelected) params.set('only_selected', 'true');
+      const [payload, historyPayload] = await Promise.all([
+        fetchJson<ScreeningPayload>(tradeDate ? `/api/screening/${tradeDate}?${params}` : `/api/screening/latest?${params}`),
+        fetchJson<{items: ScreeningHistoryItem[]}>('/api/screening/history'),
+      ]);
+      setScreening(payload);
+      setScreeningHistory(historyPayload.items);
+      setScreeningRequest(request);
+      setScreeningOnlySelected(onlySelected);
+    } catch (err) {
+      if (!silent) {
+        setScreeningError(err instanceof Error ? err.message : '选股结果读取失败');
+      }
+    } finally {
+      if (!silent) {
+        setScreeningLoading(false);
+      }
+    }
+  }
+
+  async function toggleCandidateSelect(item: ScreeningCandidate) {
+    if (!screening) return;
+    const nextSelected = !item.is_selected;
+    const action = nextSelected ? 'SELECT' : 'REMOVE';
+
+    // 乐观 UI 更新：立即翻转该标的的入池状态与计数，避免界面闪烁
+    setScreening((prev) => {
+      if (!prev) return prev;
+      const updatedItems = prev.items.map((candidate) => {
+        if (candidate.asset_code === item.asset_code && candidate.primary_pool === item.primary_pool) {
+          return { ...candidate, is_selected: nextSelected };
+        }
+        return candidate;
+      });
+      const selectedDelta = nextSelected ? 1 : -1;
+      const currentSelectedCount = prev.counts.selected || 0;
+      return {
+        ...prev,
+        counts: {
+          ...prev.counts,
+          selected: Math.max(0, currentSelectedCount + selectedDelta),
+        },
+        items: updatedItems,
+      };
+    });
+
+    try {
+      await postJson('/api/screening/select', {
+        trade_date: item.trade_date,
+        asset_code: item.asset_code,
+        pool: item.primary_pool,
+        action,
+      });
+      await loadScreening(screeningPool, screening.trade_date, screeningRequest, screeningOnlySelected, true);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : '操作失败');
+      await loadScreening(screeningPool, screening.trade_date, screeningRequest, screeningOnlySelected, true);
+    }
+  }
+
+  async function selectDate(tradeDate: unknown) {
+    const normalizedTradeDate = normalizeReviewTradeDate(tradeDate);
+    if (!normalizedTradeDate || normalizedTradeDate === report?.trade_date) return;
+    await loadData(normalizedTradeDate);
+  }
+
+  async function selectScreeningDate(tradeDate: string) {
+    if (!tradeDate || tradeDate === screening?.trade_date) return;
+    await loadScreening(screeningPool, tradeDate, {...screeningRequest, page: 1});
+  }
+
+  async function selectScreeningPool(pool: ScreeningPool) {
+    setScreeningPool(pool);
+    await loadScreening(pool, screening?.trade_date, {...screeningRequest, page: 1});
+  }
+
+  async function runScreening() {
+    const tradeDate = screening?.trade_date || report?.trade_date;
+    if (!tradeDate) return;
+    setScreeningRunning(true);
+    setScreeningError(null);
+    try {
+      await postJson<{ status: string; trade_date?: string; pool?: string }>('/api/screening/run', {
+        trade_date: tradeDate,
+        pool: 'ABC',
+      });
+      setScreeningPool('A');
+      setScreeningRequest(DEFAULT_SCREENING_REQUEST);
+    } catch (err) {
+      setScreeningError(err instanceof Error ? err.message : '自动选股运行失败');
+      setScreeningRunning(false);
+    }
+  }
+
+  async function generateAI() {
+    if (!report) return;
+    setAiLoading(true);
+    setAiError(null);
+    try {
+      const updated = await postJson<OverviewReport>('/api/market-review/ai/generate', {
+        trade_date: report.trade_date,
+        report_type: report.mode || 'daily',
+        force: Boolean(report.ai_analysis),
+      });
+      setReport(updated);
+    } catch (err) {
+      setAiError(err instanceof Error ? err.message : 'AI 初稿生成失败');
+    } finally {
+      setAiLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!tradingMenuOpen) return;
+    let cancelled = false;
+    setTradingAccountsLoading(true);
+    setTradingAccountsError(null);
+    fetchJson<{ status: string; items: TradingAccountSummary[] }>('/api/trading/accounts')
+      .then((result) => {
+        if (cancelled) return;
+        if (result.status !== 'SUCCESS' || !Array.isArray(result.items) || result.items.length === 0) {
+          throw new Error('未读取到可用交易账号');
+        }
+        setTradingAccounts(result.items);
+      })
+      .catch((reason) => {
+        if (!cancelled) setTradingAccountsError(reason instanceof Error ? reason.message : '交易账号读取失败');
+      })
+      .finally(() => {
+        if (!cancelled) setTradingAccountsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [tradingMenuOpen, tradingAccountsRefreshKey]);
+
+  return (
+    <div className={`min-h-screen flex flex-col ${theme === 'dark' ? 'bg-[#0b0f19] text-[#f8fafc]' : 'bg-[#faf6f0] text-[#2e3230]'}`} data-theme={theme}>
+      <header className="fixed top-0 z-50 w-full border-b border-[#c4c8bc]/30 bg-[#f0ece4]/90 backdrop-blur-md">
+        <div className="mx-auto flex h-14 max-w-[1600px] items-center justify-between px-4 lg:px-8">
+          <div className="flex items-center gap-8">
+            <div className="flex items-center gap-2">
+              <Activity className="h-6 w-6 text-[#4a7c59]" />
+              <span className="font-[family-name:var(--font-literata)] text-lg font-bold text-[#2e3230]">
+                LLL 交易研究
+              </span>
+            </div>
+            <nav className="hidden items-center gap-1 md:flex">
+              <button
+                onClick={() => setActiveView('market')}
+                className={`rounded-md px-3 py-1.5 text-sm font-bold ${activeView === 'market' ? 'bg-[#4a7c59] text-white' : 'text-[#4a4e4a] hover:bg-[#e4e0d8]'}`}
+              >
+                A股行情
+              </button>
+              <button
+                onClick={() => setActiveView('review')}
+                className={`rounded-md px-3 py-1.5 text-sm font-bold ${activeView === 'review' ? 'bg-[#4a7c59] text-white' : 'text-[#4a4e4a] hover:bg-[#e4e0d8]'}`}
+              >
+                复盘
+              </button>
+              <button
+                onClick={() => setActiveView('screening')}
+                className={`rounded-md px-3 py-1.5 text-sm font-bold ${activeView === 'screening' ? 'bg-[#4a7c59] text-white' : 'text-[#4a4e4a] hover:bg-[#e4e0d8]'}`}
+              >
+                自动选股
+              </button>
+              <button
+                onClick={() => setActiveView('technical-classification')}
+                className={`rounded-md px-3 py-1.5 text-sm font-bold ${activeView === 'technical-classification' ? 'bg-[#4a7c59] text-white' : 'text-[#4a4e4a] hover:bg-[#e4e0d8]'}`}
+              >
+                全市场技术分类
+              </button>
+              <button
+                onClick={() => setActiveView('watchlist')}
+                className={`rounded-md px-3 py-1.5 text-sm font-bold ${activeView === 'watchlist' ? 'bg-[#4a7c59] text-white' : 'text-[#4a4e4a] hover:bg-[#e4e0d8]'}`}
+              >
+                <><Star className="mr-1 inline h-4 w-4" strokeWidth={1.8} />自选股</>
+              </button>
+              <div ref={tradingMenuRef} className="relative">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTradingMenuOpen((open) => !open);
+                  }}
+                  aria-haspopup="menu"
+                  aria-expanded={tradingMenuOpen}
+                  className={`inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-sm font-bold ${activeView === 'trading-system' ? 'bg-[#4a7c59] text-white' : 'text-[#4a4e4a] hover:bg-[#e4e0d8]'}`}
+                >
+                  交易系统
+                  <ChevronDown className={`h-3.5 w-3.5 transition-transform ${tradingMenuOpen ? 'rotate-180' : ''}`} />
+                </button>
+                {tradingMenuOpen && (
+                  <div role="menu" aria-label="交易系统账号" className="absolute left-0 top-full z-[70] mt-2 w-80 overflow-hidden rounded-2xl border border-[#c4c8bc]/70 bg-[#fffdf8] p-2 text-[#2e3230] shadow-[0_16px_36px_rgba(46,50,48,0.18)]">
+                    <div className="px-3 pb-2 pt-1 text-xs font-bold text-[#52616b]">交易账号</div>
+                    {tradingAccountsLoading && <div className="px-3 py-3 text-xs text-[#7a817b]">正在读取账号…</div>}
+                    {!tradingAccountsLoading && tradingAccounts.length === 0 && <div className="px-3 py-3 text-xs text-[#9b2226]">未读取到可用交易账号</div>}
+                    {!tradingAccountsLoading && tradingAccounts.map((account) => {
+                      const selected = selectedTradingAccountId === account.id;
+                      const type = account.account_type === 'LIVE' ? '实盘' : account.account_type === 'SIMULATION' ? '仿真' : '规划';
+                      return (
+                        <button
+                          key={account.id}
+                          type="button"
+                          role="menuitemradio"
+                          aria-checked={selected}
+                          onClick={() => { window.sessionStorage.setItem('lll-trading-account-id', String(account.id)); setSelectedTradingAccountId(account.id); setTradingMenuOpen(false); setActiveView('trading-system'); }}
+                          className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left transition-colors ${selected ? 'bg-[#dcefe3] text-[#2d5a43]' : 'hover:bg-[#f1f3ed]'}`}
+                        >
+                          <span className="flex min-w-0 items-center gap-2.5"><span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${selected ? 'bg-[#4a7c59] text-white' : 'bg-[#e7eee8] text-[#4a7c59]'}`}><AccountIcon iconKey={account.icon_key} /></span><span className="min-w-0"><span className="block truncate text-sm font-bold">{account.name}</span><span className="block text-[11px] text-[#7a817b]">{type}账号</span></span></span>
+                          {selected && <CheckCircle2 className="h-4 w-4 shrink-0" />}
+                        </button>
+                      );
+                    })}
+                    <div className="my-2 border-t border-[#e8e5dc]" />
+                    <button type="button" role="menuitem" onClick={() => { setTradingMenuOpen(false); setCreateAccountFromMenu(true); setGlobalSettingsOpen(true); }} className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm font-bold text-[#2d5a43] hover:bg-[#e7f0e6]"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#dcefe3]"><Plus className="h-4 w-4" /></span>创建新账号</button>
+                  </div>
+                )}
+              </div>
+            </nav>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="relative hidden sm:block" ref={stockSearchRef}>
+              <div className="flex h-8 w-56 items-center gap-2 rounded-lg border border-[#c4c8bc]/60 bg-white px-2.5 text-[#4a4e4a] focus-within:border-[#4a7c59]">
+                <Search className="h-4 w-4 shrink-0 text-[#718078]" />
+                <input value={stockSearch} onFocus={() => setStockSearchOpen(true)} onChange={(event) => { setStockSearch(event.target.value); setStockSearchOpen(true); }} onKeyDown={(event) => { if (event.key === 'Enter' && stockSearchItems.length) { setGlobalStock(stockSearchItems[0]); setStockSearch(stockSearchItems[0].name); setStockSearchOpen(false); } }} placeholder="搜索股票名称或代码" aria-label="搜索股票名称或代码" className="min-w-0 flex-1 bg-transparent text-xs font-semibold outline-none placeholder:text-[#929991]" />
+                {stockSearchLoading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                {stockSearch && <button aria-label="清空搜索" onClick={() => setStockSearch('')} className="text-[#929991] hover:text-[#2e3230]"><X className="h-3.5 w-3.5" /></button>}
+              </div>
+              {stockSearchOpen && stockSearch.trim() && <div className="absolute right-0 top-full z-[80] mt-2 max-h-80 w-72 overflow-auto rounded-xl border border-[#c4c8bc]/70 bg-[#fffdf8] p-1.5 text-[#2e3230] shadow-xl">
+                {stockSearchItems.map((item) => <button key={item.code} onClick={() => { setGlobalStock(item); setStockSearch(item.name); setStockSearchOpen(false); }} className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left hover:bg-[#e7f0e6]"><span className="font-bold">{item.name}</span><span className="font-mono text-xs text-[#68726b]">{item.code.replace(/\.(SZ|SH|BJ)$/i, '')}</span></button>)}
+                {!stockSearchLoading && stockSearchItems.length === 0 && <div className="px-3 py-2 text-xs text-[#727a73]">没有找到匹配的股票</div>}
+              </div>}
+            </div>
+            {activeView === 'screening' && (
+              <button
+                onClick={() => loadScreening(screeningPool, screening?.trade_date)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[#c4c8bc]/60 bg-white text-[#4a4e4a] hover:text-[#2e3230]"
+                title="刷新"
+              >
+                <RefreshCw className="h-4 w-4" />
+              </button>
+            )}
+            <button type="button" onClick={() => setGlobalSettingsOpen(true)} title="全局设置" aria-label="全局设置" className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[#c4c8bc]/60 bg-white text-[#4a4e4a] hover:text-[#2e3230]">
+              <Settings className="h-4 w-4" />
+            </button>
+            <button
+              id="theme-toggle-btn"
+              onClick={toggleTheme}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#c4c8bc]/60 bg-white text-[#4a4e4a] shadow-xs transition-all hover:scale-110 active:scale-95 hover:shadow-md theme-toggle-btn"
+              title={theme === 'default' ? '切换至 暗色科技 主题' : '切换至 原木默认 主题'}
+              aria-label="切换主题"
+            >
+              {theme === 'dark' ? (
+                <Sun className="h-4.5 w-4.5 text-amber-400" />
+              ) : (
+                <Moon className="h-4.5 w-4.5 text-slate-700" />
+              )}
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main className="mx-auto w-full max-w-[1600px] flex-1 pt-14">
+        {activeView === 'review' && loading && <LoadingState label="正在读取复盘数据" />}
+        {activeView === 'review' && !loading && error && <ErrorState message={error} onRetry={loadData} />}
+        {activeView === 'review' && !loading && !error && report && (
+          <Dashboard 
+            report={report} 
+            onGenerateAI={generateAI} 
+            aiLoading={aiLoading} 
+            aiError={aiError}
+            onOpenImportModal={() => setShowImportModal(true)}
+            history={history}
+            onSelectDate={(d) => selectDate(d)}
+          />
+        )}
+        {activeView === 'watchlist' && (
+          <div className="px-4 pb-6 sm:px-6 lg:px-8">
+            <WatchlistView onCreateTradePlan={(stock) => {
+              const strategySource = stock.source_type === 'STRATEGY';
+              setTradePlanPrefill({
+                symbol: stock.asset_code,
+                securityName: stock.name,
+                sourceType: strategySource ? 'STRATEGY' : stock.source_type === 'UNKNOWN' ? 'UNKNOWN' : 'MANUAL',
+                strategy: strategySource ? stock.source_strategy : null,
+                stage: strategySource ? stock.source_stage : null,
+                snapshotDate: strategySource ? stock.source_snapshot_date : null,
+              });
+              setActiveView('trading-system');
+              // OPEN 建仓必须绑定明确的交易账号；从自选股进入时直接展开账号选择，
+              // 选定账号后再加载带入该股票的 OPEN 页面。
+              setTradingMenuOpen(true);
+            }} />
+          </div>
+        )}
+
+        {screeningMounted && (
+          <div className={activeView === 'screening' ? 'px-4 pt-3 pb-6 sm:px-6 lg:px-8' : 'hidden'}>
+            <EarlyTurnFunnel />
+          </div>
+        )}
+        {activeView === 'market' && <MarketQuotesPage />}
+        {activeView === 'technical-classification' && <TechnicalClassificationPage />}
+        {activeView === 'trading-system' && (
+          tradingAccountsError ? <ErrorState message={tradingAccountsError} onRetry={() => setTradingAccountsRefreshKey((value) => value + 1)} /> :
+          tradingAccountRestoring ? <LoadingState label="正在恢复交易账号" /> : selectedTradingAccountId === null ? <div className="mx-4 flex min-h-[calc(100vh-7rem)] items-center justify-center sm:mx-6 lg:mx-8"><div className="w-full max-w-md rounded-2xl border border-[#d9ddd7] bg-white p-8 text-center shadow-sm"><div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[#e7f0e6] text-[#2d5a43]"><Landmark className="h-6 w-6" /></div><h1 className="mt-4 text-lg font-bold text-[#2e3230]">请选择交易账号</h1><p className="mt-2 text-sm text-[#68736b]">请点击顶部“交易系统”并选择账号，交易总览及相关页面将按所选账号加载。</p><button type="button" onClick={() => setTradingMenuOpen(true)} className="mt-5 rounded-lg bg-[#4a7c59] px-4 py-2 text-sm font-bold text-white hover:bg-[#356044]">选择账号</button></div></div> :
+          <TradingSystemShell
+              key={selectedTradingAccountId}
+              embedded
+              accountId={selectedTradingAccountId}
+              initialView={tradePlanPrefill ? 'open' : 'overview'}
+              tradePlanPrefill={tradePlanPrefill}
+              onPlanPrefillConsumed={() => setTradePlanPrefill(null)}
+              onNavigate={setActiveView}
+            />
+        )}
+
+        <ImportModal
+          isOpen={showImportModal}
+          onClose={() => setShowImportModal(false)}
+          onSuccess={(date, importedReview: ImportedReviewResponse) => {
+            setActiveView('review');
+            // The import endpoint has already returned the saved Markdown. Render
+            // it immediately instead of making a second request that can hide a
+            // successful import behind an unrelated transient fetch failure.
+            setError(null);
+            setLoading(false);
+            setReport({
+              is_imported: true,
+              trade_date: date,
+              raw_content: importedReview.raw_content,
+              imported_payload: importedReview.payload,
+              article_stock_links: importedReview.article_stock_links,
+              updated_at: importedReview.updated_at,
+            } as OverviewReport);
+            // The date list is supplementary to reading the newly saved review.
+            // Refresh it independently without replacing the displayed article.
+          void fetchJson<{items: HistoryItem[]}>('/api/market-review/history?limit=100')
+              .then((historyPayload) => setHistory(historyPayload.items))
+              .catch((refreshError) => console.error('导入后刷新复盘日期列表失败', refreshError));
+          }}
+        />
+        {globalSettingsOpen && <GlobalSettingsPage mode="global" openCreateAccount={createAccountFromMenu} onCreateAccountOpened={() => setCreateAccountFromMenu(false)} onRefresh={() => setTradingAccountsRefreshKey((value) => value + 1)} onClose={() => { setGlobalSettingsOpen(false); setCreateAccountFromMenu(false); }} />}
+        {globalStock && <SecondaryStockDetailDrawer isOpen={true} onClose={() => setGlobalStock(null)} tsCode={globalStock.code} stockName={globalStock.name} asOfDate={new Date().toISOString().slice(0, 10).replaceAll('-', '')} initialTab="kline" useCurrentProfiles onTriggerAI={() => undefined} />}
+      </main>
+    </div>
+  );
+}
+
+function Dashboard({
+  report,
+  onGenerateAI,
+  aiLoading,
+  aiError,
+  onOpenImportModal,
+  history = [],
+  onSelectDate,
+}: {
+  report: OverviewReport;
+  onGenerateAI: () => void;
+  aiLoading: boolean;
+  aiError: string | null;
+  onOpenImportModal?: () => void;
+  history?: Array<{ trade_date: string }>;
+  onSelectDate?: (date: string) => void;
+}) {
+  if (report.is_imported && report.imported_payload) {
+    return (
+      <ImportedDashboard
+        tradeDate={report.trade_date}
+        payload={report.imported_payload}
+        rawContent={report.raw_content}
+        articleStockLinks={report.article_stock_links}
+        marketData={(report as any).market_data}
+        marketDataError={(report as any).market_data_error}
+        onOpenImportModal={onOpenImportModal}
+        history={history}
+        onSelectDate={onSelectDate}
+      />
+    );
+  }
+  const strongest = useMemo(() => [...report.indices].sort((a, b) => (a.rankings?.['1w'] || 99) - (b.rankings?.['1w'] || 99))[0], [report.indices]);
+  const weakest = useMemo(() => [...report.indices].sort((a, b) => (b.rankings?.['1w'] || 0) - (a.rankings?.['1w'] || 0))[0], [report.indices]);
+  const industryGainers = useMemo(
+    () => [...report.industries].sort((a, b) => b.summary_change_pct - a.summary_change_pct).slice(0, 10),
+    [report.industries],
+  );
+  const industryDecliners = useMemo(
+    () => [...report.industries].sort((a, b) => a.summary_change_pct - b.summary_change_pct).slice(0, 10),
+    [report.industries],
+  );
+  const headline = report.ai_analysis?.headline || report.core_conclusion.headline;
+
+  return (
+    <div className="px-4 py-8 sm:px-6 lg:px-8">
+      <section className="mb-8 rounded-lg border border-[#c4c8bc]/30 bg-[#f0ece4] p-6 shadow-[0_4px_20px_rgba(46,50,48,0.05)] md:p-8">
+        <div className="grid gap-8 lg:grid-cols-[1fr_380px]">
+          <div>
+            <div className="mb-5 flex items-center gap-3">
+              <div className="rounded-md bg-[#705c30]/10 p-2">
+                <LineChart className="h-5 w-5 text-[#705c30]" />
+              </div>
+              <div>
+                <h1 className="font-[family-name:var(--font-literata)] text-xl font-bold">复盘总览</h1>
+                <p className="text-xs font-semibold text-[#4a4e4a]">交易日 {formatDate(report.trade_date)} · 行业口径：同花顺行业板块</p>
+              </div>
+            </div>
+            <p className="max-w-5xl font-[family-name:var(--font-literata)] text-2xl font-bold leading-snug text-[#2e3230] md:text-3xl">
+              {headline}
+            </p>
+            <div className="mt-6 flex flex-wrap gap-2">
+              <Tag tone="neutral">{report.mode === 'weekly' ? '每周复盘' : '每日复盘'}</Tag>
+              <Tag tone="neutral">全行业 {report.industry_scope.actual_industries} 个</Tag>
+            </div>
+          </div>
+          <div className="rounded-lg border border-[#c4c8bc]/40 bg-[#faf6f0] p-5">
+            <h2 className="mb-4 flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-[#4a4e4a]">
+              <CheckCircle2 className="h-4 w-4" />
+              核心依据
+            </h2>
+            <ul className="space-y-3 text-sm leading-relaxed text-[#4a4e4a]">
+              {report.core_conclusion.evidence.map((item) => (
+                <li key={item} className="flex gap-3">
+                  <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-[#4a7c59]" />
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section className="mb-8 border-y border-[#c4c8bc]/40 bg-white/45 px-5 py-5 md:px-7">
+        <h2 className="mb-4 text-sm font-bold text-[#2e3230]">市场分类</h2>
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <ClassificationItem label="当日状态" value={report.market_classification.daily_state} />
+          <ClassificationItem label="规模风格 · 近5周" value={report.market_classification.size_style} />
+          <ClassificationItem label="成长风格 · 近5周" value={report.market_classification.growth_style} />
+          <ClassificationItem label="风险偏好" value={report.market_classification.risk_appetite} />
+        </div>
+        <p className="mt-4 text-sm leading-6 text-[#4a4e4a]">
+          {report.market_classification.evidence.join('；')}。
+          {report.market_classification.conflicting_evidence.length > 0 && ` 同时存在：${report.market_classification.conflicting_evidence.join('；')}。`}
+        </p>
+      </section>
+
+      <section className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <TimeframeBlock title="当日盘面" text={report.ai_analysis?.timeframes.daily || report.core_conclusion.timeframes.daily} />
+        <TimeframeBlock title="短期变化" text={report.ai_analysis?.timeframes.short_term || report.core_conclusion.timeframes.short_term} />
+        <TimeframeBlock title="中期结构" text={report.ai_analysis?.timeframes.medium_term || report.core_conclusion.timeframes.medium_term} />
+        <TimeframeBlock title="长期背景" text={report.ai_analysis?.timeframes.long_term || report.core_conclusion.timeframes.long_term} />
+      </section>
+
+      <section className="mb-8 border-y border-[#c4c8bc]/40 bg-white/45 px-5 py-6 md:px-7">
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="rounded-md bg-[#4a7c59]/10 p-2 text-[#4a7c59]">
+              <Sparkles className="h-5 w-5" />
+            </div>
+            <div>
+              <h2 className="text-base font-bold">AI 复盘解读</h2>
+              <p className="text-xs text-[#4a4e4a]">基于规则指标生成的系统初稿，不包含预测和交易建议</p>
+            </div>
+          </div>
+          <button
+            onClick={onGenerateAI}
+            disabled={aiLoading}
+            className="inline-flex items-center gap-2 rounded-md bg-[#4a7c59] px-4 py-2 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {aiLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+            {aiLoading ? '正在生成' : report.ai_analysis ? '重新生成' : '生成 AI 初稿'}
+          </button>
+        </div>
+        {aiError && (
+          <div className="mb-4 rounded-md border border-[#b83230]/30 bg-[#b83230]/5 p-3 text-sm text-[#8f2927]">
+            {aiError}
+          </div>
+        )}
+        {report.ai_analysis ? (
+          <div className="space-y-5">
+            <div className="grid gap-x-8 gap-y-5 md:grid-cols-2">
+              <AIParagraph title="共同方向" text={report.ai_analysis.market_structure.common_direction} />
+              <AIParagraph title="相对强弱" text={report.ai_analysis.market_structure.relative_strength} />
+              <AIParagraph title="风格解释" text={report.ai_analysis.market_structure.style_interpretation} />
+              <AIParagraph title="市场广度分析" text={report.ai_analysis.breadth_and_turnover.breadth_interpretation} />
+              <AIParagraph title="短期与中期广度" text={report.ai_analysis.breadth_and_turnover.short_term_vs_medium_term} />
+              <AIParagraph title="成交分析" text={report.ai_analysis.breadth_and_turnover.turnover_interpretation} />
+              <AIParagraph title="行业结构" text={report.ai_analysis.industries.summary} />
+              <AIList title="本期变化" items={report.ai_analysis.changes_from_previous_review} />
+              <AIList title="冲突证据" items={report.ai_analysis.conflicting_evidence} />
+              <AIList title="下期观察" items={report.ai_analysis.next_observations} />
+            </div>
+            <p className="text-xs text-[#686d68]">
+              {report.ai_analysis.meta.model} · {report.ai_analysis.meta.cached ? '复用已有初稿' : '本次新生成'}
+            </p>
+          </div>
+        ) : (
+          <p className="text-sm text-[#4a4e4a]">当前报告尚未生成 AI 初稿，规则结论和全部指标仍可正常使用。</p>
+        )}
+      </section>
+
+      <section className="mb-8 grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-5">
+        {report.indices.map((item) => <IndexCard key={item.id} item={item} />)}
+      </section>
+
+      <section className="mb-8 grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+        <Panel title="多周期收益对比" icon={<BarChart3 className="h-5 w-5" />}>
+          <div className="space-y-5">
+            {report.indices.map((item) => <ReturnBars key={item.id} item={item} />)}
+          </div>
+          <div className="mt-5 grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
+            <Metric label="近1周最强" value={strongest?.name || '暂无'} />
+            <Metric label="近1周最弱" value={weakest?.name || '暂无'} />
+            <Metric label="五指数当日等权" value={formatPct(report.breadth.five_index_equal_weight_daily_return)} valueClass={toneClass(report.breadth.five_index_equal_weight_daily_return)} />
+            <Metric label="成交额" value={formatAmount(report.breadth.total_amount)} />
+          </div>
+        </Panel>
+
+        <Panel title="市场广度" icon={<Activity className="h-5 w-5" />}>
+          <div className="grid grid-cols-2 gap-3">
+            <Metric label="上涨家数" value={String(report.breadth.rising_count)} valueClass="text-[#b83230]" />
+            <Metric label="下跌家数" value={String(report.breadth.falling_count)} valueClass="text-[#237a4b]" />
+            <Metric label="上涨比例" value={formatRatio(report.breadth.rising_ratio)} />
+            <Metric label="涨停/跌停" value={`${report.breadth.limit_up_count} / ${report.breadth.limit_down_count}`} />
+            <Metric label="创20日新高/新低" value={`${report.breadth.technical.new_high_20_count} / ${report.breadth.technical.new_low_20_count}`} />
+            <Metric label="站上20日线" value={formatRatio(report.breadth.technical.above_ma20_ratio)} />
+            <Metric label="站上60日线" value={formatRatio(report.breadth.technical.above_ma60_ratio)} />
+            <Metric label="平盘家数" value={String(report.breadth.flat_count)} />
+          </div>
+          {(report.breadth.history.avg_rising_ratio_5d !== null || report.breadth.history.turnover_vs_20d_pct !== null) && (
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              {report.breadth.history.avg_rising_ratio_5d !== null && (
+                <Metric label="5日平均上涨比例" value={formatRatio(report.breadth.history.avg_rising_ratio_5d)} compact />
+              )}
+              {report.breadth.history.turnover_vs_20d_pct !== null && (
+                <Metric label="成交额较20日均值" value={formatPct(report.breadth.history.turnover_vs_20d_pct)} compact />
+              )}
+            </div>
+          )}
+          <div className="mt-5 rounded-lg bg-[#faf6f0] p-4">
+            <p className="mb-2 text-xs font-bold text-[#4a4e4a]">四象限判断</p>
+            <p className="text-xl font-bold text-[#2e3230]">{report.breadth.quadrant}</p>
+          </div>
+        </Panel>
+      </section>
+
+      <section className="mb-8 grid gap-6 lg:grid-cols-2">
+        <IndustryRanking title="当日涨幅前10行业" rows={industryGainers} tone="red" />
+        <IndustryRanking title="当日跌幅前10行业" rows={industryDecliners} tone="green" />
+      </section>
+    </div>
+  );
+}
+
+function ScreeningTab({
+  payload,
+  activePool,
+  onPoolChange,
+  onlySelected,
+  onOnlySelectedChange,
+  request,
+  onRequestChange,
+  onRun,
+  running,
+  taskStatus,
+  onToggleSelect,
+}: {
+  payload: ScreeningPayload;
+  activePool: ScreeningPool;
+  onPoolChange: (pool: ScreeningPool) => void;
+  onlySelected: boolean;
+  onOnlySelectedChange: (selected: boolean) => void;
+  request: ScreeningRequest;
+  onRequestChange: (request: ScreeningRequest) => void;
+  onRun: () => void;
+  running: boolean;
+  taskStatus?: { status: string; progress: number; step_message: string } | null;
+  onToggleSelect: (item: ScreeningCandidate) => void;
+}) {
+  const [query, setQuery] = useState(request.query);
+  const [minScore, setMinScore] = useState(request.minScore === null ? '' : String(request.minScore));
+  const [maxScore, setMaxScore] = useState(request.maxScore === null ? '' : String(request.maxScore));
+  const [klineModalAsset, setKlineModalAsset] = useState<{ code: string; name: string } | null>(null);
+  const [showRunModal, setShowRunModal] = useState(false);
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [freshnessInfo, setFreshnessInfo] = useState<{ daily_market_date?: string; financial_data_quarter?: string }>({});
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/screening/freshness`)
+      .then((res) => res.json())
+      .then((data) => setFreshnessInfo(data))
+      .catch((err) => console.error('Failed to fetch freshness:', err));
+  }, []);
+  const [klineModalAssetIndex, setKlineModalAssetIndex] = useState<number>(-1);
+  const [focusedCandidateIndex, setFocusedCandidateIndex] = useState<number>(0);
+
+  // 行业过滤状态与智能 Combobox
+  const [selectedIndustry, setSelectedIndustry] = useState<string>('ALL');
+  const [industrySearchQuery, setIndustrySearchQuery] = useState<string>('');
+  const [showIndustryDropdown, setShowIndustryDropdown] = useState<boolean>(false);
+  const [industryShowCount, setIndustryShowCount] = useState<number>(20);
+
+  // 统计各行业频次（优先使用全量聚合的 industry_counts）
+  const industryCounts = useMemo(() => {
+    if (payload.industry_counts && Object.keys(payload.industry_counts).length > 0) {
+      return payload.industry_counts;
+    }
+    const counts: Record<string, number> = {};
+    payload.items.forEach((item) => {
+      const ind = item.industry || (item.asset_type === 'etf' ? (item.fund_type || 'ETF') : '未分类');
+      counts[ind] = (counts[ind] || 0) + 1;
+    });
+    return counts;
+  }, [payload.industry_counts, payload.items]);
+
+  // 按数量降序排列所有行业
+  const sortedIndustries = useMemo(() => {
+    return Object.entries(industryCounts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, count]) => ({ name, count }));
+  }, [industryCounts]);
+
+  // 当前展示的行业（受 industryShowCount 控制）
+  const topIndustries = useMemo(() => {
+    return sortedIndustries.slice(0, industryShowCount);
+  }, [sortedIndustries, industryShowCount]);
+
+  const allIndustries = useMemo(() => {
+    return Object.keys(industryCounts).sort((a, b) => a.localeCompare(b, 'zh-CN'));
+  }, [industryCounts]);
+
+  const filteredIndustriesForSearch = useMemo(() => {
+    if (!industrySearchQuery.trim()) return allIndustries;
+    return allIndustries.filter((ind) => ind.toLowerCase().includes(industrySearchQuery.toLowerCase().trim()));
+  }, [allIndustries, industrySearchQuery]);
+
+  // 行业过滤已由后端处理，displayedItems 直接使用后端返回的分页数据
+  const displayedItems = payload.items;
+
+
+  const handleOpenKlineForIndex = (index: number) => {
+    if (index >= 0 && index < displayedItems.length) {
+      setFocusedCandidateIndex(index);
+      setKlineModalAssetIndex(index);
+      const item = displayedItems[index];
+      setKlineModalAsset({ code: item.asset_code, name: item.name || item.asset_code });
+    }
+  };
+
+  const handlePrevStock = () => {
+    if (klineModalAssetIndex > 0) {
+      handleOpenKlineForIndex(klineModalAssetIndex - 1);
+    }
+  };
+
+  const handleNextStock = () => {
+    if (klineModalAssetIndex < displayedItems.length - 1) {
+      handleOpenKlineForIndex(klineModalAssetIndex + 1);
+    }
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (klineModalAsset) return;
+      const target = e.target as HTMLElement;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) {
+        return;
+      }
+
+      if (e.key === ' ' || e.key === 'Spacebar') {
+        e.preventDefault();
+        if (payload.items.length > 0) {
+          const targetIndex = focusedCandidateIndex >= 0 && focusedCandidateIndex < payload.items.length ? focusedCandidateIndex : 0;
+          handleOpenKlineForIndex(targetIndex);
+        }
+        return;
+      }
+
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setFocusedCandidateIndex((prev) => Math.max(0, prev - 1));
+        return;
+      }
+
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setFocusedCandidateIndex((prev) => Math.min(payload.items.length - 1, prev + 1));
+        return;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [klineModalAsset, payload.items, focusedCandidateIndex]);
+
+  useEffect(() => {
+    setQuery(request.query);
+    setMinScore(request.minScore === null ? '' : String(request.minScore));
+    setMaxScore(request.maxScore === null ? '' : String(request.maxScore));
+  }, [request]);
+
+  const parsedMinScore = minScore === '' ? null : Number(minScore);
+  const parsedMaxScore = maxScore === '' ? null : Number(maxScore);
+  const invalidScoreRange = parsedMinScore !== null && parsedMaxScore !== null && parsedMinScore > parsedMaxScore;
+
+  function applyFilters() {
+    if (invalidScoreRange) return;
+    onRequestChange({
+      ...request,
+      page: 1,
+      minScore: parsedMinScore,
+      maxScore: parsedMaxScore,
+      query: query.trim(),
+    });
+  }
+
+  const pageStart = payload.pagination.total === 0
+    ? 0
+    : (payload.pagination.page - 1) * payload.pagination.page_size + 1;
+  const pageEnd = Math.min(
+    payload.pagination.page * payload.pagination.page_size,
+    payload.pagination.total,
+  );
+
+  return (
+    <div className="px-4 py-4 sm:px-6 lg:px-8">
+      {/* 顶栏：紧凑选股池切换 + 右侧快捷工具栏 */}
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3 border-b border-[#c4c8bc]/40 pb-3">
+        <div className="flex items-center gap-2">
+          {(['A-Pre', 'A', 'B', 'C'] as ScreeningPool[]).map((pool) => {
+            const isSelected = activePool === pool;
+            const labels: Record<string, { title: string; desc: string }> = {
+              'A-Pre': { title: 'A-Pre 池', desc: '跌速减慢 & 筑底预备' },
+              A: { title: 'A 池', desc: '超跌 & 底部分化' },
+              B: { title: 'B 池', desc: '回调突破 & 主升' },
+              C: { title: 'C 池', desc: '极度超跌企稳' },
+            };
+            return (
+              <button
+                key={pool}
+                onClick={() => onPoolChange(pool)}
+                className={`flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-bold transition ${
+                  isSelected
+                    ? 'bg-[#2e3230] text-white shadow-sm ring-2 ring-[#2e3230]/20'
+                    : 'border border-[#c4c8bc]/50 bg-white text-[#4a4e4a] hover:bg-[#e4e0d8]'
+                }`}
+              >
+                <span>{labels[pool].title}</span>
+                <span className={`text-[10px] font-normal ${isSelected ? 'text-zinc-300' : 'text-[#686d68]'}`}>
+                  ({labels[pool].desc})
+                </span>
+                <span className={`ml-1 rounded px-1.5 py-0.5 text-[10px] ${isSelected ? 'bg-white/20 text-white' : 'bg-[#e4e0d8] text-[#2e3230]'}`}>
+                  {payload.counts[pool] || 0}只
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => onOnlySelectedChange(!onlySelected)}
+            className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-bold transition ${
+              onlySelected
+                ? 'border-[#705c30] bg-[#705c30] text-white shadow-xs'
+                : 'border-[#c4c8bc]/60 bg-white text-[#4a4e4a] hover:bg-[#e4e0d8]'
+            }`}
+          >
+            <span>⭐️ 我的关注</span>
+            <span className="rounded bg-black/10 px-1.5 py-0.5 text-[10px]">
+              {payload.counts.selected || 0}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setShowHistoryModal(true)}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[#c4c8bc]/60 bg-white px-3 py-1.5 text-xs font-bold text-[#4a4e4a] hover:bg-[#e4e0d8] shadow-xs transition"
+          >
+            <History className="h-3.5 w-3.5 text-[#705c30]" />
+            <span>📜 选股历史</span>
+          </button>
+
+          <button
+            onClick={() => setShowRunModal(true)}
+            disabled={running}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-[#4a7c59] px-3.5 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-[#3b6447] disabled:opacity-50"
+          >
+            {running ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PlayCircle className="h-3.5 w-3.5" />}
+            <span>{running ? `计算中 (${taskStatus?.progress || 0}%)` : '运行选股'}</span>
+          </button>
+        </div>
+      </div>
+
+      {/* 选股池过滤与链条统一组件 */}
+      <PoolStageFunnel
+        activePool={activePool}
+        onOpenKline={(code, name) => setKlineModalAsset({ code, name })}
+        onToggleSelect={(tsCode) => {
+          const found = payload.items.find(i => i.asset_code === tsCode);
+          if (found) {
+            onToggleSelect(found);
+          } else {
+            onToggleSelect({
+              trade_date: payload.trade_date,
+              asset_code: tsCode,
+              name: '',
+              asset_type: 'stock',
+              primary_pool: activePool,
+              stage: 'L0',
+              score: 0,
+              pools: [],
+              reasons: [],
+              risks: [],
+              status_change: '',
+              features: {},
+            });
+          }
+        }}
+      />
+
+      <RunScreeningModal
+        isOpen={showRunModal}
+        onClose={() => setShowRunModal(false)}
+        tradeDate={payload.trade_date}
+        freshnessInfo={freshnessInfo}
+        onStartRun={() => onRun()}
+      />
+
+      <RunHistoryModal
+        isOpen={showHistoryModal}
+        onClose={() => setShowHistoryModal(false)}
+        onSelectRun={(runId) => {
+          setSelectedRunId(runId);
+        }}
+      />
+
+      <KLineModal
+        assetCode={klineModalAsset?.code || ''}
+        assetName={klineModalAsset?.name || ''}
+        isOpen={!!klineModalAsset}
+        onClose={() => setKlineModalAsset(null)}
+        onNavigatePrev={handlePrevStock}
+        onNavigateNext={handleNextStock}
+        hasPrev={klineModalAssetIndex > 0}
+        hasNext={klineModalAssetIndex < displayedItems.length - 1}
+        apiHost={API_BASE}
+        isSelected={displayedItems[klineModalAssetIndex]?.is_selected || false}
+        onToggleSelect={() => {
+          const currentItem = displayedItems[klineModalAssetIndex];
+          if (currentItem) {
+            onToggleSelect(currentItem);
+          }
+        }}
+      />
+    </div>
+  );
+}
+
+function CandidateRow({
+  item,
+  isFocused = false,
+  onFocusSelect,
+  onToggleSelect,
+  onOpenKline,
+}: {
+  item: ScreeningCandidate;
+  isFocused?: boolean;
+  onFocusSelect?: () => void;
+  onToggleSelect: (item: ScreeningCandidate) => void;
+  onOpenKline: (code: string, name: string) => void;
+}) {
+  const detail = item.pools.find((pool) => pool.pool === item.primary_pool)?.score_detail || {};
+  return (
+    <div
+      onClick={onFocusSelect}
+      className={`grid min-w-[1020px] grid-cols-[100px_minmax(280px,1.5fr)_80px_80px_160px_minmax(220px,1fr)_100px] gap-3 border-b border-[#c4c8bc]/30 px-4 py-3 text-sm last:border-b-0 transition-colors ${
+        isFocused ? 'bg-emerald-50/70 border-l-4 border-l-emerald-600 font-medium' : 'hover:bg-black/5'
+      }`}
+    >
+      <div
+        onClick={() => onOpenKline(item.asset_code, item.name || item.asset_code)}
+        className="cursor-pointer group"
+        title="点击查看 K 线"
+      >
+        <p className="font-bold text-[#2e3230] group-hover:text-[#4a7c59] underline-offset-2 group-hover:underline flex items-center gap-1">
+          {item.asset_code}
+          <LineChart className="w-3.5 h-3.5 text-[#4a7c59] opacity-0 group-hover:opacity-100 transition-opacity" />
+        </p>
+        <p className="text-xs text-[#686d68]">{item.asset_type === 'stock' ? '股票' : 'ETF'}</p>
+      </div>
+
+      {/* 名称 / 行业 / 主营业务 */}
+      <div
+        onClick={() => onOpenKline(item.asset_code, item.name || item.asset_code)}
+        className="min-w-0 cursor-pointer group space-y-1"
+        title={item.main_business ? `主营业务: ${item.main_business}` : '点击查看 K 线'}
+      >
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="font-bold text-[#2e3230] group-hover:text-[#4a7c59]">{item.name || '未命名'}</span>
+          {item.industry && (
+            <span className="rounded bg-[#4a7c59]/10 px-1.5 py-0.5 text-[11px] font-bold text-[#4a7c59]">
+              {item.industry}
+            </span>
+          )}
+          {item.market && item.market !== '主板' && (
+            <span className="rounded bg-[#2e3230]/10 px-1 py-0.5 text-[10px] font-bold text-[#2e3230]">
+              {item.market}
+            </span>
+          )}
+        </div>
+
+        {item.main_business ? (
+          <p className="line-clamp-2 text-xs text-[#4a4e4a] leading-relaxed bg-[#f7f5f0] p-1.5 rounded border border-[#c4c8bc]/30">
+            <span className="font-bold text-[#686d68] mr-1">主营:</span>
+            {item.main_business}
+          </p>
+        ) : (
+          <p className="text-[11px] text-[#686d68] italic">暂无主营业务简介</p>
+        )}
+      </div>
+      <div>
+        <Tag tone={item.primary_pool === 'A-Pre' ? 'warning' : item.primary_pool === 'A' ? 'info' : item.primary_pool === 'B' ? 'neutral' : 'warning'}>{item.stage}</Tag>
+      </div>
+      <div>
+        <p className="font-bold text-[#2e3230]">{item.score.toFixed(0)}</p>
+        <p className="text-xs text-[#686d68]">{scoreParts(item.primary_pool, detail)}</p>
+      </div>
+      <KeyMetrics item={item} />
+      <div className="min-w-0">
+        <p className="line-clamp-2 text-sm leading-6 text-[#4a4e4a]">{item.reasons.join('；') || '暂无原因'}</p>
+        {item.risks.length > 0 && <p className="mt-1 text-xs text-[#8f2927]">{item.risks.join('；')}</p>}
+      </div>
+      <div className="flex items-center justify-center gap-1.5">
+        <button
+          onClick={() => onOpenKline(item.asset_code, item.name || item.asset_code)}
+          className="rounded-md border border-[#4a7c59] bg-[#4a7c59]/10 px-2 py-1 text-xs font-bold text-[#4a7c59] hover:bg-[#4a7c59]/20 transition"
+          title="看 K 线"
+        >
+          K线
+        </button>
+        <button
+          onClick={() => onToggleSelect(item)}
+          className={`rounded-md px-2 py-1 text-xs font-bold transition ${
+            item.is_selected
+              ? 'bg-[#705c30] text-white hover:bg-[#5a4a27]'
+              : 'border border-[#4a7c59] text-[#4a7c59] hover:bg-[#4a7c59]/10'
+          }`}
+        >
+          {item.is_selected ? '已选' : '+入池'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function KeyMetrics({item}: {item: ScreeningCandidate}) {
+  const closePrice = typeof item.features.close === 'number' ? item.features.close : null;
+  const pctChg = typeof item.features.pct_chg === 'number' ? item.features.pct_chg : null;
+  const amountMa20 = typeof item.features.amount_ma20 === 'number' ? item.features.amount_ma20 : null;
+  const mvStr = formatMv(item.features.total_mv);
+
+  return (
+    <div className="space-y-1 text-xs text-[#4a4e4a]">
+      {closePrice !== null && (
+        <p className="font-bold text-[#2e3230]">
+          {closePrice.toFixed(2)}元
+          {pctChg !== null && (
+            <span className={`ml-1 text-[11px] ${pctChg >= 0 ? 'text-[#8f2927]' : 'text-[#4a7c59]'}`}>
+              {pctChg >= 0 ? '+' : ''}{pctChg.toFixed(2)}%
+            </span>
+          )}
+        </p>
+      )}
+      {amountMa20 !== null && amountMa20 > 0 && (
+        <p className="text-[11px] text-[#686d68]">
+          20日均额: <span className="font-semibold text-[#2e3230]">{formatMv(amountMa20)}</span>
+        </p>
+      )}
+      {mvStr && <p className="text-[11px] font-semibold text-[#705c30]">市值: {mvStr}</p>}
+      {item.primary_pool === 'B' ? (
+        <p className="text-[11px] text-[#686d68]">120日: {formatPct(toPct(item.features.ret_120))}</p>
+      ) : item.primary_pool === 'C' ? (
+        <p className="text-[11px] text-[#686d68]">RSI: {formatNumber(item.features.rsi14)}</p>
+      ) : (
+        <p className="text-[11px] text-[#686d68]">250日: {formatPct(toPct(item.features.ret_250))}</p>
+      )}
+    </div>
+  );
+}
+
+
+function formatMv(mv: any): string {
+  if (typeof mv !== 'number' || !Number.isFinite(mv) || mv <= 0) return '';
+  if (mv >= 10000) {
+    return `${(mv / 10000).toFixed(1)}万亿`;
+  }
+  return `${mv.toFixed(0)}亿`;
+}
+
+function scoreParts(pool: string, detail: Record<string, number>) {
+  const order: Record<string, string[]> = {
+    'A-Pre': ['background', 'deceleration', 'bottom_structure', 'volatility_contraction', 'rs_and_volume'],
+    A: ['long_term_decline', 'weakening', 'turning', 'position'],
+    B: ['uptrend', 'pullback_health', 'stabilize', 'turning'],
+    C: ['downtrend', 'oversold', 'selling_pressure', 'rebound'],
+  };
+  const entries = (order[pool] || Object.keys(detail))
+    .filter((key) => key in detail && key !== 'total')
+    .slice(0, 2)
+    .map((key) => [key, detail[key]] as [string, number]);
+  if (!entries.length) return '明细暂无';
+  return entries.map(([key, value]) => `${scoreLabel(key)}${Math.round(value)}`).join(' / ');
+}
+
+function scoreLabel(key: string) {
+  const labels: Record<string, string> = {
+    background: '背景',
+    deceleration: '减速',
+    bottom_structure: '底部',
+    volatility_contraction: '收缩',
+    rs_and_volume: '量能',
+    breakout_proximity: '突破',
+    long_term_decline: '下降',
+    weakening: '减弱',
+    turning: '转强',
+    position: '位置',
+    uptrend: '趋势',
+    pullback_health: '回撤',
+    stabilize: '企稳',
+    downtrend: '弱势',
+    oversold: '超跌',
+    selling_pressure: '卖压',
+    rebound: '反弹',
+  };
+  return labels[key] || key;
+}
+
+function toPct(value: unknown) {
+  return typeof value === 'number' ? value * 100 : null;
+}
+
+function formatNumber(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(1) : '暂无';
+}
+
+function AIParagraph({title, text}: {title: string; text: string}) {
+  return (
+    <div>
+      <h3 className="mb-2 text-sm font-bold text-[#2e3230]">{title}</h3>
+      <p className="text-sm leading-7 text-[#4a4e4a]">{text}</p>
+    </div>
+  );
+}
+
+function ClassificationItem({label, value}: {label: string; value: string}) {
+  return (
+    <div className="border-l-2 border-[#705c30] pl-3">
+      <p className="text-xs font-bold text-[#686d68]">{label}</p>
+      <p className="mt-1 text-base font-bold text-[#2e3230]">{value}</p>
+    </div>
+  );
+}
+
+function AIList({title, items}: {title: string; items: string[]}) {
+  if (!items.length) return null;
+  return (
+    <div>
+      <h3 className="mb-2 text-sm font-bold text-[#2e3230]">{title}</h3>
+      <ul className="space-y-2 text-sm leading-6 text-[#4a4e4a]">
+        {items.map((item) => <li key={item}>· {item}</li>)}
+      </ul>
+    </div>
+  );
+}
+
+function TimeframeBlock({title, text}: {title: string; text: string}) {
+  return (
+    <section className="border-l-2 border-[#4a7c59] bg-white/40 px-4 py-3">
+      <h2 className="text-sm font-bold text-[#2e3230]">{title}</h2>
+      <p className="mt-2 text-sm leading-6 text-[#4a4e4a]">{text}</p>
+    </section>
+  );
+}
+
+function IndexCard({item}: {item: IndexRow}) {
+  const ret = item.returns['1d'];
+  const movers = item.attribution.key_constituents || [];
+  return (
+    <a
+      href={item.quote_url}
+      target="_blank"
+      rel="noreferrer"
+      title={`在东方财富查看${item.name} K线`}
+      className="block rounded-lg border border-[#c4c8bc]/30 bg-[#f0ece4] p-4 shadow-sm transition hover:border-[#4a7c59]/50 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[#4a7c59]/40"
+    >
+      <div className="mb-3 flex items-start justify-between gap-2">
+        <div>
+          <h3 className="font-bold text-[#2e3230]">{item.name}</h3>
+          <p className="text-xs text-[#4a4e4a]">{item.symbol}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          {ret !== null && ret >= 0 ? <TrendingUp className="h-4 w-4 text-[#b83230]" /> : <TrendingDown className="h-4 w-4 text-[#237a4b]" />}
+          <ExternalLink className="h-3.5 w-3.5 text-[#686d68]" />
+        </div>
+      </div>
+      <p className="text-2xl font-bold">{item.close.toFixed(2)}</p>
+      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+        <Metric label="当日涨跌幅" value={formatPct(item.returns['1d'])} valueClass={toneClass(item.returns['1d'])} compact />
+        <Metric label="1周涨跌幅" value={formatPct(item.returns['1w'])} valueClass={toneClass(item.returns['1w'])} compact />
+        <Metric label="5周涨跌幅" value={formatPct(item.returns['5w'])} valueClass={toneClass(item.returns['5w'])} compact />
+        <Metric label="20周涨跌幅" value={formatPct(item.returns['20w'])} valueClass={toneClass(item.returns['20w'])} compact />
+      </div>
+      {item.attribution.available ? (
+        <div className="mt-4 border-t border-[#c4c8bc]/50 pt-3 text-xs text-[#4a4e4a]">
+          <p className="mb-2 font-bold text-[#2e3230]">
+            {item.attribution.direction === 'up' ? '涨幅领先成分股' : '跌幅靠前成分股'}
+          </p>
+          <div className="space-y-2">
+            {movers.map((stock) => (
+              <div key={stock.code} className="grid grid-cols-[1fr_auto] gap-2">
+                <div className="min-w-0">
+                  <p className="truncate font-bold">{stock.name || stock.code}</p>
+                  <p className="truncate text-[#686d68]">{stock.industry}</p>
+                </div>
+                <span className={`font-bold ${toneClass(stock.return_pct)}`}>{formatPct(stock.return_pct)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </a>
+  );
+}
+
+function ReturnBars({item}: {item: IndexRow}) {
+  const periods = [
+    ['5w', '5周'],
+    ['20w', '20周'],
+  ] as const;
+  return (
+    <div className="grid gap-3 md:grid-cols-[96px_1fr] md:items-center">
+      <div>
+        <p className="font-bold">{item.name}</p>
+        <p className="text-xs text-[#4a4e4a]">排名 #{item.rankings['5w'] || '-'}</p>
+      </div>
+      <div className="space-y-2">
+        {periods.map(([key, label]) => {
+          const value = item.returns[key] || 0;
+          const width = Math.min(Math.abs(value) * 6, 100);
+          return (
+            <div key={key} className="grid grid-cols-[42px_1fr_64px] items-center gap-2 text-xs">
+              <span className="font-bold text-[#4a4e4a]">{label}</span>
+              <div className="h-3 rounded-sm bg-[#e4e0d8]">
+                <div className={`h-3 rounded-sm ${value >= 0 ? 'bg-[#b83230]' : 'bg-[#237a4b]'}`} style={{width: `${Math.max(width, 2)}%`}} />
+              </div>
+              <span className={`text-right font-bold ${toneClass(value)}`}>{formatPct(value)}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function IndustryRanking({title, rows, tone}: {title: string; rows: IndustryRow[]; tone: 'red' | 'green'}) {
+  const toneMap = {
+    red: 'border-[#b83230]/30',
+    green: 'border-[#237a4b]/30',
+  };
+  return (
+    <Panel title={title} icon={<LineChart className="h-5 w-5" />} className={toneMap[tone]}>
+      <div className="space-y-3">
+        {rows.map((row, index) => (
+          <div key={row.name} className="rounded-md bg-[#faf6f0] p-3">
+            <div className="grid grid-cols-[28px_1fr_auto] items-center gap-2">
+              <span className="text-xs font-bold text-[#686d68]">{index + 1}</span>
+              <p className="font-bold">{row.name}</p>
+              <span className={`text-sm font-bold ${toneClass(row.summary_change_pct)}`}>{formatPct(row.summary_change_pct)}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </Panel>
+  );
+}
+
+function Panel({title, icon, children, className = ''}: {title: string; icon: ReactNode; children: ReactNode; className?: string}) {
+  return (
+    <section className={`rounded-lg border border-[#c4c8bc]/30 bg-[#f0ece4] p-5 shadow-sm ${className}`}>
+      <h2 className="mb-5 flex items-center gap-2 font-[family-name:var(--font-literata)] text-lg font-bold">
+        <span className="text-[#4a7c59]">{icon}</span>
+        {title}
+      </h2>
+      {children}
+    </section>
+  );
+}
+
+function Metric({label, value, valueClass = '', compact = false}: {label: string; value: string; valueClass?: string; compact?: boolean}) {
+  return (
+    <div className={compact ? '' : 'rounded-md bg-[#faf6f0] p-3'}>
+      <p className="text-[11px] font-bold uppercase tracking-wider text-[#4a4e4a]">{label}</p>
+      <p className={`mt-1 font-bold ${compact ? 'text-sm' : 'text-xl'} ${valueClass}`}>{value}</p>
+    </div>
+  );
+}
+
+function Tag({children, tone}: {children: ReactNode; tone: 'warning' | 'info' | 'neutral'}) {
+  const classes = {
+    warning: 'bg-[#705c30]/15 text-[#705c30]',
+    info: 'bg-[#4a7c59]/15 text-[#4a7c59]',
+    neutral: 'bg-[#e4e0d8] text-[#4a4e4a]',
+  };
+  return <span className={`rounded-full px-3 py-1 text-xs font-bold ${classes[tone]}`}>{children}</span>;
+}
+
+function LoadingState({label = '正在读取数据'}: {label?: string}) {
+  return (
+    <div className="flex min-h-[420px] items-center justify-center">
+      <div className="flex items-center gap-3 rounded-lg border border-[#c4c8bc]/30 bg-[#f0ece4] px-5 py-4 font-bold text-[#4a4e4a]">
+        <Loader2 className="h-5 w-5 animate-spin" />
+        {label}
+      </div>
+    </div>
+  );
+}
+
+function ErrorState({message, onRetry}: {message: string; onRetry: () => void}) {
+  return (
+    <div className="flex min-h-[420px] items-center justify-center px-6">
+      <div className="max-w-2xl rounded-lg border border-[#b83230]/30 bg-[#f0ece4] p-6">
+        <div className="mb-3 flex items-center gap-2 text-[#b83230]">
+          <AlertTriangle className="h-5 w-5" />
+          <h1 className="font-bold">数据读取失败</h1>
+        </div>
+        <p className="break-words text-sm text-[#4a4e4a]">{message}</p>
+        <button onClick={onRetry} className="mt-5 inline-flex items-center gap-2 rounded-md bg-[#4a7c59] px-4 py-2 text-sm font-bold text-white">
+          <RefreshCw className="h-4 w-4" />
+          重试
+        </button>
+      </div>
+    </div>
+  );
+}

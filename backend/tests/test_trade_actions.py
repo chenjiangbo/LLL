@@ -1,6 +1,8 @@
 import pytest
 
 from backend.trading.actions import AddAccountContext, AddPlanCalculator, AddPlanInput, ClosePlanCalculator, PositionActionContext, ReducePlanCalculator, ReducePlanInput
+from backend.trading.account import normalize_symbol
+from backend.trading.execution import ExecutionPlanInput, OrderInput, PreTradeRisk
 
 
 def context(**overrides):
@@ -25,16 +27,21 @@ def context(**overrides):
 
 
 def test_add_calculates_incremental_and_giveback_risk():
-    result = AddPlanCalculator.calculate(AddPlanInput(12, 12.5, 11.4), context())
+    result = AddPlanCalculator.calculate(AddPlanInput(12, 11.4), context())
     assert result["unit_add_risk"] == pytest.approx(0.6)
     assert result["current_capital_risk"] == pytest.approx(300)
     assert result["current_giveback_risk"] == pytest.approx(1300)
     assert result["incremental_risk_amount"] == result["planned_qty"] * result["unit_add_risk"]
 
 
+def test_add_average_cost_uses_only_the_current_position_not_all_account_positions():
+    result = AddPlanCalculator.calculate(AddPlanInput(12, 11.4, manual_quantity=100), context())
+    assert result["post_trade_average_cost"] == pytest.approx((500 * 10 + 100 * 12) / 600)
+
+
 def test_add_uses_action_budget_when_present():
     result = AddPlanCalculator.calculate(
-        AddPlanInput(12, 12.5, 11.4, action_risk_budget_amount=400),
+        AddPlanInput(12, 11.4, action_risk_budget_amount=400),
         context(),
     )
     assert result["action_risk_budget_amount"] == 400
@@ -42,7 +49,7 @@ def test_add_uses_action_budget_when_present():
 
 
 def test_add_blocks_manual_quantity_above_hard_limit():
-    result = AddPlanCalculator.calculate(AddPlanInput(12, 12.5, 11.4, manual_quantity=2000), context())
+    result = AddPlanCalculator.calculate(AddPlanInput(12, 11.4, manual_quantity=2000), context())
     assert any("single_position_limit" in item for item in result["blocking_errors"])
 
 
@@ -79,3 +86,18 @@ def test_close_preserves_sell_constraints_in_calculation():
     result = ClosePlanCalculator.calculate(position_context(), 12, 11.8, "跌破风险位")
     assert result["minimum_acceptable_price"] == pytest.approx(11.8)
     assert result["trigger_condition"] == "跌破风险位"
+
+
+def test_symbol_aliases_are_compared_in_canonical_form():
+    assert normalize_symbol("000977") == "SZ:000977"
+    assert normalize_symbol("SZSE.000977") == "SZ:000977"
+    result = PreTradeRisk.check(
+        account={"configuration_confirmed": True, "status": "ACTIVE", "available_cash": 100000, "equity": 100000},
+        risk_profile={"configuration_confirmed": True, "max_single_position_pct": 0.5, "max_total_exposure_pct": 1.0},
+        execution_plan={"status": "ACTIVE", "remaining_qty": 100},
+        order=OrderInput(1, "000977", "BUY", "LIMIT", 100, 10, 2),
+        positions=[{"symbol": "SZ:000977", "market_value": 1000}],
+        active_orders=[{"symbol": "SZSE.000977", "status": "SUBMITTED"}],
+    )
+    duplicate = next(item for item in result.checks if item["name"] == "duplicate_order")
+    assert duplicate["status"] == "BLOCK"

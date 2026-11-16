@@ -35,6 +35,10 @@ class NodeConfig:
         return cls(raw=raw, path=path)
 
     def live_orders_enabled(self) -> bool:
-        if self.raw["account_mode"] != "LIVE":
-            return False
-        return self.raw["safety"].get("allow_live_orders") is True
+        safety = self.raw.get("safety")
+        if not isinstance(safety, dict):
+            raise ConfigError("safety must be an object")
+        allowed = safety.get("allow_live_orders", False)
+        if type(allowed) is not bool:
+            raise ConfigError("safety.allow_live_orders must be a boolean")
+        return self.raw["account_mode"] == "LIVE" and allowed

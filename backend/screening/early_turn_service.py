@@ -14,6 +14,10 @@ import numpy as np
 from dataclasses import dataclass
 from backend.screening.storage import PostgresScreeningStore
 from backend.screening.early_turn_engine import EarlyTurnEngine, calc_min_3ma_spread
+from backend.screening.double_bottom_rules import (
+    SHORT_MIN_GAP, DAILY_MIN_GAP, MAX_GAP, MAX_SECOND_LOW_DROP, MAX_SECOND_LOW_RISE,
+    BREAK_CLOSE_TOLERANCE, ACTIVE_BARS_AFTER_CONFIRMATION,
+)
 
 # 预设验证集正样本（来自文档）
 BUILTIN_POSITIVE_SAMPLES = [
@@ -28,17 +32,256 @@ BUILTIN_POSITIVE_SAMPLES = [
 # 第一波识别参数：只服务于生命周期 FIRST → POST / PRE 的判断，
 # 不参与 A-PreV2 的七项评分、PRE 定义或正式入选阈值。
 EPISODE_BASE_LOOKBACK_BARS = 40
-FIRST_WAVE_GAIN_THRESHOLD = 0.08
-FIRST_WAVE_ATR_THRESHOLD = 2.5
+FIRST_WAVE_GAIN_THRESHOLD = 0.20
+FIRST_WAVE_ATR_THRESHOLD = 4.0
+FIRST_WAVE_FAST_MAX_BARS = 4
 FIRST_WAVE_PULLBACK_THRESHOLD = 0.06
 TURN_FAILURE_TRIGGER_DRAWDOWN = 0.12
 POST_COOLDOWN_BARS = 60
 PRE_EXIT_GRACE_BARS = 5
-PRE_MIN_DECLINE_FROM_40D_HIGH = 0.08
-HISTORY_LOOKBACK_BARS = 320
+PRE_MIN_DECLINE_FROM_60D_HIGH = 0.20
+DECLINE_CONTEXT_LOOKBACK_BARS = 60
+DECLINE_CONTEXT_MAX_AGE_BARS = 60
+PRE_FAILURE_REACCEL_SLOPE = -0.02
+PRE_FAILURE_CONFIRM_BARS = 2
 EPISODE_WARMUP_BARS = 60
 MIN_VALID_HISTORY_BARS = 80
-EARLY_TURN_CONFIG_VERSION = "A_PRE_V2_20260830_V3"
+SINGLE_TEST_LIFECYCLE_LOOKBACK_BARS = 60
+# 单股窗口回放读取 120 根热身行情以计算最长的滚动背景字段；
+# 生命周期仍从窗口前第 60 个交易日开始初始化。
+SINGLE_TEST_INDICATOR_WARMUP_BARS = 120
+EARLY_TURN_CONFIG_VERSION = "A_PRE_V2_REPAIR_SCORE_V6"
+# 圆弧入口按最近十个交易日的均线观察下跌、平缓和回升。
+ROUNDED_SLOPE_LOOKBACK_BARS = 9
+ROUNDED_TRANSITION_BARS = 5
+ROUNDED_RECOVERY_MAX_AGE_BARS = 3
+ROUNDED_FLAT_SLOPE_LIMIT = 0.006
+ROUNDED_MIN_FLAT_BARS = 2
+ROUNDED_MIN_DECLINE_SLOPE = -0.006
+FIRST_MA20_5D_MIN_SLOPE = -0.02
+MA10_RECOVERY_DAYS = 3
+MA10_RECOVERY_MIN_UP_DAYS = 2
+MA10_RECOVERY_RANGE_5D = 0.03
+MA10_DECELERATION_DAILY_MIN = -0.005
+# 二次机会只作观察候选，使用日线与评估日之前可见的行情。
+SECOND_MIN_WAVE_GAIN = 0.15
+SECOND_MIN_POST_BARS = 3
+SECOND_MIN_PULLBACK = 0.05
+SECOND_MAX_PULLBACK = 0.35
+SECOND_BASE_BREAK_TOLERANCE = 0.015
+SECOND_CONSOLIDATION_BARS = 5
+SECOND_CONSOLIDATION_MAX_RANGE = 0.12
+
+
+def first_wave_meets_criteria(gain: float, gain_atr: float) -> bool:
+    return gain >= FIRST_WAVE_GAIN_THRESHOLD and gain_atr >= FIRST_WAVE_ATR_THRESHOLD
+
+
+def rounded_ma5_shape(ma5: list[float]) -> dict[str, Any]:
+    """按时间顺序识别下跌→平缓→回升，只使用输入窗口内的数据。"""
+    result: dict[str, Any] = {'ma5_rounded': False, 'ma5_decelerating': False,
+                              'ma5_flattened': False, 'ma5_turning_up': False,
+                              'ma5_decline_seen': False}
+    if len(ma5) != ROUNDED_SLOPE_LOOKBACK_BARS + 1 or any(not math.isfinite(v) or v <= 0 for v in ma5):
+        return result
+    slopes = [ma5[i] / ma5[i - 1] - 1 for i in range(1, len(ma5))]
+    result['ma5_daily_slopes'] = slopes
+    # 在最近几日寻找回升起点；平缓证据必须出现在该起点之前。
+    for pivot in range(len(slopes) - 1, len(slopes) - ROUNDED_RECOVERY_MAX_AGE_BARS - 2, -1):
+        begin = pivot - ROUNDED_TRANSITION_BARS
+        if begin < 0 or slopes[pivot] <= 0:
+            continue
+        before = slopes[begin:pivot]
+        flattened = sum(abs(x) <= ROUNDED_FLAT_SLOPE_LIMIT for x in before) >= ROUNDED_MIN_FLAT_BARS
+        had_decline = min(before) <= ROUNDED_MIN_DECLINE_SLOPE
+        decelerating = had_decline and float(np.median(before[-2:])) > float(np.median(before[:2]))
+        # 允许回升途中小幅回落，但当前均线须仍高于回升前。
+        turning_up = ma5[-1] > ma5[pivot] and ma5[-1] >= ma5[-3]
+        result['ma5_decline_seen'] |= had_decline
+        result['ma5_flattened'] |= flattened
+        result['ma5_decelerating'] |= decelerating
+        result['ma5_turning_up'] |= turning_up
+        # 先前必须确实下跌，并且至少有一段低位平缓；平缓后只要求
+        # “下跌继续减速”或“均线已开始抬头”其中一项成立。
+        # 不再要求减速与抬头必须在同一个观察日同时满足。
+        if had_decline and flattened and (decelerating or turning_up):
+            result['ma5_rounded'] = True
+            result['recovery_age_bars'] = len(slopes) - 1 - pivot
+            break
+    # 杯底可以尚未向上：允许近三日轻微波动；下跌背景和平缓过渡仍是必需条件。
+    if not result['ma5_rounded']:
+        before = slopes[-ROUNDED_TRANSITION_BARS:]
+        flattened = sum(abs(x) <= ROUNDED_FLAT_SLOPE_LIMIT for x in before) >= ROUNDED_MIN_FLAT_BARS
+        had_decline = min(before) <= ROUNDED_MIN_DECLINE_SLOPE
+        decelerating = had_decline and float(np.median(before[-2:])) > float(np.median(before[:2]))
+        near_flat = ma5[-1] / ma5[-3] - 1 >= -0.002 and abs(slopes[-1]) <= ROUNDED_FLAT_SLOPE_LIMIT
+        result['ma5_decline_seen'] |= had_decline
+        result['ma5_flattened'] |= flattened
+        result['ma5_decelerating'] |= decelerating
+        if had_decline and flattened and (decelerating or near_flat):
+            result.update({'ma5_rounded': True, 'ma5_flattened': True, 'ma5_turning_up': False})
+    return result
+
+
+def detect_second_opportunity(df: pd.DataFrame, *, base_low: float | None,
+                              first_idx: int | None, post_idx: int | None) -> dict[str, Any]:
+    """从已确认的一波和回调中识别观察候选；只接受截至当日的日线。"""
+    result: dict[str, Any] = {'active': False, 'types': []}
+    if base_low is None or base_low <= 0 or first_idx is None or post_idx is None:
+        return result
+    if first_idx < 0 or post_idx < first_idx or post_idx >= len(df):
+        return result
+    post = df.iloc[post_idx:]
+    if len(post) < SECOND_MIN_POST_BARS:
+        return result
+    first_wave = df.iloc[first_idx:post_idx + 1]
+    peak = float(first_wave['high'].max())
+    gain = peak / base_low - 1
+    low_after_peak = float(post['low'].min())
+    pullback = 1 - low_after_peak / peak
+    if (gain < SECOND_MIN_WAVE_GAIN or pullback < SECOND_MIN_PULLBACK
+            or pullback > SECOND_MAX_PULLBACK
+            or (post['close'] < base_low * (1 - SECOND_BASE_BREAK_TOLERANCE)).any()):
+        return result
+    row, prev = df.iloc[-1], df.iloc[-2]
+    if any(pd.isna(row[x]) or float(row[x]) <= 0 for x in ('ma5', 'ma10')):
+        return result
+    if len(df) < 4 or pd.isna(df.iloc[-4]['ma5']):
+        return result
+    above_short = float(row['close']) > float(row['ma5']) and float(row['close']) > float(row['ma10'])
+    ma5_values = [float(df.iloc[i]['ma5']) for i in range(len(df) - 4, len(df))]
+    if any(not math.isfinite(value) or value <= 0 for value in ma5_values):
+        return result
+    ma5_changes = [ma5_values[i] / ma5_values[i - 1] - 1 for i in range(1, 4)]
+    # 短期已经向上，或仍小幅下降但连续减速；不要求当前高于三日前。
+    ma5_recovering = ma5_changes[-1] >= 0 or (
+        ma5_changes[-1] >= -0.01 and ma5_changes[-1] > ma5_changes[-2] > ma5_changes[-3]
+    )
+    stabilized = above_short and ma5_recovering and float(row['close']) >= float(prev['close'])
+    types: list[str] = []
+    if stabilized:
+        types.append('PULLBACK_RECOVERY')
+    if len(post) >= SECOND_CONSOLIDATION_BARS + 1:
+        consolidation = post.iloc[-SECOND_CONSOLIDATION_BARS - 1:-1]
+        low, high = float(consolidation['low'].min()), float(consolidation['high'].max())
+        if low > 0 and high / low - 1 <= SECOND_CONSOLIDATION_MAX_RANGE and float(row['close']) > high and above_short:
+            types.append('CONSOLIDATION_BREAKOUT')
+    result.update({'active': bool(types), 'types': types, 'wave_gain': gain, 'pullback': pullback,
+                   'post_enter_date': str(df.iloc[post_idx]['trade_date'])})
+    return result
+
+
+def detect_bottom_structure(df: pd.DataFrame, as_of_idx: int, *, confirmed_after: str | None = None) -> dict[str, Any]:
+    none = {
+        'bottom_structure_type': 'NONE',
+        'bottom_structure_quality': 'NONE',
+        'bottom_structure_strength': 0,
+        'bottom_first_low_date': None,
+        'bottom_second_low_date': None,
+        'bottom_structure_confirmed_date': None,
+        'bottom_first_low': None,
+        'bottom_middle_high': None,
+        'bottom_second_low': None,
+        'bottom_low_gap_bars': None,
+        'bottom_structure_age_bars': None,
+    }
+    # 不截断更早的可确认结构；有效性由确认日期与失效条件决定。
+    scan_start = 2
+    scan_end = as_of_idx - 2  # 右侧两根K用于确认局部低点
+    if scan_end <= scan_start:
+        return none
+
+    lows = df['low'].astype(float).tolist()
+    highs = df['high'].astype(float).tolist()
+    closes = df['close'].astype(float).tolist()
+    local_lows: list[int] = []
+    for low_idx in range(scan_start, scan_end + 1):
+        window = lows[low_idx - 2:low_idx + 3]
+        if lows[low_idx] <= min(window):
+            local_lows.append(low_idx)
+    if len(local_lows) < 2:
+        return none
+
+    candidates: list[dict[str, Any]] = []
+    # 从最近的第二底向前寻找第一底；最终优先最近且已确认的结构。
+    for second_pos in range(len(local_lows) - 1, 0, -1):
+        l2_idx = local_lows[second_pos]
+        for first_pos in range(second_pos - 1, -1, -1):
+            l1_idx = local_lows[first_pos]
+            gap = l2_idx - l1_idx
+            if gap < SHORT_MIN_GAP:
+                continue
+            if gap > MAX_GAP:
+                break
+            l1 = lows[l1_idx]
+            l2 = lows[l2_idx]
+            if (l1 <= 0 or l2 <= 0
+                    or l2 < l1 * (1 - MAX_SECOND_LOW_DROP)
+                    or l2 > l1 * (1 + MAX_SECOND_LOW_RISE)):
+                continue
+            # 以收盘价而非盘中下影线确认破位，留出价格噪声空间。
+            later_closes = closes[l2_idx + 1:as_of_idx + 1]
+            if later_closes and min(later_closes) < min(l1, l2) * (1 - BREAK_CLOSE_TOLERANCE):
+                continue
+
+            middle_slice = highs[l1_idx + 1:l2_idx]
+            if not middle_slice:
+                continue
+            h_rel = int(np.argmax(middle_slice))
+            h_idx = l1_idx + 1 + h_rel
+            middle_high = float(highs[h_idx])
+            atr_l1 = float(df.iloc[l1_idx]['atr20']) if pd.notna(df.iloc[l1_idx]['atr20']) else 0.0
+            atr_h = float(df.iloc[h_idx]['atr20']) if pd.notna(df.iloc[h_idx]['atr20']) else 0.0
+            rise_pct = middle_high / l1 - 1.0
+            pullback_pct = 1.0 - l2 / middle_high if middle_high > 0 else 0.0
+            rise_atr = (middle_high - l1) / atr_l1 if atr_l1 > 0 else 0.0
+            pullback_atr = (middle_high - l2) / atr_h if atr_h > 0 else 0.0
+            rise_clear = rise_pct >= 0.03 or rise_atr >= 0.8
+            pullback_clear = pullback_pct >= 0.025 or pullback_atr >= 0.6
+            if not rise_clear or not pullback_clear:
+                continue
+
+            # L2 后的确认也只能使用 as_of_idx 及之前的数据；不要求站回3MA。
+            confirm_idx: int | None = None
+            for j in range(l2_idx + 1, as_of_idx + 1):
+                close_j = closes[j]
+                ma5_j = df.iloc[j]['ma5']
+                close_above_ma5 = pd.notna(ma5_j) and close_j > float(ma5_j)
+                recent_close_high = close_j >= max(closes[max(l2_idx + 1, j - 2):j]) if j > l2_idx + 1 else False
+                rebound_half_atr = atr_l2 = float(df.iloc[l2_idx]['atr20']) if pd.notna(df.iloc[l2_idx]['atr20']) else 0.0
+                rebound_half_atr = atr_l2 > 0 and (close_j - l2) / atr_l2 >= 0.5
+                if close_above_ma5 or recent_close_high or rebound_half_atr:
+                    confirm_idx = j
+                    break
+            if confirm_idx is None:
+                continue
+            confirm_idx = max(confirm_idx, l2_idx + 2)
+            age = as_of_idx - confirm_idx
+            if confirmed_after and str(df.iloc[confirm_idx]['trade_date']) <= confirmed_after:
+                continue
+            if age > ACTIVE_BARS_AFTER_CONFIRMATION:
+                continue
+
+            clear = l2 >= l1 and rise_clear and pullback_clear
+            candidate = {
+                'bottom_structure_type': 'MICRO_DOUBLE_BOTTOM' if gap < DAILY_MIN_GAP else 'STANDARD_DOUBLE_BOTTOM',
+                'bottom_structure_quality': 'CLEAR' if clear else 'POSSIBLE',
+                'bottom_structure_strength': 2 if clear else 1,
+                'bottom_first_low_date': str(df.iloc[l1_idx]['trade_date']),
+                'bottom_second_low_date': str(df.iloc[l2_idx]['trade_date']),
+                'bottom_structure_confirmed_date': str(df.iloc[confirm_idx]['trade_date']),
+                'bottom_first_low': round(l1, 6),
+                'bottom_middle_high': round(middle_high, 6),
+                'bottom_second_low': round(l2, 6),
+                'bottom_low_gap_bars': gap,
+                'bottom_structure_age_bars': age,
+            }
+            # 较短候选不能阻止继续检查同一个第二底之前的日线双底。
+            if candidate['bottom_structure_type'] == 'STANDARD_DOUBLE_BOTTOM':
+                return candidate
+            if not candidates:
+                candidates.append(candidate)
+    return candidates[0] if candidates else none
 
 
 @dataclass
@@ -46,17 +289,38 @@ class EarlyTurnService:
     store: PostgresScreeningStore
     engine: EarlyTurnEngine = EarlyTurnEngine()
 
-    def calculate_features_from_bars(self, ts_code: str, target_date: str) -> dict[str, Any]:
-        """基于 Point-in-Time 前复权日线向上追溯 320 日现场计算特征。
+    def calculate_features_from_bars(
+        self,
+        ts_code: str,
+        target_date: str,
+        *,
+        history_start_date: str | None = None,
+        replay_start_date: str | None = None,
+    ) -> dict[str, Any]:
+        """以目标日为截止回放生命周期；可选限定行情热身起点与生命周期起点。
 
         原始行情仍保存在 screening_daily_bar；技术指标不能直接使用原始价，
         否则除权除息日会被误判为暴跌、破位或生命周期结束。这里使用
         ``close * adj_factor``，相对于评估日只是一个统一缩放，既保持
         Point-in-Time 口径，也不会引入未来价格信息。
+
+        ``history_start_date`` 仅用于读取滚动指标所需的热身数据；
+        ``replay_start_date`` 用于从指定日重新初始化并回放生命周期。
         """
+        if (history_start_date is None) != (replay_start_date is None):
+            raise ValueError("窗口回放必须同时提供行情起点和生命周期起点")
+        normalized_target_date = str(target_date).replace("-", "")
+        normalized_history_start = str(history_start_date).replace("-", "") if history_start_date else None
+        normalized_replay_start = str(replay_start_date).replace("-", "") if replay_start_date else None
+        history_start_clause = "and b.trade_date >= %s" if normalized_history_start else ""
+        query_params = (
+            (ts_code, normalized_target_date, normalized_history_start)
+            if normalized_history_start
+            else (ts_code, normalized_target_date)
+        )
         with self.store.connect() as conn:
             rows = conn.execute(
-                """
+                f"""
                 select b.trade_date, b.open, b.high, b.low, b.close, b.vol, b.amount,
                        a.adj_factor
                 from screening_daily_bar b
@@ -64,16 +328,16 @@ class EarlyTurnService:
                   on a.asset_code = b.asset_code and a.trade_date = b.trade_date
                 where b.asset_code = %s and b.trade_date <= %s
                   and a.adj_factor > 0
-                order by trade_date desc limit %s
+                  {history_start_clause}
+                order by trade_date desc
                 """,
-                (ts_code, target_date, HISTORY_LOOKBACK_BARS),
+                query_params,
             ).fetchall()
 
         if not rows:
             return {"data_status": "DATA_MISSING", "data_reason": "未读取到有效前复权日K"}
 
         df = pd.DataFrame([dict(r) for r in reversed(rows)])
-        normalized_target_date = str(target_date).replace("-", "")
         latest_trade_date = str(df.iloc[-1]["trade_date"])
         if latest_trade_date != normalized_target_date:
             return {
@@ -112,6 +376,15 @@ class EarlyTurnService:
 
         # 10 日均线结 (MA Knot) 交叉对数统计
         pairs = [(5, 10), (5, 20), (5, 30), (10, 20), (10, 30), (20, 30)]
+        # 与下方最终日统计一致：10 根 K 线内包含 9 个相邻交易日交叉。
+        # 每一行只依赖该行及以前的数据，供生命周期逐日回放使用。
+        pair_crosses = []
+        for p1, p2 in pairs:
+            a, b = df[f'ma{p1}'], df[f'ma{p2}']
+            valid = a.notna() & b.notna() & a.shift(1).notna() & b.shift(1).notna()
+            crossed = valid & ((a > b) != (a.shift(1) > b.shift(1)))
+            pair_crosses.append(crossed.rolling(9, min_periods=1).max())
+        df['cross_pair_count_10d'] = sum(pair_crosses).astype(int)
         cross_pairs = set()
         cross_events = 0
 
@@ -217,6 +490,11 @@ class EarlyTurnService:
             else 9.9
         )
 
+        # ── 双底结构诊断（仅 Point-in-Time 诊断，不参与评分/状态） ─────────────
+        # 局部低点必须等右侧两根日K出现后才能确认，避免在历史回放中把未来
+        # 数据带回低点当天。低点日期和结构确认日期因此始终分开保存。
+        bottom_structure = detect_bottom_structure(df, idx)
+
         ret_20d = pct_between(curr['close'], df.iloc[-21]['close']) if len(df) >= 21 else 0.0
         ret_40d = pct_between(curr['close'], df.iloc[-41]['close']) if len(df) >= 41 else 0.0
         prep_window_60 = df.tail(60)
@@ -264,7 +542,18 @@ class EarlyTurnService:
         turn_episode_state = "OUTSIDE_A_PRE"
         pre_enter_idx: int | None = None
         pre_enter_date: str | None = None
+        pre_entry_reason: str | None = None
+        pre_confirm_date: str | None = None
         pre_invalid_days = 0
+        pre_failure_days = 0
+        episode_base_low_for_pre: float | None = None
+        episode_base_low_for_pre_date: str | None = None
+        episode_base_atr_for_pre: float | None = None
+        decline_context_active = False
+        decline_context_idx: int | None = None
+        decline_context_date: str | None = None
+        decline_context_peak: float | None = None
+        decline_context_low: float | None = None
         post_enter_idx: int | None = None
         post_enter_date: str | None = None
         max_close_since_trigger = 0.0
@@ -274,30 +563,39 @@ class EarlyTurnService:
         # 固定，避免后续回放时低点随窗口移动而漂移。
         episode_base_low: float | None = None
         episode_base_low_date: str | None = None
+        episode_base_low_idx: int | None = None
         episode_base_atr20: float | None = None
         first_wave_high_close: float | None = None
         first_wave_high_date: str | None = None
         first_wave_high: float | None = None
         first_wave_high_intraday_date: str | None = None
         first_wave_formed = False
+        first_wave_formation_bars: int | None = None
         first_wave_gain = 0.0
         first_wave_gain_atr = 0.0
         drawdown_from_first_wave_high = 0.0
         below_ma30_days = 0
         below_ma60_days = 0
-        # POST 的旧轮即使确认失效，也不能立刻被标作新的 PRE。先保留旧轮
-        # 的诊断与 POST 状态，等待真正出现一段新的底部准备结构后再开新轮。
+        # 最近结束周期的审计信息与活动周期独立，供单股报告追溯。
+        last_closed_episode: dict[str, Any] | None = None
         post_reset_waiting_for_pre = False
 
-        def clear_episode() -> None:
+        def clear_episode(*, preserve_decline_context: bool = False) -> None:
             """在确认新 PRE 起点时清空上一轮 Episode 的内部锚点。"""
             nonlocal first_trigger_idx, first_trigger_date, first_trigger_close, first_trigger_atr20
             nonlocal max_close_since_trigger, max_high_since_trigger, pre_trigger_stage_low
-            nonlocal episode_base_low, episode_base_low_date, episode_base_atr20
+            nonlocal episode_base_low, episode_base_low_date, episode_base_low_idx, episode_base_atr20
             nonlocal first_wave_high_close, first_wave_high_date, first_wave_high
-            nonlocal first_wave_high_intraday_date, first_wave_formed
+            nonlocal first_wave_high_intraday_date, first_wave_formed, first_wave_formation_bars
             nonlocal below_ma30_days, below_ma60_days
+            nonlocal pre_entry_reason, pre_confirm_date
+            nonlocal pre_failure_days, episode_base_low_for_pre
+            nonlocal episode_base_low_for_pre_date, episode_base_atr_for_pre
+            nonlocal decline_context_active, decline_context_idx
+            nonlocal decline_context_date, decline_context_peak, decline_context_low
 
+            pre_entry_reason = None
+            pre_confirm_date = None
             first_trigger_idx = None
             first_trigger_date = None
             first_trigger_close = None
@@ -307,29 +605,73 @@ class EarlyTurnService:
             pre_trigger_stage_low = None
             episode_base_low = None
             episode_base_low_date = None
+            episode_base_low_idx = None
             episode_base_atr20 = None
             first_wave_high_close = None
             first_wave_high_date = None
             first_wave_high = None
             first_wave_high_intraday_date = None
             first_wave_formed = False
+            first_wave_formation_bars = None
             below_ma30_days = 0
             below_ma60_days = 0
+            pre_failure_days = 0
+            episode_base_low_for_pre = None
+            episode_base_low_for_pre_date = None
+            episode_base_atr_for_pre = None
+            if not preserve_decline_context:
+                decline_context_active = False
+                decline_context_idx = None
+                decline_context_date = None
+                decline_context_peak = None
+                decline_context_low = None
 
-        def has_pre_qualification(k: int, row: pd.Series) -> bool:
-            """确认进入 PRE 前，确实形成了底部准备结构。
+        def enter_pre(k: int, row: pd.Series, atr: float, reason: str = 'CONFIRMED_MA_REPAIR') -> None:
+            nonlocal turn_episode_state, pre_enter_idx, pre_enter_date, pre_invalid_days, pre_failure_days
+            nonlocal pre_entry_reason, pre_confirm_date
+            nonlocal episode_base_low_for_pre, episode_base_low_for_pre_date, episode_base_atr_for_pre
+            turn_episode_state = 'PRE_FIRST_TURN'
+            pre_enter_idx, pre_enter_date = k, str(row['trade_date'])
+            pre_entry_reason = reason
+            pre_confirm_date = pre_enter_date if reason == 'CONFIRMED_MA_REPAIR' else None
+            pre_invalid_days = pre_failure_days = 0
+            base_window = df.iloc[max(0, k - EPISODE_BASE_LOOKBACK_BARS):k]
+            if len(base_window):
+                base_row = df.loc[base_window['low'].idxmin()]
+                episode_base_low_for_pre = float(base_row['low'])
+                episode_base_low_for_pre_date = str(base_row['trade_date'])
+                episode_base_atr_for_pre = float(base_row['atr20']) if pd.notna(base_row['atr20']) and float(base_row['atr20']) > 0 else atr
 
-            这不是 PREP_SCORE 的评分门槛，而是 A-Pre 生命周期入口：必须有
-            足够回撤背景、均线下跌减速/走平、均线靠拢且价格开始夺回均线。
-            四项缺一不可，避免普通上涨趋势、高位回踩或下跌途中被标为 PRE。
-            """
-            if k < 10:
-                return False
-            prev5 = df.iloc[k - 5]
-            prev10 = df.iloc[k - 10]
+        def closed_episode(k: int, reason: str, signals: list[str]) -> dict[str, Any]:
+            return {
+                'pre_enter_date': pre_enter_date,
+                'pre_entry_reason': pre_entry_reason,
+                'pre_confirm_date': pre_confirm_date,
+                'first_trigger_date': first_trigger_date,
+                'episode_base_low': episode_base_low,
+                'post_enter_date': post_enter_date,
+                'end_date': str(df.iloc[k]['trade_date']),
+                'end_reason': reason,
+                'end_signals': signals,
+            }
+
+        def pre_qualification_diagnostics(k: int, row: pd.Series) -> dict[str, Any]:
+            """逐项计算现行 PRE 入口条件；数据缺失明确标为不可判断。"""
+            context = bool(decline_context_active and decline_context_idx is not None
+                           and k - decline_context_idx <= DECLINE_CONTEXT_MAX_AGE_BARS)
+            result: dict[str, Any] = {
+                'decline_context': context, 'ma5_confirmed': None, 'ma10_confirmed': None,
+                'ma10_slope_5d': None, 'ma10_slope_prev5': None,
+                'retake_count': int(row['retake_count']), 'price_retake': bool(pd.notna(row['ma5']) and pd.notna(row['ma10']) and float(row['close']) > float(row['ma5']) and float(row['close']) > float(row['ma10'])),
+                'compressed': None, 'cross_repair': None, 'repair_context': None,
+                'indicators_available': False, 'eligible': False,
+            }
+            if k < 13:
+                return result
+            prev5, prev10 = df.iloc[k - 5], df.iloc[k - 10]
             atr = float(row['atr20']) if pd.notna(row['atr20']) and float(row['atr20']) > 0 else 0.0
             if atr <= 0:
-                return False
+                return result
 
             def pct_between(newer: Any, older: Any) -> float | None:
                 if pd.isna(newer) or pd.isna(older) or float(older) == 0:
@@ -341,252 +683,424 @@ class EarlyTurnService:
             ma10_prev = pct_between(prev5['ma10'], prev10['ma10'])
             ma20_prev = pct_between(prev5['ma20'], prev10['ma20'])
             if None in (ma10_now, ma20_now, ma10_prev, ma20_prev):
+                return result
+            spread = calc_min_3ma_spread(row)
+            compressed = spread is not None and float(spread) / atr <= 1.6
+            cross_repair = int(row.get('cross_pair_count_10d', 0) or 0) >= 1
+            slopes = [pct_between(df.iloc[i]['ma5'], df.iloc[i - 3]['ma5']) for i in range(k - 2, k + 1)]
+            ma5_flat = (all(slope is not None for slope in slopes)
+                        and sum(slope >= -0.005 for slope in slopes if slope is not None) >= 2
+                        and slopes[-1] >= -0.01)
+            ma10_recent = [df.iloc[i]['ma10'] for i in range(k - MA10_RECOVERY_DAYS, k + 1)]
+            ma10_recent_valid = all(pd.notna(v) and float(v) > 0 for v in ma10_recent)
+            ma10_six = [df.iloc[i]['ma10'] for i in range(k - 5, k + 1)]
+            ma10_recent_repair = bool(ma10_recent_valid and ma10_recent[-1] >= ma10_recent[0]
+                and all(pd.notna(v) and float(v) > 0 for v in ma10_six)
+                and max(ma10_six) / min(ma10_six) - 1 <= MA10_RECOVERY_RANGE_5D
+                and sum(ma10_recent[i] >= ma10_recent[i - 1] for i in range(1, len(ma10_recent))) >= MA10_RECOVERY_MIN_UP_DAYS)
+            ma10_2d = pct_between(row['ma10'], df.iloc[k - 2]['ma10'])
+            ma10_prev_2d = pct_between(df.iloc[k - 2]['ma10'], df.iloc[k - 4]['ma10'])
+            ma10_daily = pct_between(row['ma10'], df.iloc[k - 1]['ma10'])
+            ma10_deceleration = bool(ma10_2d is not None and ma10_prev_2d is not None
+                and ma10_daily is not None and ma10_daily >= MA10_DECELERATION_DAILY_MIN
+                and ma10_2d > ma10_prev_2d and ma10_now > ma10_prev)
+            ma10_flat = (ma10_now >= -0.01 and ma10_now >= ma10_prev) or ma10_recent_repair or ma10_deceleration
+            repair_context = compressed or cross_repair
+            ma5_values = [df.iloc[i]['ma5'] for i in range(k - ROUNDED_SLOPE_LOOKBACK_BARS, k + 1)]
+            shape = rounded_ma5_shape([float(v) for v in ma5_values])
+            result.update({
+                'ma5_confirmed': bool(ma5_flat), 'ma5_slopes_3d': slopes,
+                'ma5_rounded': bool(shape['ma5_rounded']),
+                'ma10_confirmed': bool(ma10_flat), 'ma10_slope_5d': ma10_now,
+                'ma10_recent_repair': ma10_recent_repair,
+                'ma10_deceleration': ma10_deceleration,
+                'ma10_slope_prev5': ma10_prev, 'compressed': bool(compressed),
+                'cross_repair': bool(cross_repair), 'repair_context': bool(repair_context),
+                'indicators_available': True,
+                'eligible': bool(context and shape['ma5_rounded'] and ma10_flat and result['price_retake'] and repair_context),
+            })
+            return result
+
+        def has_pre_qualification(k: int, row: pd.Series, *, early_observation: bool = False) -> bool:
+            if (k < 13 or not decline_context_active or decline_context_idx is None
+                    or k - decline_context_idx > DECLINE_CONTEXT_MAX_AGE_BARS):
                 return False
+            details = pre_qualification_diagnostics(k, row)
+            if not early_observation:
+                return details['eligible']
+            return bool(details['indicators_available'] and details['decline_context']
+                        and details['ma5_confirmed'] and details['price_retake']
+                        and details['repair_context']
+                        and (details['ma10_confirmed'] or details['ma10_slope_5d'] >= -0.025))
 
-            min_3_spread = calc_min_3ma_spread(row)
-            compressed = min_3_spread is not None and float(min_3_spread) / atr <= 1.2
-            prior_40 = df.iloc[max(0, k - 40):k]
-            prior_high = float(prior_40['high'].max()) if len(prior_40) else 0.0
-            has_decline_background = (
-                prior_high > 0
-                and (prior_high - float(row['close'])) / prior_high >= PRE_MIN_DECLINE_FROM_40D_HIGH
-            )
-            def has_stabilized(now: float, previous: float) -> bool:
-                # 仍在下行时必须较前一段减速；已经走平或转升后，不因
-                # 上涨斜率的自然回落而否定新的 PRE 结构。
-                return now >= -0.01 and (now >= 0.0 or now >= previous)
+        def rounded_repair_diagnostics(k: int, row: pd.Series) -> dict[str, Any]:
+            info: dict[str, Any] = {'eligible': False, 'indicators_available': False}
+            if k < ROUNDED_SLOPE_LOOKBACK_BARS:
+                return info
+            ma5 = [df.iloc[i]['ma5'] for i in range(k - ROUNDED_SLOPE_LOOKBACK_BARS, k + 1)]
+            ma10 = [df.iloc[i]['ma10'] for i in (k - 2, k - 1, k)]
+            if any(pd.isna(v) or float(v) <= 0 for v in ma5 + ma10):
+                return info
+            shape = rounded_ma5_shape([float(v) for v in ma5])
+            ma10_slope_now = float(ma10[-1] / ma10[-2] - 1)
+            ma10_slope_prev = float(ma10[-2] / ma10[-3] - 1)
+            ma10_repair = ma10_slope_now >= 0 or ma10_slope_now > ma10_slope_prev
+            background = bool(decline_context_active and decline_context_idx is not None
+                              and k - decline_context_idx <= DECLINE_CONTEXT_MAX_AGE_BARS)
+            above_short_ma = float(row['close']) > float(row['ma5']) and float(row['close']) > float(row['ma10'])
+            info.update(shape)
+            qualification = pre_qualification_diagnostics(k, row)
+            info.update({'indicators_available': True, 'decline_context': background,
+                         'ma10_repair': bool(ma10_repair), 'ma10_daily_slope': ma10_slope_now,
+                         'above_ma5_ma10': bool(above_short_ma),
+                         'eligible': bool(qualification['eligible'])})
+            return info
 
-            slope_decelerating = has_stabilized(ma10_now, ma10_prev) and has_stabilized(ma20_now, ma20_prev)
-            return (
-                has_decline_background
-                and int(row['retake_count']) >= 1
-                and compressed
-                and slope_decelerating
-            )
+        # 默认从完整历史的正式评估起点回放。窗口实验会在保留指标热身数据后，
+        # 从指定的 60 交易日前重新初始化生命周期；每个目标日仍须有至少 80 根行情。
+        start_eval_bar = max(EPISODE_WARMUP_BARS, MIN_VALID_HISTORY_BARS - 1)
+        lifecycle_history_floor = 0
+        if normalized_replay_start is not None:
+            replay_positions = df.index[df['trade_date'].astype(str) == normalized_replay_start].tolist()
+            if len(replay_positions) != 1:
+                return {
+                    "data_status": "REPLAY_START_MISSING",
+                    "data_reason": f"生命周期回放起点 {normalized_replay_start} 未找到有效前复权日K",
+                    "valid_bar_count": len(df),
+                }
+            start_eval_bar = int(replay_positions[0])
+            lifecycle_history_floor = start_eval_bar
+        observation_first_date: str | None = None
+        early_observation: dict[str, Any] = {"active": False, "first_date": None, "version": "A1_OBSERVATION_V1"}
 
-        # 前 60 根只用于指标预热；其后的约一年行情全部参与 Episode 回放。
-        start_eval_bar = EPISODE_WARMUP_BARS
+        def update_early_observation(k: int, row: pd.Series) -> None:
+            nonlocal observation_first_date, early_observation
+            active = (turn_episode_state == "OUTSIDE_A_PRE"
+                      and not has_pre_qualification(k, row)
+                      and has_pre_qualification(k, row, early_observation=True))
+            if not active:
+                observation_first_date = None
+                early_observation = {"active": False, "first_date": None, "version": "A1_OBSERVATION_V1"}
+                return
+            if observation_first_date is None:
+                observation_first_date = str(row['trade_date'])
+            atr = float(row['atr20'])
+            spread = calc_min_3ma_spread(row)
+            early_observation = {
+                "active": True,
+                "version": "A1_OBSERVATION_V1",
+                "first_date": observation_first_date,
+                "ma5": float(row['ma5'] / row['adj_factor']),
+                "ma10": float(row['ma10'] / row['adj_factor']),
+                "ma5_slope_3d": float(row['ma5'] / df.iloc[k - 3]['ma5'] - 1),
+                "ma10_slope_5d": float(row['ma10'] / df.iloc[k - 5]['ma10'] - 1),
+                "retake_count": int(row['retake_count']),
+                "compressed": bool(spread is not None and float(spread) / atr <= 1.6),
+                "cross_repair": bool(int(row.get('cross_pair_count_10d', 0) or 0) >= 1),
+            }
+
         for k in range(start_eval_bar, len(df)):
-            row_k = df.iloc[k]
-            close_k = float(row_k['close'])
-            low_k = float(row_k['low'])
-            retake_k = int(row_k['retake_count'])
-            atr_k = float(row_k['atr20']) if pd.notna(row_k['atr20']) else close_k * 0.03
+            try:
+                row_k = df.iloc[k]
+                close_k = float(row_k['close'])
+                low_k = float(row_k['low'])
+                retake_k = int(row_k['retake_count'])
+                atr_k = float(row_k['atr20']) if pd.notna(row_k['atr20']) else close_k * 0.03
 
-            m5_k, m10_k = row_k['ma5'], row_k['ma10']
-            order_score_k = calc_order_score(row_k)
+                m5_k, m10_k = row_k['ma5'], row_k['ma10']
+                order_score_k = calc_order_score(row_k)
 
-            if turn_episode_state == "OUTSIDE_A_PRE":
-                if has_pre_qualification(k, row_k):
-                    turn_episode_state = "PRE_FIRST_TURN"
-                    pre_enter_idx = k
-                    pre_enter_date = str(row_k['trade_date'])
-                    pre_invalid_days = 0
-                continue
-
-            if turn_episode_state == "PRE_FIRST_TURN" and first_trigger_idx is None:
-                # FIRST 必须由已存在至少一个交易日的有效 PRE 发起；不能从
-                # 策略外状态直接站上三根均线就进入首次转强窗口。
-                if (
-                    pre_enter_idx is not None
-                    and k > pre_enter_idx
-                    and retake_k >= 3
-                    and order_score_k >= 2.0
-                    and pd.notna(m5_k)
-                    and pd.notna(m10_k)
-                    and m5_k > m10_k
+                # 下跌背景是历史事件，不是每天重新计算的当前距离高点。事件在
+                # 策略外最多保留 60 根；一旦进入 PRE，就随本轮 Episode 固定。
+                decline_window = df.iloc[max(lifecycle_history_floor, k - DECLINE_CONTEXT_LOOKBACK_BARS):k]
+                decline_peak_k = float(decline_window['high'].max()) if len(decline_window) else 0.0
+                decline_event = bool(
+                    decline_peak_k > 0
+                    and (decline_peak_k - close_k) / decline_peak_k >= PRE_MIN_DECLINE_FROM_60D_HIGH
+                )
+                if decline_event:
+                    decline_context_active = True
+                    decline_context_idx = k
+                    decline_context_date = str(row_k['trade_date'])
+                    decline_context_peak = decline_peak_k
+                    decline_context_low = low_k
+                elif (
+                    decline_context_active
+                    and decline_context_idx is not None
+                    and k - decline_context_idx > DECLINE_CONTEXT_MAX_AGE_BARS
+                    and turn_episode_state == "OUTSIDE_A_PRE"
                 ):
-                    # 触发日前最近 40 个交易日的阶段低点；不把触发当天低点
-                    # 纳入，以保持“本轮 PRE 形成过程”的起点语义。
-                    # 预热区不参与状态迁移，但可以作为本轮启动前的背景，
-                    # 否则恰好在第一个可评估日触发时会没有可用的阶段低点。
-                    base_start = max(0, k - EPISODE_BASE_LOOKBACK_BARS)
-                    base_window = df.iloc[base_start:k]
-                    base_low_idx = base_window['low'].idxmin()
-                    base_row = df.loc[base_low_idx]
-                    first_trigger_idx = k
-                    first_trigger_date = str(row_k['trade_date'])
-                    first_trigger_close = close_k
-                    first_trigger_atr20 = atr_k
-                    max_close_since_trigger = close_k
-                    max_high_since_trigger = float(row_k['high'])
-                    episode_base_low = float(base_row['low'])
-                    episode_base_low_date = str(base_row['trade_date'])
-                    episode_base_atr20 = (
-                        float(base_row['atr20'])
-                        if pd.notna(base_row['atr20']) and float(base_row['atr20']) > 0
-                        else atr_k
-                    )
-                    first_wave_high_close = close_k
-                    first_wave_high_date = str(row_k['trade_date'])
-                    first_wave_high = float(row_k['high'])
-                    first_wave_high_intraday_date = str(row_k['trade_date'])
-                    first_wave_gain = (
-                        (first_wave_high_close - episode_base_low) / episode_base_low
-                        if episode_base_low > 0 else 0.0
-                    )
-                    first_wave_gain_atr = (
-                        (first_wave_high - episode_base_low) / episode_base_atr20
-                        if episode_base_atr20 and episode_base_atr20 > 0 else 0.0
-                    )
-                    first_wave_formed = bool(
-                        first_wave_gain >= FIRST_WAVE_GAIN_THRESHOLD
-                        or first_wave_gain_atr >= FIRST_WAVE_ATR_THRESHOLD
-                    )
-                    below_ma30_days = 0
-                    below_ma60_days = 0
-                    pre_trigger_stage_low = (
-                        float(df.iloc[:k]['low'].min()) if k > 0 else None
-                    )
-                    turn_episode_state = "FIRST_TURN_WINDOW"
+                    decline_context_active = False
+                    decline_context_idx = None
+                    decline_context_date = None
+                    decline_context_peak = None
+                    decline_context_low = None
+
+                if turn_episode_state == "OUTSIDE_A_PRE":
+                    if has_pre_qualification(k, row_k):
+                        enter_pre(k, row_k, atr_k, 'EARLY_ROUNDED_REPAIR')
                     continue
 
-                # PRE 不应永久滞留。连续失去 PRE 资格后回到策略外，等待
-                # 下一段真正的底部准备，而不是用旧资格承接未来任意突破。
-                if has_pre_qualification(k, row_k):
-                    pre_invalid_days = 0
-                else:
-                    pre_invalid_days += 1
-                    if pre_invalid_days >= PRE_EXIT_GRACE_BARS:
+                if turn_episode_state == "PRE_FIRST_TURN" and first_trigger_idx is None:
+                    if (pre_entry_reason == 'EARLY_ROUNDED_REPAIR' and pre_confirm_date is None
+                            and close_k < float(m5_k) and close_k < float(m10_k)):
+                        last_closed_episode = closed_episode(k, 'EARLY_REPAIR_FAILURE', ['BELOW_MA5_MA10'])
+                        clear_episode(preserve_decline_context=True)
+                        turn_episode_state = 'OUTSIDE_A_PRE'
+                        pre_enter_idx = None
+                        pre_enter_date = None
+                        continue
+                    confirmation = pre_qualification_diagnostics(k, row_k)
+                    if (pre_confirm_date is None and confirmation['decline_context']
+                            and confirmation['ma5_confirmed'] and confirmation['ma10_confirmed']
+                            and confirmation['price_retake'] and confirmation['repair_context']):
+                        pre_confirm_date = str(row_k['trade_date'])
+                    # FIRST 必须由已存在至少一个交易日的有效 PRE 发起；不能从
+                    # 策略外状态直接站上三根均线就进入首次转强窗口。
+                    if (
+                        pre_enter_idx is not None
+                        and k > pre_enter_idx
+                        and retake_k >= 3
+                        and order_score_k >= 2.0
+                        and pd.notna(m5_k)
+                        and pd.notna(m10_k)
+                        and m5_k > m10_k
+                        and close_k > float(m5_k) and close_k > float(m10_k)
+                        and pd.notna(df.iloc[k - 3]['ma5']) and pd.notna(df.iloc[k - 3]['ma10'])
+                        and float(m5_k) > float(df.iloc[k - 3]['ma5'])
+                        and float(m10_k) > float(df.iloc[k - 3]['ma10'])
+                        and pd.notna(row_k['ma20']) and pd.notna(df.iloc[k - 5]['ma20'])
+                        and float(df.iloc[k - 5]['ma20']) > 0
+                        and float(row_k['ma20'] / df.iloc[k - 5]['ma20'] - 1) >= FIRST_MA20_5D_MIN_SLOPE
+                    ):
+                        # 触发日前最近 40 个交易日的阶段低点；不把触发当天低点
+                        # 纳入，以保持“本轮 PRE 形成过程”的起点语义。
+                        # 预热区不参与状态迁移，但可以作为本轮启动前的背景，
+                        # 否则恰好在第一个可评估日触发时会没有可用的阶段低点。
+                        base_start = max(lifecycle_history_floor, k - EPISODE_BASE_LOOKBACK_BARS)
+                        base_window = df.iloc[base_start:k]
+                        base_low_idx = base_window['low'].idxmin()
+                        base_row = df.loc[base_low_idx]
+                        first_trigger_idx = k
+                        first_trigger_date = str(row_k['trade_date'])
+                        first_trigger_close = close_k
+                        first_trigger_atr20 = atr_k
+                        max_close_since_trigger = close_k
+                        max_high_since_trigger = float(row_k['high'])
+                        episode_base_low = float(base_row['low'])
+                        episode_base_low_date = str(base_row['trade_date'])
+                        episode_base_low_idx = int(base_low_idx)
+                        episode_base_atr20 = (
+                            float(base_row['atr20'])
+                            if pd.notna(base_row['atr20']) and float(base_row['atr20']) > 0
+                            else atr_k
+                        )
+                        first_wave_high_close = close_k
+                        first_wave_high_date = str(row_k['trade_date'])
+                        first_wave_high = float(row_k['high'])
+                        first_wave_high_intraday_date = str(row_k['trade_date'])
+                        first_wave_gain = (
+                            (first_wave_high_close - episode_base_low) / episode_base_low
+                            if episode_base_low > 0 else 0.0
+                        )
+                        first_wave_gain_atr = (
+                            (first_wave_high - episode_base_low) / episode_base_atr20
+                            if episode_base_atr20 and episode_base_atr20 > 0 else 0.0
+                        )
+                        first_wave_formed = first_wave_meets_criteria(first_wave_gain, first_wave_gain_atr)
+                        first_wave_formation_bars = k - episode_base_low_idx if first_wave_formed else None
+                        below_ma30_days = 0
+                        below_ma60_days = 0
+                        pre_trigger_stage_low = (
+                            float(df.iloc[lifecycle_history_floor:k]['low'].min()) if k > lifecycle_history_floor else None
+                        )
+                        turn_episode_state = "FIRST_TURN_WINDOW"
+                        continue
+
+                    # PRE 的退出不能复用入口资格。只有底部结构真正失效时才退出：
+                    # 重新明显跌破本轮底部，或出现新低并伴随 MA10/MA20 再次加速下行。
+                    prev5 = df.iloc[k - 5]
+                    prev10 = df.iloc[k - 10]
+                    ma10_now = float(row_k['ma10'] / prev5['ma10'] - 1.0) if pd.notna(row_k['ma10']) and pd.notna(prev5['ma10']) and float(prev5['ma10']) else 0.0
+                    ma20_now = float(row_k['ma20'] / prev5['ma20'] - 1.0) if pd.notna(row_k['ma20']) and pd.notna(prev5['ma20']) and float(prev5['ma20']) else 0.0
+                    ma10_prev = float(prev5['ma10'] / prev10['ma10'] - 1.0) if pd.notna(prev5['ma10']) and pd.notna(prev10['ma10']) and float(prev10['ma10']) else 0.0
+                    ma20_prev = float(prev5['ma20'] / prev10['ma20'] - 1.0) if pd.notna(prev5['ma20']) and pd.notna(prev10['ma20']) and float(prev10['ma20']) else 0.0
+                    reaccelerating = (
+                        ma10_now <= PRE_FAILURE_REACCEL_SLOPE
+                        and ma20_now <= PRE_FAILURE_REACCEL_SLOPE
+                        and ma10_now < ma10_prev
+                        and ma20_now < ma20_prev
+                    )
+                    broke_episode_base = (
+                        episode_base_low_for_pre is not None
+                        and low_k < episode_base_low_for_pre
+                    )
+                    pre_structural_failure = broke_episode_base and reaccelerating
+                    if pre_structural_failure:
+                        pre_failure_days += 1
+                    else:
+                        pre_failure_days = 0
+                    if pre_failure_days >= PRE_FAILURE_CONFIRM_BARS:
                         turn_episode_state = "OUTSIDE_A_PRE"
                         pre_enter_idx = None
                         pre_enter_date = None
                         pre_invalid_days = 0
-                continue
+                        pre_failure_days = 0
+                        episode_base_low_for_pre = None
+                        episode_base_low_for_pre_date = None
+                        episode_base_atr_for_pre = None
+                    continue
 
-            if first_trigger_idx is not None:
-                if float(row_k['high']) > max_high_since_trigger:
-                    max_high_since_trigger = float(row_k['high'])
-                if close_k > max_close_since_trigger:
-                    max_close_since_trigger = close_k
+                if first_trigger_idx is not None:
+                    if float(row_k['high']) > max_high_since_trigger:
+                        max_high_since_trigger = float(row_k['high'])
+                    if close_k > max_close_since_trigger:
+                        max_close_since_trigger = close_k
 
-                if first_wave_high_close is None or close_k > first_wave_high_close:
-                    first_wave_high_close = close_k
-                    first_wave_high_date = str(row_k['trade_date'])
-                if first_wave_high is None or float(row_k['high']) > first_wave_high:
-                    first_wave_high = float(row_k['high'])
-                    first_wave_high_intraday_date = str(row_k['trade_date'])
+                    if first_wave_high_close is None or close_k > first_wave_high_close:
+                        first_wave_high_close = close_k
+                        first_wave_high_date = str(row_k['trade_date'])
+                    if first_wave_high is None or float(row_k['high']) > first_wave_high:
+                        first_wave_high = float(row_k['high'])
+                        first_wave_high_intraday_date = str(row_k['trade_date'])
 
-                # 第一波必须从本轮基准低点识别，而不是从触发确认点识别。
-                # 否则触发前已上涨的一段会被忽略，形成第一波后回撤的股票
-                # 会被错判为“首次转强失败”。
-                first_wave_gain = (
-                    (first_wave_high_close - episode_base_low) / episode_base_low
-                    if episode_base_low and episode_base_low > 0 and first_wave_high_close is not None
-                    else 0.0
-                )
-                first_wave_gain_atr = (
-                    (first_wave_high - episode_base_low) / episode_base_atr20
-                    if episode_base_low is not None and first_wave_high is not None and episode_base_atr20 and episode_base_atr20 > 0
-                    else 0.0
-                )
-                if not first_wave_formed and (
-                    first_wave_gain >= FIRST_WAVE_GAIN_THRESHOLD
-                    or first_wave_gain_atr >= FIRST_WAVE_ATR_THRESHOLD
-                ):
-                    first_wave_formed = True
+                    # 第一波必须从本轮基准低点识别，而不是从触发确认点识别。
+                    # 否则触发前已上涨的一段会被忽略，形成第一波后回撤的股票
+                    # 会被错判为“首次转强失败”。
+                    first_wave_gain = (
+                        (first_wave_high_close - episode_base_low) / episode_base_low
+                        if episode_base_low and episode_base_low > 0 and first_wave_high_close is not None
+                        else 0.0
+                    )
+                    first_wave_gain_atr = (
+                        (first_wave_high - episode_base_low) / episode_base_atr20
+                        if episode_base_low is not None and first_wave_high is not None and episode_base_atr20 and episode_base_atr20 > 0
+                        else 0.0
+                    )
+                    if not first_wave_formed and first_wave_meets_criteria(first_wave_gain, first_wave_gain_atr):
+                        first_wave_formed = True
+                        first_wave_formation_bars = k - episode_base_low_idx if episode_base_low_idx is not None else None
 
-                drawdown_from_first_wave_high = (
-                    (first_wave_high_close - close_k) / first_wave_high_close
-                    if first_wave_high_close and first_wave_high_close > 0 else 0.0
-                )
+                    drawdown_from_first_wave_high = (
+                        (first_wave_high_close - close_k) / first_wave_high_close
+                        if first_wave_high_close and first_wave_high_close > 0 else 0.0
+                    )
 
-                m30_k = float(row_k['ma30']) if pd.notna(row_k['ma30']) else 0.0
-                m60_k = float(row_k['ma60']) if pd.notna(row_k['ma60']) else 0.0
-                prev_row_k = df.iloc[k - 1]
-                prev_close_k = float(prev_row_k['close'])
-                prev_ma30_k = float(prev_row_k['ma30']) if pd.notna(prev_row_k['ma30']) else 0.0
-                cross_down_ma30 = (
-                    prev_ma30_k > 0
-                    and prev_close_k >= prev_ma30_k
-                    and m30_k > 0
-                    and close_k < m30_k
-                )
+                    m30_k = float(row_k['ma30']) if pd.notna(row_k['ma30']) else 0.0
+                    m60_k = float(row_k['ma60']) if pd.notna(row_k['ma60']) else 0.0
+                    prev_row_k = df.iloc[k - 1]
+                    prev_close_k = float(prev_row_k['close'])
+                    prev_ma30_k = float(prev_row_k['ma30']) if pd.notna(prev_row_k['ma30']) else 0.0
+                    cross_down_ma30 = (
+                        prev_ma30_k > 0
+                        and prev_close_k >= prev_ma30_k
+                        and m30_k > 0
+                        and close_k < m30_k
+                    )
 
-                if turn_episode_state == "FIRST_TURN_WINDOW":
-                    # 顺序必须是：先确认是否已形成第一波，再判断首次转强失败。
-                    # 已形成第一波时，回撤应转为 POST，不能再退回 PRE。
-                    if first_wave_formed:
-                        if (
-                            drawdown_from_first_wave_high >= FIRST_WAVE_PULLBACK_THRESHOLD
-                            or cross_down_ma30
-                        ):
-                            turn_episode_state = "POST_FIRST_WAVE"
-                            post_enter_idx = k
-                            post_enter_date = str(row_k['trade_date'])
-                    else:
-                        turn_failed = (
-                            (first_trigger_close > 0 and close_k <= first_trigger_close * (1.0 - TURN_FAILURE_TRIGGER_DRAWDOWN))
-                            or (episode_base_low is not None and close_k < episode_base_low)
-                            or (pre_trigger_stage_low is not None and close_k < pre_trigger_stage_low)
-                        )
-                        if turn_failed:
-                            clear_episode()
-                            turn_episode_state = "OUTSIDE_A_PRE"
-                            pre_enter_idx = None
-                            pre_enter_date = None
-                            pre_invalid_days = 0
-                            continue
-
-                elif turn_episode_state == "POST_FIRST_WAVE":
-                    # POST 只表达第一波刚完成后的冷却期。到期后不再占用
-                    # 主状态；若当日已有新的 PRE 结构，则从新 Episode 的 PRE
-                    # 重新开始，否则回到策略外。
-                    if post_enter_idx is not None and k - post_enter_idx >= POST_COOLDOWN_BARS:
-                        clear_episode()
-                        post_reset_waiting_for_pre = False
-                        if has_pre_qualification(k, row_k):
-                            turn_episode_state = "PRE_FIRST_TURN"
-                            pre_enter_idx = k
-                            pre_enter_date = str(row_k['trade_date'])
-                            pre_invalid_days = 0
+                    if turn_episode_state == "FIRST_TURN_WINDOW":
+                        # 顺序必须是：先确认是否已形成第一波，再判断首次转强失败。
+                        # 已形成第一波时，回撤应转为 POST，不能再退回 PRE。
+                        if first_wave_formed:
+                            if (
+                                drawdown_from_first_wave_high >= FIRST_WAVE_PULLBACK_THRESHOLD
+                                or cross_down_ma30
+                            ):
+                                turn_episode_state = "POST_FIRST_WAVE"
+                                post_enter_idx = k
+                                post_enter_date = str(row_k['trade_date'])
                         else:
-                            turn_episode_state = "OUTSIDE_A_PRE"
+                            failed_signals = []
+                            if (first_trigger_close > 0
+                                    and close_k <= first_trigger_close * (1.0 - TURN_FAILURE_TRIGGER_DRAWDOWN)):
+                                failed_signals.append('TRIGGER_DRAWDOWN_12_PERCENT')
+                            if episode_base_low is not None and close_k < episode_base_low:
+                                failed_signals.append('BROKE_EPISODE_BASE')
+                            if pre_trigger_stage_low is not None and close_k < pre_trigger_stage_low:
+                                failed_signals.append('BROKE_PRE_TRIGGER_LOW')
+                            # 第一波尚未形成时，收盘跌回 MA5、MA10 下方且低于触发价，
+                            # 视为这次转强尝试失败。不会把历史 FIRST 改写成 PRE；
+                            # 结束后需重新通过 PRE 资格，才能开启下一轮准备。
+                            if (first_trigger_close > 0 and close_k < first_trigger_close
+                                    and pd.notna(row_k['ma5']) and pd.notna(row_k['ma10'])
+                                    and close_k < float(row_k['ma5']) and close_k < float(row_k['ma10'])):
+                                failed_signals.append('LOST_MA5_MA10_BEFORE_FIRST_WAVE')
+                            turn_failed = bool(failed_signals)
+                            if turn_failed:
+                                last_closed_episode = closed_episode(k, 'FIRST_TURN_FAILURE', failed_signals)
+                                clear_episode(preserve_decline_context=True)
+                                turn_episode_state = "OUTSIDE_A_PRE"
+                                pre_enter_idx = None
+                                pre_enter_date = None
+                                pre_invalid_days = 0
+                                continue
+
+                    elif turn_episode_state == "POST_FIRST_WAVE":
+                        # 接近旧底只是回调观察，不等同破位。旧周期只在收盘
+                        # 有效跌破旧底，或极端且持续的结构破坏时提前结束。
+                        below_ma30_days = below_ma30_days + 1 if m30_k > 0 and close_k < m30_k else 0
+                        below_ma60_days = below_ma60_days + 1 if m60_k > 0 and close_k < m60_k else 0
+                        prior_60_lows = df.iloc[max(lifecycle_history_floor, k - 60):k]['low']
+                        is_new_60d_low = bool(
+                            len(prior_60_lows) > 0 and low_k <= float(prior_60_lows.min())
+                        )
+                        trigger_zone_broken = first_trigger_close > 0 and close_k < first_trigger_close * 0.92
+                        structural_drawdown_pct = (
+                            (max_high_since_trigger - close_k) / max_high_since_trigger
+                            if max_high_since_trigger > 0 else 0.0
+                        )
+                        prolonged_medium_break = below_ma30_days >= 10 or below_ma60_days >= 5
+                        extreme_protracted_break = structural_drawdown_pct >= 0.35 and prolonged_medium_break
+                        effective_base_break = episode_base_low is not None and close_k < episode_base_low * (1 - SECOND_BASE_BREAK_TOLERANCE)
+                        if trigger_zone_broken and (effective_base_break or extreme_protracted_break):
+                            signals = [name for name, hit in (
+                                ('NEW_60D_LOW', is_new_60d_low),
+                                ('EFFECTIVE_BASE_BREAK', effective_base_break),
+                                ('EXTREME_PROTRACTED_BREAK', extreme_protracted_break),
+                            ) if hit]
+                            last_closed_episode = closed_episode(k, 'STRUCTURAL_FAILURE', signals)
+                            clear_episode(preserve_decline_context=True)
+                            turn_episode_state = 'OUTSIDE_A_PRE'
                             pre_enter_idx = None
                             pre_enter_date = None
-                        post_enter_idx = None
-                        post_enter_date = None
-                        continue
-
-                    # 旧轮已被确认失效时，仍保持 POST，直至另一个真正的 PRE
-                    # 结构出现。不能把“没有 active Episode”偷换成“底部准备中”。
-                    if post_reset_waiting_for_pre:
-                        if has_pre_qualification(k, row_k):
-                            clear_episode()
-                            post_reset_waiting_for_pre = False
-                            turn_episode_state = "PRE_FIRST_TURN"
-                            pre_enter_idx = k
-                            pre_enter_date = str(row_k['trade_date'])
-                            pre_invalid_days = 0
                             post_enter_idx = None
                             post_enter_date = None
-                        continue
+                            continue
 
-                    # POST 的重置必须是旧轮的实质失效：创新 60 日低点、价格
-                    # 回到本轮基准低点附近，或极端且持续的结构破坏。单纯 25%
-                    # 高位回撤和短期跌破均线，不足以说明已形成一轮新的底部。
-                    below_ma30_days = below_ma30_days + 1 if m30_k > 0 and close_k < m30_k else 0
-                    below_ma60_days = below_ma60_days + 1 if m60_k > 0 and close_k < m60_k else 0
-                    prior_60_lows = df.iloc[max(0, k - 60):k]['low']
-                    is_new_60d_low = bool(
-                        len(prior_60_lows) > 0 and low_k <= float(prior_60_lows.min())
-                    )
-                    trigger_zone_broken = first_trigger_close > 0 and close_k < first_trigger_close * 0.92
-                    structural_drawdown_pct = (
-                        (max_high_since_trigger - close_k) / max_high_since_trigger
-                        if max_high_since_trigger > 0 else 0.0
-                    )
-                    near_episode_base = (
-                        episode_base_low is not None
-                        and low_k <= episode_base_low * 1.05
-                    )
-                    prolonged_medium_break = below_ma30_days >= 10 or below_ma60_days >= 5
-                    extreme_protracted_break = structural_drawdown_pct >= 0.35 and prolonged_medium_break
-                    if trigger_zone_broken and (is_new_60d_low or near_episode_base or extreme_protracted_break):
-                        post_reset_waiting_for_pre = True
-                        continue
+                        # 先记录结构性失效，再判断自然冷却到期；同日发生时
+                        # 保留更具体的失效原因。
+                        if post_enter_idx is not None and k - post_enter_idx >= POST_COOLDOWN_BARS:
+                            qualifies_for_pre = has_pre_qualification(k, row_k)
+                            last_closed_episode = closed_episode(k, 'POST_COOLDOWN_EXPIRED', [])
+                            clear_episode(preserve_decline_context=True)
+                            if qualifies_for_pre:
+                                enter_pre(k, row_k, atr_k, 'EARLY_ROUNDED_REPAIR')
+                            else:
+                                turn_episode_state = 'OUTSIDE_A_PRE'
+                                pre_enter_idx = None
+                                pre_enter_date = None
+                            post_enter_idx = None
+                            post_enter_date = None
+                            continue
+
+            finally:
+                update_early_observation(k, row_k)
+
+        # 早期 PRE 失败后，重新查找失败之后确认的有效结构，不沿用旧证据。
+        if last_closed_episode and last_closed_episode.get('end_reason') == 'EARLY_REPAIR_FAILURE':
+            bottom_structure = detect_bottom_structure(df, idx, confirmed_after=last_closed_episode['end_date'])
 
         # Episode 最终快照字段：供单股回放、批量快照与诊断导出共同使用。
+        second_base, second_first_idx, second_post_idx = episode_base_low, first_trigger_idx, post_enter_idx
+        if turn_episode_state != 'POST_FIRST_WAVE':
+            second_base = second_first_idx = second_post_idx = None
+            if (turn_episode_state == 'OUTSIDE_A_PRE' and last_closed_episode
+                    and last_closed_episode.get('end_reason') == 'POST_COOLDOWN_EXPIRED'):
+                second_base = last_closed_episode.get('episode_base_low')
+                index_by_date = {str(d): i for i, d in enumerate(df['trade_date'])}
+                second_first_idx = index_by_date.get(str(last_closed_episode.get('first_trigger_date')))
+                second_post_idx = index_by_date.get(str(last_closed_episode.get('post_enter_date')))
+        second_opportunity = detect_second_opportunity(df, base_low=second_base, first_idx=second_first_idx, post_idx=second_post_idx)
         first_wave_gain = (
             (first_wave_high_close - episode_base_low) / episode_base_low
             if episode_base_low and episode_base_low > 0 and first_wave_high_close is not None
@@ -691,6 +1205,17 @@ class EarlyTurnService:
             # 新增三层状态属性
             'structural_damage_flag': structural_damage_flag,
             'turn_episode_state': turn_episode_state,
+            'early_observation': early_observation,
+            'second_opportunity': second_opportunity,
+            'pre_qualification': pre_qualification_diagnostics(len(df) - 1, curr),
+            'episode_replay_start_date': (
+                str(df.iloc[start_eval_bar]['trade_date'])
+                if normalized_replay_start else str(df.iloc[0]['trade_date'])
+            ),
+            'episode_replay_data_start_date': str(df.iloc[0]['trade_date']),
+            'episode_replay_mode': 'WINDOWED_60_TRADING_DAYS' if normalized_replay_start else 'FULL_HISTORY',
+            'episode_replay_first_evaluation_date': str(df.iloc[start_eval_bar]['trade_date']),
+            'episode_replay_version': EARLY_TURN_CONFIG_VERSION,
             'first_trigger_date': first_trigger_date,
             'first_trigger_close': first_trigger_close,
             'return_since_first_trigger': return_since_first_trigger,
@@ -705,11 +1230,24 @@ class EarlyTurnService:
             'first_wave_gain': first_wave_gain,
             'first_wave_gain_atr': first_wave_gain_atr,
             'first_wave_formed': first_wave_formed,
+            'first_wave_formation_bars': first_wave_formation_bars,
+            'first_wave_speed': ('FAST' if first_wave_formation_bars <= FIRST_WAVE_FAST_MAX_BARS else 'NORMAL') if first_wave_formation_bars is not None else None,
             'post_reset_waiting_for_pre': post_reset_waiting_for_pre,
+            'last_closed_episode': last_closed_episode,
             'pre_enter_date': pre_enter_date,
+            'pre_entry_reason': pre_entry_reason if turn_episode_state != 'OUTSIDE_A_PRE' else None,
+            'pre_confirm_date': pre_confirm_date if turn_episode_state != 'OUTSIDE_A_PRE' else None,
+            'rounded_repair': rounded_repair_diagnostics(len(df) - 1, curr),
+            'pre_episode_base_low': episode_base_low_for_pre,
+            'pre_episode_base_low_date': episode_base_low_for_pre_date,
+            'decline_context_active': decline_context_active,
+            'decline_context_date': decline_context_date,
+            'decline_context_peak': decline_context_peak,
+            'decline_context_low': decline_context_low,
             'post_enter_date': post_enter_date,
             'drawdown_from_first_wave_high': drawdown_from_first_wave_high,
             'cross_down_ma30': cross_down_ma30,
+            **bottom_structure,
         }
         return features
 
@@ -724,24 +1262,30 @@ class EarlyTurnService:
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
     ) -> dict[str, Any]:
         """运行一次 A-Pre V2 策略评估（支持全市场或单股定向）"""
+        if config_version != EARLY_TURN_CONFIG_VERSION:
+            raise ValueError(f"当前策略版本为 {EARLY_TURN_CONFIG_VERSION}，不能使用 {config_version} 标记新结果")
         rerun_codes: list[str] = []
         if run_id:
-            rerun_codes = self.store.reset_early_turn_run(
-                run_id=run_id,
-                trade_date=trade_date,
-                config_version=config_version,
-                run_name=run_name,
-                notes=notes,
-            )
-        else:
-            run_id = f"et_{trade_date}_{uuid.uuid4().hex[:8]}"
-            self.store.create_early_turn_run(
-                run_id=run_id,
-                trade_date=trade_date,
-                config_version=config_version,
-                run_name=run_name,
-                notes=notes,
-            )
+            # 历史批次只读：重新评估复用原股票范围，写入全新批次。
+            with self.store.connect() as conn:
+                previous = conn.execute("select run_name, notes from early_turn_run where run_id = %s", (run_id,)).fetchone()
+                if not previous:
+                    raise ValueError(f"找不到选股批次：{run_id}")
+                rerun_codes = [r['ts_code'] for r in conn.execute(
+                    "select ts_code from early_turn_result where run_id = %s order by ts_code", (run_id,)
+                ).fetchall()]
+                if not rerun_codes:
+                    raise ValueError("原批次没有可重新评估的股票")
+                run_name = run_name or f"{previous['run_name'] or trade_date} 重新评估"
+                notes = notes or previous['notes']
+        run_id = f"et_{trade_date}_{uuid.uuid4().hex[:8]}"
+        self.store.create_early_turn_run(
+            run_id=run_id,
+            trade_date=trade_date,
+            config_version=config_version,
+            run_name=run_name,
+            notes=notes,
+        )
 
         try:
             # 1. 确定要计算的资产列表
@@ -826,7 +1370,7 @@ class EarlyTurnService:
                 feat["name"] = row.get("name")
                 feat["industry"] = row.get("industry")
 
-                res = self.engine.evaluate_stock(code, trade_date, feat)
+                res = self.engine.evaluate_stock(code, trade_date, feat, prep_score_mode="rounded")
                 res["run_id"] = run_id
                 res["first_selected_date"] = self._find_first_selected_date(
                     code, trade_date, res["selected"], config_version
@@ -904,7 +1448,7 @@ class EarlyTurnService:
                 })
                 continue
 
-            eval_res = self.engine.evaluate_stock(ts_code, t_date, feat)
+            eval_res = self.engine.evaluate_stock(ts_code, t_date, feat, prep_score_mode="rounded")
             eval_res["sample_id"] = sample["sample_id"]
             eval_res["sample_name"] = sample["sample_name"]
             eval_res["target_date"] = t_date
@@ -921,27 +1465,38 @@ class EarlyTurnService:
         strategy_id: str = "A_PRE_V2",
     ) -> dict[str, Any]:
         """单股多日区间策略打分与 K 线整合评估"""
-        clean_code = ts_code.strip().upper()
-        if "." not in clean_code:
-            if clean_code.startswith("6"):
-                exchange_suffix = ".SH"
-            elif clean_code.startswith(("4", "8", "9")):
-                exchange_suffix = ".BJ"
-            else:
-                exchange_suffix = ".SZ"
-            clean_code = clean_code + exchange_suffix
-
-        # 查资产信息
-        name = clean_code
-        industry = "未知行业"
+        stock_input = ts_code.strip()
+        if not stock_input:
+            raise ValueError("请输入股票名称或代码")
+        normalized = stock_input.upper()
         with self.store.connect() as conn:
-            row = conn.execute(
-                "select name, raw_json->>'industry' as industry from screening_asset_master where asset_code = %s",
-                (clean_code,),
-            ).fetchone()
-            if row:
-                name = row["name"] or clean_code
-                industry = row["industry"] or "未知行业"
+            if normalized.isdigit():
+                matches = conn.execute(
+                    "select asset_code, name, raw_json->>'industry' as industry from screening_asset_master "
+                    "where asset_type = 'stock' and split_part(asset_code, '.', 1) = %s order by asset_code",
+                    (normalized,),
+                ).fetchall()
+            elif normalized.endswith((".SH", ".SZ", ".BJ")):
+                matches = conn.execute(
+                    "select asset_code, name, raw_json->>'industry' as industry from screening_asset_master "
+                    "where asset_type = 'stock' and asset_code = %s order by asset_code",
+                    (normalized,),
+                ).fetchall()
+            else:
+                matches = conn.execute(
+                    "select asset_code, name, raw_json->>'industry' as industry from screening_asset_master "
+                    "where asset_type = 'stock' and name = %s order by asset_code",
+                    (stock_input,),
+                ).fetchall()
+        if not matches:
+            raise ValueError(f"未找到股票“{stock_input}”，请输入完整名称或代码")
+        if len(matches) != 1:
+            choices = '、'.join(f"{row['name']}（{row['asset_code']}）" for row in matches)
+            raise ValueError(f"“{stock_input}”匹配到多只股票：{choices}。请输入完整股票代码")
+        stock = matches[0]
+        clean_code = stock['asset_code']
+        name = stock['name'] or clean_code
+        industry = stock['industry'] or "未知行业"
 
         s_date = start_date.replace("-", "")
         e_date = end_date.replace("-", "")
@@ -958,16 +1513,44 @@ class EarlyTurnService:
                 (clean_code, s_date, e_date),
             ).fetchall()
 
+            # 生命周期从所选窗口前 60 个交易日开始；再向前读取 120 根指标热身行情，
+            # 覆盖 MA60 与 120 日背景字段。热身行情不参与窗口前的生命周期继承。
+            prior_rows = conn.execute(
+                """
+                select b.trade_date
+                from screening_daily_bar b
+                join screening_adj_factor a
+                  on a.asset_code = b.asset_code and a.trade_date = b.trade_date
+                where b.asset_code = %s and b.trade_date < %s and a.adj_factor > 0
+                order by b.trade_date desc
+                limit %s
+                """,
+                (clean_code, s_date, SINGLE_TEST_INDICATOR_WARMUP_BARS),
+            ).fetchall()
+
+        if len(prior_rows) != SINGLE_TEST_INDICATOR_WARMUP_BARS:
+            raise ValueError(
+                f"窗口回放需要区间开始日前 {SINGLE_TEST_INDICATOR_WARMUP_BARS} 根有效前复权日线，"
+                f"当前仅有 {len(prior_rows)} 根；未改用更短窗口"
+            )
+        replay_start_date = str(prior_rows[SINGLE_TEST_LIFECYCLE_LOOKBACK_BARS - 1]['trade_date'])
+        history_start_date = str(prior_rows[SINGLE_TEST_INDICATOR_WARMUP_BARS - 1]['trade_date'])
+
         history = []
         for r in rows:
             d = r["trade_date"]
             close_p = float(r["close"])
-            feat = self.calculate_features_from_bars(clean_code, d)
-            if not feat:
-                continue
+            feat = self.calculate_features_from_bars(
+                clean_code,
+                d,
+                history_start_date=history_start_date,
+                replay_start_date=replay_start_date,
+            )
+            if feat.get('data_status'):
+                raise ValueError(f"{clean_code} {d} 窗口回放失败：{feat.get('data_reason', feat['data_status'])}")
             feat["name"] = name
             feat["industry"] = industry
-            eval_res = self.engine.evaluate_stock(clean_code, d, feat)
+            eval_res = self.engine.evaluate_stock(clean_code, d, feat, prep_score_mode="rounded")
             history.append({
                 "trade_date": d,
                 "open": float(r["open"]),
@@ -984,6 +1567,17 @@ class EarlyTurnService:
                 "selected": eval_res.get("selected", False),
                 "is_overextended": eval_res.get("is_overextended", False),
                 "turn_episode_state": eval_res.get("turn_episode_state"),
+                "early_observation": feat.get("early_observation"),
+                "second_opportunity": feat.get("second_opportunity"),
+                "pre_qualification": feat.get("pre_qualification"),
+                "rounded_repair": feat.get("rounded_repair"),
+                "pre_enter_date": feat.get("pre_enter_date"),
+                "pre_entry_reason": feat.get("pre_entry_reason"),
+                "pre_confirm_date": feat.get("pre_confirm_date"),
+                "retake_count": (eval_res.get("score_detail_json") or {}).get("retake_count"),
+                "episode_replay_version": feat.get("episode_replay_version"),
+                "episode_replay_start_date": feat.get("episode_replay_start_date"),
+                "episode_replay_first_evaluation_date": feat.get("episode_replay_first_evaluation_date"),
                 "signal_status": eval_res.get("signal_status"),
                 "entry_extension_state": eval_res.get("entry_extension_state"),
                 "first_trigger_date": eval_res.get("first_trigger_date"),
@@ -998,7 +1592,21 @@ class EarlyTurnService:
                 "first_wave_gain": feat.get("first_wave_gain"),
                 "first_wave_gain_atr": feat.get("first_wave_gain_atr"),
                 "first_wave_formed": feat.get("first_wave_formed", False),
+                "first_wave_formation_bars": feat.get("first_wave_formation_bars"),
+                "first_wave_speed": feat.get("first_wave_speed"),
                 "drawdown_from_first_wave_high": feat.get("drawdown_from_first_wave_high"),
+                "last_closed_episode": feat.get("last_closed_episode"),
+                "bottom_structure_type": feat.get("bottom_structure_type", "NONE"),
+                "bottom_structure_quality": feat.get("bottom_structure_quality", "NONE"),
+                "bottom_structure_strength": feat.get("bottom_structure_strength", 0),
+                "bottom_first_low_date": feat.get("bottom_first_low_date"),
+                "bottom_second_low_date": feat.get("bottom_second_low_date"),
+                "bottom_structure_confirmed_date": feat.get("bottom_structure_confirmed_date"),
+                "bottom_first_low": feat.get("bottom_first_low"),
+                "bottom_middle_high": feat.get("bottom_middle_high"),
+                "bottom_second_low": feat.get("bottom_second_low"),
+                "bottom_low_gap_bars": feat.get("bottom_low_gap_bars"),
+                "bottom_structure_age_bars": feat.get("bottom_structure_age_bars"),
                 "background_type": eval_res["background_type"],
                 "score_detail_json": eval_res["score_detail_json"],
                 "reasons_json": eval_res["reasons_json"],
@@ -1074,6 +1682,9 @@ class EarlyTurnService:
             "strategy_id": strategy_id,
             "start_date": s_date,
             "end_date": e_date,
+            "replay_mode": "WINDOWED_60_TRADING_DAYS",
+            "replay_start_date": replay_start_date,
+            "indicator_data_start_date": history_start_date,
             "history": history,
             "klines": klines,
             "recent_90d_klines": klines,

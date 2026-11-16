@@ -3,13 +3,16 @@ from __future__ import annotations
 import json
 import os
 import math
+import re
 import time
+import copy
 import requests
 import threading
 from datetime import UTC, date, datetime, time as dtime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Literal, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from urllib.parse import urlparse
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,11 +20,129 @@ from pydantic import BaseModel
 from backend.market_review.admin_security import verify_admin_password
 
 import psycopg
+from psycopg.errors import UniqueViolation
 from psycopg.rows import dict_row
 
 _MARKET_QUOTES_CACHE: dict[str, Any] = {"timestamp": 0.0, "data": []}
+_ON_DEMAND_30M_LOCKS: dict[str, threading.Lock] = {}
+_ON_DEMAND_30M_LOCKS_GUARD = threading.Lock()
 _SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 _DAILY_RELEASE_TIME = dtime(17, 0)
+
+
+def _normalize_trade_date(value: Any, field_name: str = "date") -> str:
+    normalized = str(value or "").strip().replace("-", "")
+    if len(normalized) != 8 or not normalized.isdigit():
+        raise HTTPException(status_code=400, detail=f"{field_name} 必须是 YYYYMMDD 或 YYYY-MM-DD")
+    return normalized
+
+
+def _theme_phase_reference_date(time_range: str, as_of_date: str) -> str | None:
+    """Return the final calendar date represented by one theme-cycle phase.
+
+    Theme-cycle snapshots intentionally store a human-readable range (for example
+    ``8.04-8.06``).  The phase's ending date is the only defensible quote date for
+    a stock presented as a core stock of that phase.  It is resolved at read time,
+    keeping historical AI snapshots immutable while still exposing the real daily
+    quote used by the UI.
+    """
+    text = str(time_range or "").strip()
+    if not text:
+        return None
+
+    explicit_dates = re.findall(r"(20\d{2})\s*[-/.年]\s*(\d{1,2})\s*[-/.月]\s*(\d{1,2})", text)
+    if explicit_dates:
+        year, month, day = explicit_dates[-1]
+    else:
+        month_day_dates = re.findall(r"(?<!\d)(\d{1,2})\s*(?:月|[./])\s*(\d{1,2})(?:日)?", text)
+        if not month_day_dates:
+            return None
+        month, day = month_day_dates[-1]
+        year = _normalize_trade_date(as_of_date, "as_of_date")[:4]
+    try:
+        return f"{int(year):04d}{int(month):02d}{int(day):02d}"
+    except ValueError:
+        return None
+
+
+def _attach_theme_phase_daily_quotes(store: PostgresScreeningStore, memory_json: dict[str, Any], as_of_date: str) -> dict[str, Any]:
+    """Attach each phase core stock's actual end-of-phase daily return for display.
+
+    The generated market-memory JSON remains the factual source of theme and stock
+    membership.  Daily return is market data, so it is joined read-only here rather
+    than asking the model to infer it or rewriting an already approved snapshot.
+    """
+    rendered = copy.deepcopy(memory_json)
+    requested: set[tuple[str, str]] = set()
+    for theme in rendered.get("themes", []):
+        if not isinstance(theme, dict):
+            continue
+        for phase in theme.get("phases", []):
+            if not isinstance(phase, dict):
+                continue
+            reference_date = _theme_phase_reference_date(str(phase.get("time_range") or ""), as_of_date)
+            if not reference_date:
+                continue
+            for stock in phase.get("core_stocks", []):
+                if isinstance(stock, dict) and isinstance(stock.get("ts_code"), str) and stock["ts_code"].strip():
+                    requested.add((stock["ts_code"].strip().upper(), reference_date))
+
+    quotes: dict[tuple[str, str], dict[str, Any]] = {}
+    if requested:
+        values_sql = ", ".join(["(%s, %s)"] * len(requested))
+        params = [value for pair in sorted(requested) for value in pair]
+        with store.connect() as conn:
+            rows = conn.execute(
+                f"""
+                WITH requested(asset_code, reference_date) AS (VALUES {values_sql})
+                SELECT requested.asset_code,
+                       requested.reference_date,
+                       bar.trade_date,
+                       bar.pct_chg
+                FROM requested
+                JOIN LATERAL (
+                    SELECT trade_date, pct_chg
+                    FROM screening_daily_bar
+                    WHERE asset_code = requested.asset_code
+                      AND asset_type = 'stock'
+                      AND trade_date <= requested.reference_date
+                    ORDER BY trade_date DESC
+                    LIMIT 1
+                ) AS bar ON true
+                """,
+                params,
+            ).fetchall()
+        quotes = {
+            (str(row["asset_code"]), str(row["reference_date"])): {
+                "quote_date": str(row["trade_date"]),
+                "pct_chg": float(row["pct_chg"]) if row["pct_chg"] is not None else None,
+            }
+            for row in rows
+        }
+
+    for theme in rendered.get("themes", []):
+        if not isinstance(theme, dict):
+            continue
+        for phase in theme.get("phases", []):
+            if not isinstance(phase, dict):
+                continue
+            reference_date = _theme_phase_reference_date(str(phase.get("time_range") or ""), as_of_date)
+            for stock in phase.get("core_stocks", []):
+                if not isinstance(stock, dict):
+                    continue
+                stock["quote_date"] = None
+                stock["pct_chg"] = None
+                if reference_date and isinstance(stock.get("ts_code"), str):
+                    quote = quotes.get((stock["ts_code"].strip().upper(), reference_date))
+                    if quote:
+                        stock.update(quote)
+    return rendered
+
+
+def _trade_plan_action_type(trade_plan: dict[str, Any]) -> str:
+    """Read the canonical action from the TradePlan row before its inputs."""
+    input_data = trade_plan.get("input_json") or {}
+    return str(trade_plan.get("action_type") or input_data.get("action_type") or "OPEN").upper()
 
 
 def _daily_release_reached(config: dict[str, Any], now: datetime | None = None) -> bool:
@@ -228,7 +349,7 @@ from backend.market_review.errors import MarketReviewError
 from backend.market_review.pipeline import MarketReviewPipeline
 from backend.market_review.postgres_storage import PostgresMarketReviewStore
 from backend.screening.config import RULESET_VERSION, ScreeningConfig, TushareConfig
-from backend.screening.data_sync import ScreeningDataSync
+from backend.screening.data_sync import ScreeningDataSync, _with_retry
 from backend.screening.errors import ScreeningError
 from backend.screening.reverse_box_breakout import (
     ReverseBoxBreakoutConfig,
@@ -250,19 +371,33 @@ from backend.trading.tradeplan import (
     TradePlanValidationError,
 )
 from backend.trading.actions import AddAccountContext, AddPlanCalculator, AddPlanInput, ClosePlanCalculator, PositionActionContext, ReducePlanCalculator, ReducePlanInput, TradeActionValidationError
-from backend.trading.account import TradingDataValidationError, TradingStore
+from backend.trading.account import TradingDataValidationError, TradingStore, normalize_symbol
 from backend.trading.broker import BrokerGateway, BrokerNotConnectedError, DisconnectedBrokerGateway
 from backend.trading.gm_broker_gateway import BrokerNodeRequestError, GMBrokerHttpGateway
-from backend.trading.execution import ExecutionPlanInput, ExecutionStore, ExecutionValidationError, OrderInput, PreTradeRisk
+from backend.trading.execution import (
+    ExecutionPlanInput,
+    ExecutionStore,
+    ExecutionValidationError,
+    OrderInput,
+    PreTradeRisk,
+    execution_plan_start_reached,
+    execution_submission_window_open,
+)
 from backend.trading.execution_engine import ExecutionEngine
+from backend.trading.order_types import canonical_order_type, validate_order_price, validate_order_type_for_exchange
 from backend.trading.broker_node_consumer import ExecutionQuotePoller
 from backend.trading.reconciliation import ReconciliationService
 from backend.trading.broker_event_sync import BrokerEventSyncService
+from backend.trading.trading_calendar import TradingCalendarStore, TradingCalendarUnavailableError
 
 
 class ImportReviewRequest(BaseModel):
     trade_date: str | None = None
     content: str
+
+
+class CapitalFlowStockResolveRequest(BaseModel):
+    names: list[str]
 
 
 class GenerateOverviewRequest(BaseModel):
@@ -288,7 +423,7 @@ class RunScreeningTaskRequest(BaseModel):
 class RunEarlyTurnRequest(BaseModel):
     trade_date: str | None = None
     ts_code: str | None = None
-    config_version: str = "A_PRE_V2_20260830_V3"
+    config_version: str = "A_PRE_V2_REPAIR_SCORE_V6"
     run_name: str | None = None
     notes: str | None = None
     run_id: str | None = None
@@ -298,6 +433,11 @@ class AddPositiveSampleRequest(BaseModel):
     target_date: str
     sample_name: str
     note: str | None = None
+
+
+class ReconciliationResolutionRequest(BaseModel):
+    resolution_type: Literal["BROKER_COMMAND_NOT_FOUND", "BROKER_VALIDATION_REJECTED"]
+    note: str
 
 class DataSyncRequest(BaseModel):
     trade_date: str | None = None
@@ -423,6 +563,13 @@ _financial_summary_task_status: dict[str, Any] = {"status": "idle", "progress": 
 _ai_research_jobs_lock = threading.Lock()
 _ai_research_jobs: dict[str, dict[str, Any]] = {}
 
+# 主题匹配与企业简介研究必须脱离详情页请求执行；浏览器关闭或刷新不应
+# 中断已经提交的任务。任务状态用于详情页仍然打开时轮询，最终结果以数据库
+# 中的当前股票档案为准。
+_stock_theme_jobs_lock = threading.Lock()
+_stock_theme_jobs: dict[str, dict[str, Any]] = {}
+_stock_theme_active_by_code: dict[str, str] = {}
+
 
 def _run_ai_research_job(job_id: str, ts_codes: list[str], as_of_date: str, lookback: int, use_search: bool) -> None:
     from backend.screening.ai_deep_research_service import run_ai_stock_research
@@ -430,6 +577,7 @@ def _run_ai_research_job(job_id: str, ts_codes: list[str], as_of_date: str, look
         job = _ai_research_jobs[job_id]
         job.update(status="running", step_message="正在生成市场记忆、主题匹配和研究报告…")
     try:
+        as_of_date = _normalize_trade_date(as_of_date, "as_of_date")
         store = PostgresScreeningStore(_database_url())
         results = []
         for index, code in enumerate(ts_codes, start=1):
@@ -442,6 +590,63 @@ def _run_ai_research_job(job_id: str, ts_codes: list[str], as_of_date: str, look
     except Exception as exc:
         with _ai_research_jobs_lock:
             _ai_research_jobs[job_id].update(status="failed", step_message="AI 深度分析失败", error=str(exc), completed_at=time.strftime("%Y-%m-%d %H:%M:%S"))
+
+
+def _run_stock_theme_match_job(job_id: str, ts_code: str) -> None:
+    """Generate current theme and company profiles independently of the browser."""
+    code = ts_code.strip().upper()
+    with _stock_theme_jobs_lock:
+        job = _stock_theme_jobs[job_id]
+        job.update(status="running", progress=5, step_message="正在生成主题匹配…")
+    try:
+        store = PostgresScreeningStore(_database_url())
+        from backend.screening.current_stock_profile_service import get_or_refresh_current_theme_profile
+        theme_profile = get_or_refresh_current_theme_profile(store, code)
+        with _stock_theme_jobs_lock:
+            _stock_theme_jobs[job_id].update(progress=50, step_message="主题匹配完成，正在核验企业资料…")
+
+        company_profile = None
+        company_error = None
+        try:
+            from backend.screening.company_profile_service import get_or_refresh_current_company_profile
+            company_profile = get_or_refresh_current_company_profile(store, code, theme_profile)
+        except Exception as exc:
+            company_error = str(exc)
+            try:
+                store.save_current_company_profile(
+                    code,
+                    f"FAILED:{int(time.time())}",
+                    {"error": company_error},
+                    {"sources": [], "web_search_used": True},
+                    "FAILED",
+                )
+            except Exception as save_exc:
+                print(f"[stock-theme-job] failed company status could not be saved for {code}: {save_exc}")
+
+        with _stock_theme_jobs_lock:
+            _stock_theme_jobs[job_id].update(
+                status="failed" if company_error else "success",
+                progress=100,
+                step_message="主题匹配已完成" if not company_error else "主题匹配已完成，企业简介生成失败",
+                profile=theme_profile,
+                company_profile=company_profile,
+                company_profile_error=company_error,
+                error=company_error,
+                completed_at=time.strftime("%Y-%m-%d %H:%M:%S"),
+            )
+    except Exception as exc:
+        with _stock_theme_jobs_lock:
+            _stock_theme_jobs[job_id].update(
+                status="failed",
+                progress=100,
+                step_message="主题匹配失败",
+                error=str(exc),
+                completed_at=time.strftime("%Y-%m-%d %H:%M:%S"),
+            )
+    finally:
+        with _stock_theme_jobs_lock:
+            if _stock_theme_active_by_code.get(code) == job_id:
+                _stock_theme_active_by_code.pop(code, None)
 
 
 def _run_screening_async(trade_date: str, pool: str):
@@ -622,6 +827,7 @@ def _run_market_memory_async(date: str, force_refresh: bool = False) -> None:
         traceback.print_exc()
         with _market_memory_lock:
             _market_memory_status.update({"running": False, "error": str(exc), "completed_at": time.strftime("%Y-%m-%d %H:%M:%S")})
+        raise
 
 
 def _run_market_overview_rewrite_async(date: str) -> None:
@@ -680,26 +886,104 @@ def _run_market_panorama_async(date: str, force_rebuild: bool = False, increment
         traceback.print_exc()
         with _market_panorama_lock:
             _market_panorama_status.update({"running": False, "error": str(exc), "completed_at": time.strftime("%Y-%m-%d %H:%M:%S")})
+        raise
 
 
-def _launch_imported_review_updates(date: str) -> None:
-    """Run the independent V2 panorama and legacy theme/flow updates concurrently.
+def _run_imported_review_snapshot_part(date: str, part: str, panorama_force_rebuild: bool = False) -> None:
+    """Run one durable derived-snapshot part after atomically claiming it."""
+    review_store = PostgresMarketReviewStore(_database_url())
+    if not review_store.claim_snapshot_update_part(date, part):
+        return
+    def run_part() -> None:
+        if part == "panorama":
+            _run_market_panorama_async(date, panorama_force_rebuild, not panorama_force_rebuild)
+        elif part == "memory":
+            _run_market_memory_async(date, True)
+        else:
+            raise ValueError(f"unknown review snapshot part: {part}")
 
-    Both tasks read the already-persisted imported review and write different snapshot tables.
-    They therefore have no data dependency and must not be serialized by FastAPI BackgroundTasks.
-    """
+    try:
+        run_part()
+    except Exception as exc:
+        # A dropped model connection is transient transport failure, not a data
+        # validation result.  Retry it once with a pause; schema/content failures
+        # remain explicit failures and are never retried as if they were valid.
+        transport_error = any(token in str(exc).lower() for token in (
+            "peer closed connection", "incomplete chunked read", "remoteprotocolerror",
+            "connection reset", "connection aborted", "readerror",
+        ))
+        if transport_error:
+            time.sleep(5)
+            try:
+                run_part()
+            except Exception as retry_exc:
+                review_store.finish_snapshot_update_part(date, part, str(retry_exc))
+                return
+        else:
+            review_store.finish_snapshot_update_part(date, part, str(exc))
+            return
+    review_store.finish_snapshot_update_part(date, part)
+
+
+def _start_imported_review_updates(date: str, panorama_force_rebuild: bool = False) -> None:
+    """Start the two independent, persisted derived-snapshot updates for one review."""
     threading.Thread(
-        target=_run_market_panorama_async,
-        args=(date, False, True),
+        target=_run_imported_review_snapshot_part,
+        args=(date, "panorama", panorama_force_rebuild),
         name=f"market-panorama-{date}",
         daemon=True,
     ).start()
     threading.Thread(
-        target=_run_market_memory_async,
-        args=(date, True),
+        target=_run_imported_review_snapshot_part,
+        args=(date, "memory"),
         name=f"market-memory-{date}",
         daemon=True,
     ).start()
+
+
+def _run_imported_review_enrichment_part(date: str, part: str) -> None:
+    """Run one durable non-blocking enrichment for an already saved review."""
+    review_store = PostgresMarketReviewStore(_database_url())
+    if not review_store.claim_import_enrichment_part(date, part):
+        return
+    try:
+        review = review_store.load_imported_review(date)
+        if review is None:
+            raise RuntimeError(f"未找到 {date} 的已导入复盘正文")
+        if part == "stock_extraction":
+            from backend.market_review.review_stock_extraction import extract_and_store_review_stock_mentions
+            extract_and_store_review_stock_mentions(review_store, date, str(review["raw_content"]))
+        elif part == "concept_board":
+            from backend.market_review.market_data_service import capture_imported_review_ths_concept_board_snapshot
+            capture_imported_review_ths_concept_board_snapshot(review_store, date)
+        else:
+            raise ValueError(f"unknown import enrichment part: {part}")
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        review_store.finish_import_enrichment_part(date, part, str(exc))
+        return
+    review_store.finish_import_enrichment_part(date, part)
+
+
+def _start_imported_review_enrichments(date: str) -> None:
+    """Start independent enrichment workers without holding up article viewing."""
+    for part in ("stock_extraction", "concept_board"):
+        threading.Thread(
+            target=_run_imported_review_enrichment_part,
+            args=(date, part),
+            name=f"review-{part}-{date}",
+            daemon=True,
+        ).start()
+
+
+def _recover_imported_review_updates() -> None:
+    """Resume every imported review whose derived snapshots are absent or interrupted."""
+    review_store = PostgresMarketReviewStore(_database_url())
+    for trade_date in review_store.recover_snapshot_update_jobs():
+        _start_imported_review_updates(trade_date)
+    for trade_date in review_store.recover_import_enrichment_jobs():
+        _start_imported_review_enrichments(trade_date)
 
 
 def _latest_snapshot_date(store: PostgresScreeningStore, table_name: str, date: str) -> str | None:
@@ -712,7 +996,16 @@ def _latest_snapshot_date(store: PostgresScreeningStore, table_name: str, date: 
     return str(row["as_of_date"]) if row and row["as_of_date"] else None
 
 
-def _snapshot_task_state(date: str, task_status: dict[str, Any], lock: threading.Lock) -> tuple[str, str]:
+def _snapshot_task_state(date: str, part: str, task_status: dict[str, Any], lock: threading.Lock) -> tuple[str, str]:
+    job = PostgresMarketReviewStore(_database_url()).get_snapshot_update_job(date)
+    if job is not None:
+        status = str(job[f"{part}_status"])
+        if status == "RUNNING":
+            return "GENERATING", "正在生成"
+        if status == "FAILED":
+            return "FAILED", str(job.get(f"{part}_error") or "生成失败")
+        if status == "PENDING":
+            return "PENDING", "等待自动更新"
     with lock:
         state = dict(task_status)
     if state.get("as_of_date") != date:
@@ -787,6 +1080,174 @@ def _secondary_candidate_items(store: PostgresScreeningStore, run_id: str) -> li
     return [item for item in items if item.get("turn_episode_state") in EARLY_TURN_SECONDARY_STATES]
 
 
+def _profile_json(profile: dict[str, Any] | None) -> dict[str, Any]:
+    """Read a JSONB current-profile payload without accepting malformed values."""
+    if not profile:
+        return {}
+    value = profile.get("result_json") or profile.get("source_manifest_json")
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("当前股票档案数据损坏，无法读取") from exc
+        if isinstance(parsed, dict):
+            return parsed
+    return {}
+
+
+def _current_profile_secondary_items(
+    store: PostgresScreeningStore,
+    source_items: list[dict[str, Any]],
+    selection_date: str,
+) -> list[dict[str, Any]]:
+    """Combine dated technical selection results with non-dated current profiles.
+
+    A selection run is the sole source for the selected names and technical
+    score.  Fundamental, market-capacity, theme and AI fields deliberately come
+    only from the one-current-profile tables, never from historical secondary
+    evaluation snapshots.
+    """
+    codes = [str(item.get("ts_code") or "").strip().upper() for item in source_items]
+    profiles_by_code = store.get_current_stock_profiles_for_codes(codes)
+    items: list[dict[str, Any]] = []
+    for source in source_items:
+        code = str(source.get("ts_code") or "").strip().upper()
+        if not code:
+            raise RuntimeError("选股结果存在空证券代码")
+        profiles = profiles_by_code.get(code)
+        if profiles is None:
+            raise RuntimeError(f"当前股票档案读取缺失：{code}")
+        fundamental = _profile_json(profiles.get("fundamental"))
+        market = _profile_json(profiles.get("market"))
+        theme = _profile_json(profiles.get("theme"))
+        ai_profile = profiles.get("ai_research") or {}
+
+        row: dict[str, Any] = {
+            "as_of_date": selection_date,
+            "ts_code": code,
+            "name": source.get("name"),
+            "industry": source.get("industry"),
+            # These are the only date-bound selection fields exposed here.
+            "aprev2_score": source.get("total_score"),
+            "aprev2_status": source.get("state"),
+            "turn_type": source.get("turn_episode_state"),
+            "selection_run_id": source.get("run_id"),
+            "current_profile_status": {
+                "fundamental": "READY" if profiles.get("fundamental") else "NOT_GENERATED",
+                "market": "READY" if profiles.get("market") else "NOT_GENERATED",
+                "theme": "READY" if profiles.get("theme") else "NOT_GENERATED",
+                "ai_research": str(ai_profile.get("status") or "NOT_GENERATED"),
+            },
+            "current_profile_updated_at": max(
+                [
+                    str(profile.get("refreshed_at") or "")
+                    for profile in profiles.values()
+                    if profile
+                ],
+                default=None,
+            ),
+        }
+        row.update(fundamental)
+        row.update(market)
+        if profiles.get("theme"):
+            row.update({
+                "theme_match_status": "READY",
+                "theme_match_name": theme.get("primary_active_theme"),
+                "theme_match_concept_names": theme.get("matched_ths_concepts") or [],
+            })
+        else:
+            row.update({"theme_match_status": "NOT_RUN", "theme_match_name": None, "theme_match_concept_names": []})
+        row.update({
+            "ai_status": ai_profile.get("status"),
+            "ai_priority": ai_profile.get("priority"),
+        })
+        # Profile payloads carry their own refresh/source date.  The list's
+        # as_of_date is reserved for the immutable technical selection batch.
+        row["as_of_date"] = selection_date
+        items.append(row)
+    return items
+
+
+def _refresh_current_profiles_for_items(
+    store: PostgresScreeningStore,
+    source_items: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Refresh current profiles after ensuring their financial inputs exist.
+
+    This intentionally writes no date-keyed secondary snapshots.  A missing
+    financial source must be fetched before a fundamental result is produced;
+    otherwise the UI would misleadingly report a completed analysis with no
+    underlying financial facts.
+    """
+    from backend.screening.current_stock_profile_service import (
+        get_or_refresh_current_fundamental_profile,
+        get_or_refresh_current_market_profile,
+    )
+
+    failures: list[dict[str, str]] = []
+    for item in source_items:
+        code = str(item.get("ts_code") or "").strip().upper()
+        if not code:
+            failures.append({"ts_code": "", "error": "选股结果存在空证券代码"})
+            continue
+        try:
+            current_pit_date = datetime.now(_SHANGHAI_TZ).strftime("%Y%m%d")
+            if not store.has_financial_data_for_stock(code, current_pit_date):
+                _sync_financials_for_stock(store, code)
+            get_or_refresh_current_fundamental_profile(store, code)
+            get_or_refresh_current_market_profile(store, code)
+        except Exception as exc:
+            failures.append({"ts_code": code, "error": str(exc)})
+    if failures:
+        raise RuntimeError(json.dumps({"message": "当前股票档案刷新未完成", "failures": failures}, ensure_ascii=False))
+    return {"refreshed_count": len(source_items)}
+
+
+_watchlist_profile_refresh_worker_lock = threading.Lock()
+
+
+def _drain_watchlist_profile_refresh_jobs() -> None:
+    """Run queued watchlist profile refreshes serially in the background.
+
+    Theme matching calls the model provider, so a single worker deliberately drains
+    this durable queue one stock at a time.  Joining a watchlist remains immediate;
+    failures are recorded on the job row rather than hidden or retried in a loop.
+    """
+    if not _watchlist_profile_refresh_worker_lock.acquire(blocking=False):
+        return
+    try:
+        store = PostgresScreeningStore(_database_url())
+        while True:
+            ts_code = store.claim_next_watchlist_profile_refresh_job()
+            if ts_code is None:
+                return
+            try:
+                _refresh_current_profiles_for_items(store, [{"ts_code": ts_code}])
+                from backend.screening.current_stock_profile_service import get_or_refresh_current_theme_profile
+                get_or_refresh_current_theme_profile(store, ts_code)
+                store.complete_watchlist_profile_refresh_job(ts_code)
+            except Exception as exc:
+                message = str(exc)
+                store.fail_watchlist_profile_refresh_job(ts_code, message)
+                print(f"[WATCHLIST_PROFILE_REFRESH] {ts_code} failed: {message}")
+    finally:
+        _watchlist_profile_refresh_worker_lock.release()
+
+
+def _recover_watchlist_profile_refresh_jobs() -> None:
+    """Resume durable pending watchlist analysis after an API restart."""
+    store = PostgresScreeningStore(_database_url())
+    store.recover_watchlist_profile_refresh_jobs()
+    worker = threading.Thread(
+        target=_drain_watchlist_profile_refresh_jobs,
+        name="watchlist-profile-refresh",
+        daemon=True,
+    )
+    worker.start()
+
+
 def _run_secondary_evaluation_for_items(
     store: PostgresScreeningStore,
     as_of_date: str,
@@ -859,6 +1320,8 @@ def _sync_screening_trade_date(
     daily_results: dict[str, Any] = {}
     pending_daily: list[dict[str, str]] = []
     for candidate in sorted(set(candidates)):
+        if stop_callback and stop_callback():
+            raise ScreeningError("DATA_SYNC_CANCELLED: task cancellation requested")
         if not candidate.isdigit() or (not requested_date and official_before and candidate <= official_before):
             continue
         if store.has_daily_data(candidate):
@@ -873,17 +1336,8 @@ def _sync_screening_trade_date(
             raise
 
     target_date = requested_date or (sorted(set(candidates))[-1] if candidates else official_before)
-    intraday_result: dict[str, Any] = {}
-    if target_date:
-        # 当天即使没有正式日线，也必须继续补最新 30 分钟数据。
-        asset_types = {kind for kind, enabled in (("stock", data_config.get("stock_30m_enabled", True)), ("etf", data_config.get("etf_30m_enabled", True))) if enabled}
-        intraday_result = sync.sync_30m_bars_all(
-            start_date=target_date,
-            end_date=target_date,
-            progress_callback=progress_callback,
-            asset_types=asset_types,
-            stop_callback=stop_callback,
-        )
+    # 全库更新只负责日线。个股当日分钟线由 K 线接口按需获取。
+    intraday_result: dict[str, Any] = {"status": "ON_DEMAND", "message": "打开股票 K 线时按需获取"}
 
     freshness = store.get_data_freshness_info()
 
@@ -952,6 +1406,7 @@ def create_app() -> FastAPI:
     trading_store = TradingStore(database_url)
     trade_plan_store = TradePlanStore(database_url)
     execution_store = ExecutionStore(database_url)
+    trading_calendar = TradingCalendarStore(database_url)
     class ConfiguredBrokerGateway(BrokerGateway):
         """Resolve the selected broker connection from the configured profile."""
 
@@ -990,7 +1445,10 @@ def create_app() -> FastAPI:
             error = self._configuration_error(account_id)
             if error:
                 raise BrokerNotConnectedError(error)
-            gateway = GMBrokerHttpGateway(base_url=account["broker_node_url"])
+            api_token = os.getenv("BROKER_NODE_API_TOKEN", "").strip()
+            if not api_token:
+                raise BrokerNotConnectedError("BROKER_NODE_API_TOKEN is required for Broker Node API access")
+            gateway = GMBrokerHttpGateway(base_url=account["broker_node_url"], api_token=api_token)
             gateway.configure_gm_token(str(account["broker_gm_token"]))
             return gateway
 
@@ -1013,7 +1471,7 @@ def create_app() -> FastAPI:
         def get_capabilities(self, account_id: int) -> dict[str, Any]:
             error = self._configuration_error(account_id)
             if error:
-                return {"status": "DISCONNECTED", "native_orders": [], "conditional_execution": [], "algorithms": [], "message": error}
+                return {"status": "DISCONNECTED", "native_orders": [], "order_types_by_exchange": {}, "verified_order_types": [], "unverified_order_types": [], "conditional_execution": [], "algorithms": [], "message": error}
             return self._gateway(account_id).get_capabilities()
 
         def get_account(self, account_id: int) -> dict[str, Any]:
@@ -1034,11 +1492,39 @@ def create_app() -> FastAPI:
         def cancel_order(self, account_id: int, order: dict[str, Any]) -> dict[str, Any]:
             return self._gateway(account_id).cancel_order(order)
 
+        def get_command(self, account_id: int, command_id: str) -> dict[str, Any]:
+            return self._gateway(account_id).get_command(command_id)
+
     broker_gateway = ConfiguredBrokerGateway()
     broker_event_sync = BrokerEventSyncService(execution_store, trading_store, broker_gateway._gateway)
     execution_pollers: dict[int, ExecutionQuotePoller] = {}
     event_sync_stop = threading.Event()
     event_sync_thread: threading.Thread | None = None
+    calendar_refresh_stop = threading.Event()
+    calendar_refresh_thread: threading.Thread | None = None
+    calendar_gate_log_state: dict[int, tuple[str, float]] = {}
+
+    def _refresh_trading_calendar(force: bool = False) -> None:
+        source = TushareScreeningSource(TushareConfig.from_project_env(_project_root()).token)
+        current_year = datetime.now(_SHANGHAI_TZ).year
+        for year in (current_year - 1, current_year, current_year + 1):
+            if not force and trading_calendar.year_is_fresh(year):
+                continue
+            _with_retry(
+                lambda year=year: trading_calendar.refresh_year(source, year),
+                "trade_cal",
+                str(year),
+                attempts=3,
+            )
+
+    def _refresh_trading_calendar_loop() -> None:
+        while not calendar_refresh_stop.wait(3600):
+            try:
+                _refresh_trading_calendar()
+            except Exception as exc:
+                # Keep serving read-only UI while the execution gate fails
+                # closed on any missing or stale calendar year.
+                print(f"[TRADING_CALENDAR] refresh failed: {exc}", flush=True)
 
     def _sync_broker_events_loop() -> None:
         while not event_sync_stop.wait(2.0):
@@ -1048,12 +1534,23 @@ def create_app() -> FastAPI:
                 account_id = int(account["id"])
                 try:
                     broker_event_sync.sync_account(account_id)
+                except Exception as exc:
+                    # Event ingestion and new-order dispatch are independent
+                    # work. A failed event read must not silently prevent an
+                    # otherwise-ready execution plan from being submitted.
+                    print(f"[BROKER_EVENT_SYNC] account={account_id} failed: {exc}", flush=True)
+                try:
                     _run_execution_cycle(account_id)
                 except Exception as exc:
-                    # A broker outage must not terminate the API process. The
-                    # failure is explicit in the service log and the cursor is
-                    # left unchanged so the next cycle retries the same page.
-                    print(f"[BROKER_EVENT_SYNC] account={account_id} failed: {exc}")
+                    # Keep the API loop alive, but persist the real failure so
+                    # the Trades screen does not mislabel it as "waiting".
+                    message = _execution_cycle_error_message(exc)
+                    print(f"[EXECUTION_CYCLE] account={account_id} failed: {message}", flush=True)
+                    try:
+                        for plan in execution_store.list_execution_plans(account_id, "ACTIVE"):
+                            execution_store.update_execution_status_reason(account_id, int(plan["id"]), f"提交失败：{message}")
+                    except Exception as status_error:
+                        print(f"[EXECUTION_CYCLE] account={account_id} could not persist failure reason: {status_error}", flush=True)
 
     def _execution_symbol(symbol: str) -> str:
         value = str(symbol).strip().upper()
@@ -1065,22 +1562,96 @@ def create_app() -> FastAPI:
             return f"{exchange}:{code}"
         return f"{'SH' if value.startswith('6') else 'SZ'}:{value}"
 
+    def _snapshot_symbol(item: dict[str, Any]) -> str:
+        instrument = item.get("instrument") if isinstance(item.get("instrument"), dict) else {}
+        return _execution_symbol(str(item.get("symbol") or instrument.get("code") or ""))
+
+    def _broker_error_message(error: Exception) -> str:
+        """Keep the broker's actionable rejection detail in the local audit."""
+        status = getattr(error, "status", None)
+        payload = getattr(error, "payload", None)
+        if status is not None and payload is not None:
+            try:
+                detail = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+            except (TypeError, ValueError):
+                detail = str(payload)
+            return f"Broker Node HTTP {status}: {detail}"
+        return str(error)
+
+    def _execution_cycle_error_message(error: Exception) -> str:
+        """Translate local pre-submit failures into a readable action status."""
+        if error.args and isinstance(error.args[0], dict):
+            detail = error.args[0]
+            if detail.get("code") == "PRETRADE_RISK_BLOCK":
+                messages = [
+                    str(item.get("message"))
+                    for item in detail.get("checks", [])
+                    if isinstance(item, dict) and item.get("status") == "BLOCK" and item.get("message")
+                ]
+                if messages:
+                    return "下单前检查未通过：" + "；".join(messages)
+        return _broker_error_message(error)
+
+    def _is_definitive_broker_rejection(error: Exception) -> bool:
+        """Return true only for a broker-side validation reject.
+
+        Transport failures and unknown command outcomes must remain UNKNOWN;
+        a structured 4xx validation response is already a terminal reject and
+        must not create a misleading unresolved-order record.
+        """
+        status = getattr(error, "status", None)
+        payload = getattr(error, "payload", None)
+        detail = payload.get("detail") if isinstance(payload, dict) else None
+        code = detail.get("code") if isinstance(detail, dict) else None
+        return status in {400, 401, 403, 409, 422} and isinstance(code, str) and bool(code.strip())
+
     def _run_execution_cycle(account_id: int) -> None:
-        plans = execution_store.list_execution_plans(account_id, "ACTIVE")
+        active_plans = execution_store.list_execution_plans(account_id, "ACTIVE")
+        plans = [plan for plan in active_plans if execution_plan_start_reached(plan)]
         if not plans:
             poller = execution_pollers.pop(account_id, None)
             if poller:
                 poller.poll([])
             return
+        account = trading_store.get_account(account_id)
+        try:
+            submission_window_open = execution_submission_window_open(account, trading_calendar)
+        except TradingCalendarUnavailableError as exc:
+            message = str(exc)
+            previous = calendar_gate_log_state.get(account_id)
+            current_monotonic = time.monotonic()
+            if not previous or previous[0] != message or current_monotonic - previous[1] >= 300:
+                print(f"[TRADING_CALENDAR] account={account_id} execution blocked: {message}", flush=True)
+                calendar_gate_log_state[account_id] = (message, current_monotonic)
+            for plan in plans:
+                execution_store.update_execution_status_reason(account_id, int(plan["id"]), f"交易时段信息暂不可用：{message}")
+            return
+        if not submission_window_open:
+            for plan in plans:
+                execution_store.update_execution_status_reason(account_id, int(plan["id"]), "当前不在该账号设置的委托时段，将在时段开始后继续")
+            return
         # A locally unresolved order/event is not proof that the broker did
         # not receive a command.  Stop the account execution loop until the
         # reconciliation record is resolved, so a second command cannot be
         # created against an uncertain broker state.
-        if execution_store.list_reconciliation_issues(account_id):
+        reconciliation_issues = execution_store.list_reconciliation_issues(account_id)
+        if reconciliation_issues:
+            for plan in plans:
+                execution_store.update_execution_status_reason(account_id, int(plan["id"]), f"有 {len(reconciliation_issues)} 项订单状态待核对，核对完成后继续提交")
             return
         raw_gateway = broker_gateway._gateway(account_id)
         node_status = raw_gateway.get_status()
-        if node_status.get("execution_enabled") is not True or node_status.get("paused") is True or node_status.get("reconciliation_required") is True:
+        if node_status.get("execution_enabled") is not True:
+            for plan in plans:
+                execution_store.update_execution_status_reason(account_id, int(plan["id"]), "交易通道未启用，请检查 Broker Node 状态")
+            return
+        if node_status.get("paused") is True:
+            for plan in plans:
+                execution_store.update_execution_status_reason(account_id, int(plan["id"]), "交易通道已暂停，请恢复后继续")
+            return
+        if node_status.get("reconciliation_required") is True:
+            for plan in plans:
+                execution_store.update_execution_status_reason(account_id, int(plan["id"]), "交易通道有订单状态待核对，请完成核对后继续")
             return
         normalized_plans = [{**plan, "symbol": _execution_symbol(str(plan["symbol"]))} for plan in plans]
         poller = execution_pollers.setdefault(account_id, ExecutionQuotePoller(raw_gateway))
@@ -1094,10 +1665,30 @@ def create_app() -> FastAPI:
         ]
         quotes = poller.poll(conditional_plans)
         quotes_by_symbol = {str(item.get("symbol_key")): item for item in quotes if isinstance(item, dict) and item.get("symbol_key")}
-        account = trading_store.get_account(account_id)
         risk_profile = trading_store.get_risk_profile(account_id)
         positions = trading_store.list_positions(account_id)
         active_orders = execution_store.list_orders(account_id)
+        # A local order without a broker identity is an execution-boundary
+        # uncertainty, not a reason to retry. Surface it immediately on the
+        # next cycle and stop this account before another command can be
+        # created. Manual reconciliation should not be required to discover
+        # a failed or interrupted submit.
+        unconfirmed_orders = [
+            order for order in active_orders
+            if order.get("status") in {"PENDING_SUBMIT", "SUBMITTED", "ACCEPTED", "PARTIALLY_FILLED", "UNKNOWN"}
+            and not order.get("broker_order_id")
+        ]
+        if unconfirmed_orders:
+            for order in unconfirmed_orders:
+                execution_store.add_reconciliation_issue(account_id, {
+                    "issue_type": "LOCAL_ORDER_UNCONFIRMED",
+                    "symbol": order.get("symbol"),
+                    "local_value": order,
+                    "broker_value": None,
+                })
+            for plan in plans:
+                execution_store.update_execution_status_reason(account_id, int(plan["id"]), "有委托尚未取得券商编号，已暂停重复提交；请核对该委托状态")
+            return
         engine = ExecutionEngine(raw_gateway)
         for plan in normalized_plans:
             existing_plan_orders = [
@@ -1109,6 +1700,7 @@ def create_app() -> FastAPI:
                 # A durable local order means this plan has already crossed
                 # (or may have crossed) the broker boundary. Wait for its
                 # event/reconciliation instead of submitting again.
+                execution_store.update_execution_status_reason(account_id, int(plan["id"]), None)
                 continue
             symbol = str(plan["symbol"])
             quote = quotes_by_symbol.get(symbol)
@@ -1118,6 +1710,17 @@ def create_app() -> FastAPI:
                 # data; conditional plans still require an actual fresh tick.
                 quote = {"symbol_key": symbol, "freshness": "NOT_REQUIRED"}
             if quote is None:
+                execution_store.update_execution_status_reason(account_id, int(plan["id"]), "正在读取触发条件所需的最新行情")
+                continue
+            decision = engine.evaluate(plan, quote)
+            if decision.status != "READY":
+                reason_labels = {
+                    "TRIGGER_NOT_MET": "尚未达到设定的触发价格",
+                    "OUT_OF_RANGE": "当前价格尚未进入设定区间",
+                    "MARKET_STALE": "最新行情暂不可用，正在等待更新",
+                    "SCHEDULED_START_NOT_REACHED": "尚未到达设定的开始执行时间",
+                }
+                execution_store.update_execution_status_reason(account_id, int(plan["id"]), reason_labels.get(decision.reason, f"执行条件未满足：{decision.reason}"))
                 continue
             client_order_id = f"LLL-{datetime.now(UTC).strftime('%Y%m%d%H%M%S%f')}-{uuid.uuid4().hex[:10]}"
             local_order: dict[str, Any] | None = None
@@ -1126,7 +1729,8 @@ def create_app() -> FastAPI:
                 nonlocal local_order
                 local_order = execution_store.create_pending_order(OrderInput(
                     execution_plan_id=int(plan["id"]), symbol=str(plan["symbol"]), side=str(plan["side"]),
-                    order_type="LIMIT", quantity=int(plan["remaining_qty"]), price=float(payload["price"]), account_id=account_id,
+                    order_type=str(payload["order_type"]), quantity=int(plan["remaining_qty"]),
+                    price=float(payload["price"]) if payload.get("price") is not None else None, account_id=account_id,
                 ), client_order_id)
                 return local_order
 
@@ -1145,23 +1749,48 @@ def create_app() -> FastAPI:
                     })
                     local_order = execution_store.list_orders(account_id, int(plan["id"]))[0]
                     active_orders.append(local_order)
+                    execution_store.update_execution_status_reason(account_id, int(plan["id"]), None)
             except Exception as exc:
                 if local_order:
-                    execution_store.record_order_update(account_id, int(local_order["id"]), {"status": "UNKNOWN", "reject_message": str(exc), "raw_broker_data": {"error": str(exc)}})
+                    execution_store.record_order_update(account_id, int(local_order["id"]), {"status": "UNKNOWN", "reject_message": _broker_error_message(exc), "raw_broker_data": {"error": _broker_error_message(exc), "broker_payload": getattr(exc, "payload", None)}})
                 raise
 
     @asynccontextmanager
     async def lifespan(app_instance: FastAPI):
-        nonlocal event_sync_thread
+        nonlocal event_sync_thread, calendar_refresh_thread
         try:
             scheduler.start()
         except Exception as e:
             print(f"[API_STARTUP] 启动自动数据调度器失败: {e}")
+        try:
+            _refresh_trading_calendar()
+        except Exception as exc:
+            print(f"[API_STARTUP] Tushare 交易日历刷新失败，自动报单将暂停：{exc}", flush=True)
+        calendar_refresh_stop.clear()
+        calendar_refresh_thread = threading.Thread(
+            target=_refresh_trading_calendar_loop,
+            name="trading-calendar-refresh",
+            daemon=True,
+        )
+        calendar_refresh_thread.start()
         event_sync_stop.clear()
         event_sync_thread = threading.Thread(target=_sync_broker_events_loop, name="broker-event-sync", daemon=True)
         event_sync_thread.start()
+        try:
+            _recover_imported_review_updates()
+        except Exception as e:
+            # 启动不因衍生内容恢复失败而中断；恢复失败会保留为明确的待处理状态，
+            # 下次服务启动仍会继续处理。
+            print(f"[API_STARTUP] 恢复复盘衍生快照失败: {e}")
+        try:
+            _recover_watchlist_profile_refresh_jobs()
+        except Exception as e:
+            print(f"[API_STARTUP] 恢复自选股档案更新失败: {e}")
         yield
         event_sync_stop.set()
+        calendar_refresh_stop.set()
+        if calendar_refresh_thread:
+            calendar_refresh_thread.join(timeout=5)
         if event_sync_thread:
             event_sync_thread.join(timeout=5)
         try:
@@ -1186,19 +1815,42 @@ def create_app() -> FastAPI:
 
     def _trade_plan_payload(body: dict[str, Any], account_id: int) -> tuple[TradePlanInput, AccountRiskSettings, InstrumentInfo, datetime | None]:
         plan_data = body.get("plan", body)
-        plan_data = {**plan_data, "account_id": account_id}
+        plan_data = {
+            **plan_data,
+            "account_id": account_id,
+            # The UI deliberately accepts a bare A-share code. Persist and
+            # calculate with one canonical exchange-qualified identity.
+            "symbol": normalize_symbol(plan_data.get("symbol")),
+        }
         settings = trading_store.trade_plan_settings(account_id)
         account_data = {key: settings[key] for key in (
             "account_equity", "available_cash", "current_invested_amount", "default_risk_pct",
             "max_single_position_pct", "max_total_position_pct", "max_trade_risk_pct",
+            "max_account_risk_pct", "max_single_order_notional", "max_single_order_quantity", "quantity_step", "min_order_quantity",
+            "min_cash_ratio_enabled", "min_cash_ratio_pct",
         )}
-        instrument_data = body.get("instrument", {})
+        instrument_data = {
+            **body.get("instrument", {}),
+            # Instrument rules are account/server configuration, not a value
+            # the browser is allowed to override.
+            "quantity_step": int(settings.get("quantity_step") or 100),
+        }
         plan = TradePlanInput(**plan_data)
         account = AccountRiskSettings(**account_data)
         instrument = InstrumentInfo(**instrument_data) if instrument_data else InstrumentInfo()
         expires_at_raw = body.get("expires_at")
         expires_at = datetime.fromisoformat(expires_at_raw.replace("Z", "+00:00")) if expires_at_raw else None
         return plan, account, instrument, expires_at
+
+    def _validate_action_reason(body: dict[str, Any], action_type: str) -> None:
+        reason_code = str(body.get("reason_code") or "").strip()
+        reason_text = str(body.get("reason_text") or "").strip()
+        if not reason_code:
+            raise TradeActionValidationError("动作原因不能为空")
+        if action_type == "ADD" and not reason_text:
+            raise TradeActionValidationError("请填写加仓理由")
+        if reason_code == "CUSTOM" and not reason_text:
+            raise TradeActionValidationError("选择“其他”时必须填写原因说明")
 
     @app.post("/api/trade-plans/calculate")
     def calculate_trade_plan(body: dict[str, Any] = Body(...), account_id: int = Query(...)) -> dict[str, Any]:
@@ -1239,13 +1891,13 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Trade not found")
         if trade["status"] != "ACTIVE":
             raise HTTPException(status_code=409, detail="只有持仓中的 Trade 才能创建加仓计划")
-        position = next((item for item in trading_store.list_positions(account_id) if item["symbol"] == trade["symbol"]), None)
+        trade_symbol = normalize_symbol(trade["symbol"])
+        position = next((item for item in trading_store.list_positions(account_id) if normalize_symbol(item["symbol"]) == trade_symbol), None)
         if not position or int(position["quantity"]) <= 0:
             raise HTTPException(status_code=409, detail="当前 Trade 没有可用于加仓计算的实际持仓")
         try:
             plan = AddPlanInput(
                 reference_price=float(body["reference_price"]),
-                max_acceptable_price=float(body["max_acceptable_price"]),
                 risk_reference_price=float(body["risk_reference_price"]),
                 manual_quantity=body.get("manual_quantity"),
                 action_risk_budget_pct=body.get("action_risk_budget_pct"),
@@ -1254,9 +1906,9 @@ def create_app() -> FastAPI:
             )
             account = trading_store.get_account(account_id)
             risk = trading_store.get_risk_profile(account_id)
-            trade_risk_budget_amount = body.get("trade_risk_budget_amount")
+            trade_risk_budget_amount = trade.get("trade_risk_budget_amount")
             if trade_risk_budget_amount is None:
-                raise TradeActionValidationError("trade_risk_budget_amount is required")
+                raise TradeActionValidationError("Trade 缺少已保存的总风险预算，不能创建加仓计划")
             context = AddAccountContext(
                 equity=float(account["equity"]),
                 available_cash=float(account["available_cash"]),
@@ -1270,6 +1922,8 @@ def create_app() -> FastAPI:
                 current_risk_reference_price=position.get("current_risk_reference_price"),
                 current_risk_reference_note=position.get("risk_note"),
                 existing_legs=tuple(trade.get("legs") or ()),
+                max_single_order_notional=risk.get("max_single_order_notional"),
+                max_single_order_quantity=risk.get("max_single_order_quantity"),
             )
             return {"status": "SUCCESS", "calculation": AddPlanCalculator.calculate(plan, context)}
         except (KeyError, TypeError, ValueError, TradeActionValidationError) as exc:
@@ -1280,32 +1934,56 @@ def create_app() -> FastAPI:
         calculated = calculate_add_plan(trade_id, body, account_id)
         trade = trade_plan_store.get_trade(account_id, trade_id)
         try:
-            item = trade_plan_store.create_action_plan(account_id, trade_id, "ADD", trade["symbol"], trade["symbol_name"], body, calculated["calculation"], body.get("reason_code"), body.get("reason_text"))
+            _validate_action_reason(body, "ADD")
+            expires_at_raw = body.get("expires_at")
+            expires_at = datetime.fromisoformat(str(expires_at_raw).replace("Z", "+00:00")) if expires_at_raw else None
+            plan_id = body.get("plan_id")
+            item = trade_plan_store.update_action_plan_draft(account_id, trade_id, int(plan_id), "ADD", body, calculated["calculation"], body.get("reason_code"), body.get("reason_text"), expires_at) if plan_id else trade_plan_store.create_action_plan(account_id, trade_id, "ADD", trade["symbol"], trade["symbol_name"], body, calculated["calculation"], body.get("reason_code"), body.get("reason_text"), expires_at)
+            if plan_id and not item:
+                raise HTTPException(status_code=409, detail="只有草稿或尚未开始执行的已确认加仓计划可以编辑；保存后需重新确认")
             return {"status": "SUCCESS", "item": item, "calculation": calculated["calculation"]}
         except (KeyError, TypeError, ValueError, TradeActionValidationError, TradePlanValidationError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    def _position_action_context(account_id: int, trade_id: int) -> tuple[dict[str, Any], PositionActionContext]:
+    def _position_action_context(account_id: int, trade_id: int, *, refresh_broker_availability: bool = False) -> tuple[dict[str, Any], PositionActionContext]:
         trade = trade_plan_store.get_trade(account_id, trade_id)
         if not trade:
             raise HTTPException(status_code=404, detail="Trade not found")
         if trade["status"] not in {"ACTIVE", "CLOSING"}:
             raise HTTPException(status_code=409, detail="Trade 当前没有可管理的持仓")
         positions = trading_store.list_positions(account_id)
-        position = next((item for item in positions if item["symbol"] == trade["symbol"]), None)
+        trade_symbol = normalize_symbol(trade["symbol"])
+        position = next((item for item in positions if normalize_symbol(item["symbol"]) == trade_symbol), None)
         if not position or int(position["quantity"]) <= 0:
             raise HTTPException(status_code=409, detail="当前 Trade 没有持仓")
         account = trading_store.get_account(account_id)
+        available_position_qty = int(position["available_quantity"])
+        if refresh_broker_availability:
+            try:
+                broker_positions = broker_gateway.get_positions(account_id)
+            except (BrokerNotConnectedError, ConnectionError, BrokerNodeRequestError) as exc:
+                raise HTTPException(status_code=503, detail="券商可卖持仓读取失败，不能计算卖出计划") from exc
+            broker_position = next(
+                (item for item in broker_positions if _snapshot_symbol(item) == _execution_symbol(str(trade["symbol"]))),
+                None,
+            )
+            if broker_position is None:
+                available_position_qty = 0
+            else:
+                try:
+                    available_position_qty = int(broker_position.get("available_quantity"))
+                except (TypeError, ValueError) as exc:
+                    raise HTTPException(status_code=502, detail="券商持仓可卖数量字段无效，不能计算卖出计划") from exc
         return trade, PositionActionContext(
             equity=float(account["equity"]), current_position_qty=int(position["quantity"]),
-            available_position_qty=int(position["available_quantity"]), average_cost=float(position["average_cost"]),
+            available_position_qty=available_position_qty, average_cost=float(position["average_cost"]),
             market_price=float(position["market_price"]), current_invested_amount=sum(item["market_value"] for item in positions),
             existing_legs=tuple(trade.get("legs") or ()),
         )
 
     @app.post("/api/trades/{trade_id}/reduce/calculate")
     def calculate_reduce_plan(trade_id: int, body: dict[str, Any] = Body(...), account_id: int = Query(...)) -> dict[str, Any]:
-        _trade, context = _position_action_context(account_id, trade_id)
+        _trade, context = _position_action_context(account_id, trade_id, refresh_broker_availability=True)
         try:
             plan = ReducePlanInput(reduce_method=str(body["reduce_method"]), quantity=body.get("quantity"), position_pct=body.get("position_pct"), target_remaining_qty=body.get("target_remaining_qty"), target_remaining_pct=body.get("target_remaining_pct"), reference_price=body.get("reference_price"), minimum_acceptable_price=body.get("minimum_acceptable_price"), trigger_condition=body.get("trigger_condition"))
             return {"status": "SUCCESS", "calculation": ReducePlanCalculator.calculate(plan, context)}
@@ -1317,14 +1995,20 @@ def create_app() -> FastAPI:
         calculated = calculate_reduce_plan(trade_id, body, account_id)
         trade = trade_plan_store.get_trade(account_id, trade_id)
         try:
-            item = trade_plan_store.create_action_plan(account_id, trade_id, "REDUCE", trade["symbol"], trade["symbol_name"], body, calculated["calculation"], body.get("reason_code"), body.get("reason_text"))
+            _validate_action_reason(body, "REDUCE")
+            expires_at_raw = body.get("expires_at")
+            expires_at = datetime.fromisoformat(str(expires_at_raw).replace("Z", "+00:00")) if expires_at_raw else None
+            plan_id = body.get("plan_id")
+            item = trade_plan_store.update_action_plan_draft(account_id, trade_id, int(plan_id), "REDUCE", body, calculated["calculation"], body.get("reason_code"), body.get("reason_text"), expires_at) if plan_id else trade_plan_store.create_action_plan(account_id, trade_id, "REDUCE", trade["symbol"], trade["symbol_name"], body, calculated["calculation"], body.get("reason_code"), body.get("reason_text"), expires_at)
+            if plan_id and not item:
+                raise HTTPException(status_code=409, detail="只有草稿或尚未开始执行的已确认减仓计划可以编辑；保存后需重新确认")
             return {"status": "SUCCESS", "item": item, "calculation": calculated["calculation"]}
         except (KeyError, TypeError, ValueError, TradeActionValidationError, TradePlanValidationError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.post("/api/trades/{trade_id}/close/calculate")
     def calculate_close_plan(trade_id: int, body: dict[str, Any] = Body(...), account_id: int = Query(...)) -> dict[str, Any]:
-        _trade, context = _position_action_context(account_id, trade_id)
+        _trade, context = _position_action_context(account_id, trade_id, refresh_broker_availability=True)
         try:
             return {"status": "SUCCESS", "calculation": ClosePlanCalculator.calculate(context, body.get("reference_price"), body.get("minimum_acceptable_price"), body.get("trigger_condition"))}
         except (TypeError, ValueError, TradeActionValidationError) as exc:
@@ -1335,7 +2019,13 @@ def create_app() -> FastAPI:
         calculated = calculate_close_plan(trade_id, body, account_id)
         trade = trade_plan_store.get_trade(account_id, trade_id)
         try:
-            item = trade_plan_store.create_action_plan(account_id, trade_id, "CLOSE", trade["symbol"], trade["symbol_name"], body, calculated["calculation"], body.get("reason_code"), body.get("reason_text"))
+            _validate_action_reason(body, "CLOSE")
+            expires_at_raw = body.get("expires_at")
+            expires_at = datetime.fromisoformat(str(expires_at_raw).replace("Z", "+00:00")) if expires_at_raw else None
+            plan_id = body.get("plan_id")
+            item = trade_plan_store.update_action_plan_draft(account_id, trade_id, int(plan_id), "CLOSE", body, calculated["calculation"], body.get("reason_code"), body.get("reason_text"), expires_at) if plan_id else trade_plan_store.create_action_plan(account_id, trade_id, "CLOSE", trade["symbol"], trade["symbol_name"], body, calculated["calculation"], body.get("reason_code"), body.get("reason_text"), expires_at)
+            if plan_id and not item:
+                raise HTTPException(status_code=409, detail="只有草稿或尚未开始执行的已确认清仓计划可以编辑；保存后需重新确认")
             return {"status": "SUCCESS", "item": item, "calculation": calculated["calculation"]}
         except (KeyError, TypeError, ValueError, TradeActionValidationError, TradePlanValidationError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -1404,9 +2094,12 @@ def create_app() -> FastAPI:
                 "available_cash": body["available_cash"],
                 "cash": body.get("cash", body["available_cash"]),
             })
+            trade_risk_limit = body.get("max_trade_risk_pct")
+            if trade_risk_limit is None:
+                raise KeyError("max_trade_risk_pct")
             trading_store.save_risk_profile(account_id, {
-                "default_trade_risk_pct": body["default_risk_pct"],
-                "max_trade_risk_pct": body.get("max_trade_risk_pct", body["default_risk_pct"]),
+                "default_trade_risk_pct": trade_risk_limit,
+                "max_trade_risk_pct": trade_risk_limit,
                 "max_single_position_pct": body["max_single_position_pct"],
                 "max_total_exposure_pct": body["max_total_position_pct"],
             })
@@ -1427,10 +2120,18 @@ def create_app() -> FastAPI:
 
     @app.get("/api/trading/broker-accounts")
     def list_broker_accounts() -> dict[str, Any]:
-        return {"status": "SUCCESS", "items": trading_store.list_broker_accounts()}
+        items = trading_store.list_broker_accounts()
+        for item in items:
+            parsed = urlparse(str(item.get("broker_node_url") or ""))
+            item["broker_node_port"] = parsed.port
+        return {"status": "SUCCESS", "items": items}
 
     @app.get("/api/trading/accounts")
     def list_trading_accounts() -> dict[str, Any]:
+        # This endpoint only supplies the local account selector.  Connecting
+        # to Broker Node here made opening a navigation menu slow and coupled
+        # a UI read to an external trading service.  Connection health is
+        # refreshed only by explicit broker operations / execution flows.
         return {"status": "SUCCESS", "items": trading_store.list_accounts()}
 
     @app.patch("/api/trading/accounts/{account_id}/default")
@@ -1485,12 +2186,42 @@ def create_app() -> FastAPI:
             items.append(item)
         return {"status": "SUCCESS", "items": items}
 
+    def _broker_account_payload(body: dict[str, Any], *, account_id: int | None = None) -> dict[str, Any]:
+        """Build the account payload using the deployment host.
+
+        The port is intentionally not a user field.  Creation allocates the
+        next unused port in the store transaction; updates retain the account's
+        existing port.  The host remains a deployment setting because it is
+        shared by all Broker Node instances on that Windows machine.
+        """
+        payload = dict(body)
+        host = os.getenv("BROKER_NODE_HOST", "").strip()
+        if not host:
+            raise TradingDataValidationError("BROKER_NODE_HOST is not configured")
+        payload["broker_node_host"] = host
+        # Keep this accepted for existing clients and edit forms, but never
+        # require it for a new account.  New ports are reserved by the store.
+        raw_port = str(payload.get("broker_node_port") or "").strip()
+        if raw_port:
+            try:
+                port = int(raw_port)
+            except (TypeError, ValueError) as exc:
+                raise TradingDataValidationError("broker_node_port must be an integer") from exc
+            if not 1 <= port <= 65535:
+                raise TradingDataValidationError("broker_node_port must be between 1 and 65535")
+            payload["broker_node_port"] = port
+        else:
+            payload.pop("broker_node_port", None)
+        return payload
+
     @app.post("/api/trading/broker-accounts")
     def create_broker_account(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
         try:
-            return {"status": "SUCCESS", "item": trading_store.create_broker_account(body)}
+            return {"status": "SUCCESS", "item": trading_store.create_broker_account(_broker_account_payload(body))}
         except (TypeError, ValueError, TradingDataValidationError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except UniqueViolation as exc:
+            raise HTTPException(status_code=409, detail="券商账号或账户 ID 已存在") from exc
 
     @app.delete("/api/trading/broker-accounts/{account_id}")
     def delete_broker_account(account_id: int) -> dict[str, Any]:
@@ -1501,11 +2232,13 @@ def create_app() -> FastAPI:
     @app.put("/api/trading/broker-accounts/{account_id}")
     def update_broker_account(account_id: int, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
         try:
-            return {"status": "SUCCESS", "item": trading_store.update_broker_account(account_id, body)}
+            return {"status": "SUCCESS", "item": trading_store.update_broker_account(account_id, _broker_account_payload(body, account_id=account_id))}
         except TradingDataValidationError as exc:
             if str(exc) == "Broker account not found":
                 raise HTTPException(status_code=404, detail=str(exc)) from exc
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except UniqueViolation as exc:
+            raise HTTPException(status_code=409, detail="券商账号或账户 ID 已存在") from exc
 
     @app.post("/api/trading/broker-accounts/{account_id}/test")
     def test_broker_account(account_id: int) -> dict[str, Any]:
@@ -1543,6 +2276,8 @@ def create_app() -> FastAPI:
         profile = next((item for item in trading_store.list_broker_accounts() if item["id"] == account_id), None)
         if not profile:
             raise HTTPException(status_code=404, detail="Broker account not found")
+        if profile["account_type"] != "LIVE":
+            raise HTTPException(status_code=422, detail="仅实盘账号可以读取实盘交易授权")
         try:
             gateway = GMBrokerHttpGateway(base_url=profile["broker_node_url"], api_token=os.getenv("BROKER_NODE_API_TOKEN"))
             return {"status": "SUCCESS", "settings": gateway.get_node_settings()}
@@ -1554,12 +2289,13 @@ def create_app() -> FastAPI:
         profile = next((item for item in trading_store.list_broker_accounts() if item["id"] == account_id), None)
         if not profile:
             raise HTTPException(status_code=404, detail="Broker account not found")
+        if profile["account_type"] != "LIVE":
+            raise HTTPException(status_code=422, detail="仅实盘账号可以修改实盘交易授权")
         password = str(body.get("password") or "")
         if not verify_admin_password(password):
             raise HTTPException(status_code=403, detail={"code": "ADMIN_PASSWORD_INVALID", "message": "密码不正确"})
         settings = {
             "allow_live_orders": body.get("allow_live_orders") is True,
-            "start_paused": body.get("start_paused") is True,
         }
         if profile["account_type"] != "LIVE" and settings["allow_live_orders"]:
             raise HTTPException(status_code=422, detail="仿真账号不能开启实盘交易授权")
@@ -1599,14 +2335,33 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Position not found")
         return {"status": "SUCCESS", "symbol": symbol}
 
-    @app.get("/api/trading/overview")
-    def get_trading_overview(account_id: int = Query(...)) -> dict[str, Any]:
+    def get_local_trading_overview(account_id: int) -> dict[str, Any]:
         base = trading_store.overview(account_id)
         trades = trade_plan_store.list_trades(account_id)
         plans = execution_store.list_execution_plans(account_id)
         orders = execution_store.list_orders(account_id)
         fills = execution_store.list_fills(account_id)
         reconciliation_issues = execution_store.list_reconciliation_issues(account_id)
+        return {
+            "status": "SUCCESS",
+            **base,
+            "trades": trades,
+            "execution_plans": plans,
+            "orders": orders,
+            "fills": fills,
+            "control": execution_store.get_control(account_id),
+            "reconciliation_issues": reconciliation_issues,
+        }
+
+    @app.get("/api/trading/overview/local")
+    def get_local_trading_overview_endpoint(account_id: int = Query(...)) -> dict[str, Any]:
+        """Read persisted account facts without waiting for a Broker Node round-trip."""
+        return get_local_trading_overview(account_id)
+
+    @app.get("/api/trading/overview")
+    def get_trading_overview(account_id: int = Query(...)) -> dict[str, Any]:
+        local = get_local_trading_overview(account_id)
+        reconciliation_issues = local["reconciliation_issues"]
         try:
             broker_status = broker_gateway.connect(account_id)
         except BrokerNotConnectedError as exc:
@@ -1617,15 +2372,8 @@ def create_app() -> FastAPI:
             # to the UI instead of turning the whole overview into HTTP 500.
             broker_status = {"status": "DISCONNECTED", "message": str(exc)}
         return {
-            "status": "SUCCESS",
-            **base,
-            "trades": trades,
-            "execution_plans": plans,
-            "orders": orders,
-            "fills": fills,
+            **local,
             "broker_status": broker_status,
-            "control": execution_store.get_control(account_id),
-            "reconciliation_issues": reconciliation_issues,
             "data_quality": {
                 "complete": broker_status.get("status") == "CONNECTED"
                 and not bool((broker_status.get("node_status") or {}).get("reconciliation_required"))
@@ -1634,6 +2382,85 @@ def create_app() -> FastAPI:
                 "updated_at": datetime.now(UTC).isoformat(),
             },
         }
+
+    @app.get("/api/trading/live-snapshot")
+    def get_trading_live_snapshot(account_id: int = Query(...)) -> dict[str, Any]:
+        """Read the authoritative broker account/position snapshot.
+
+        This endpoint is deliberately read-only.  It must not consume broker
+        events, write reconciliation records, or enter the execution loop.
+        The browser decides whether to call it based on the market session;
+        when called, a connected Broker Node response is required.
+        """
+        try:
+            # Build one configured channel for this snapshot read.  This
+            # forwards the current GM token once, then reuses the same HTTP
+            # connection for health, account, and positions requests.
+            node_gateway = broker_gateway._gateway(account_id)
+            health = node_gateway.connect()
+            node_status = node_gateway.get_status()
+            healthy = health.get("ok") is True or health.get("status") == "CONNECTED"
+            connection = {
+                **health,
+                "status": "CONNECTED" if healthy else "DISCONNECTED",
+                "node_status": node_status,
+            }
+            if connection.get("status") != "CONNECTED":
+                raise HTTPException(status_code=503, detail=connection.get("message") or "券商通道未连接")
+            account_payload = node_gateway.get_account()
+            payload = account_payload.get("payload") if isinstance(account_payload, dict) else None
+            normalized_account = payload.get("normalized") if isinstance(payload, dict) else None
+            if not isinstance(normalized_account, dict):
+                raise RuntimeError("券商账户资产返回格式无效")
+            broker_positions = broker_gateway._normalize_snapshot_items(node_gateway.get_positions())
+            positions: list[dict[str, Any]] = []
+            for item in broker_positions:
+                quantity = item.get("quantity")
+                available = item.get("available_quantity")
+                average_cost = item.get("average_cost", item.get("cost_price", item.get("vwap")))
+                market_price = item.get("market_price", item.get("price", item.get("last_price")))
+                symbol = normalize_symbol(item.get("symbol") or (item.get("instrument") or {}).get("code"))
+                if not symbol or not all(isinstance(value, (int, float)) for value in (quantity, available, average_cost, market_price)):
+                    raise RuntimeError("券商持仓行情快照缺少标准字段")
+                if quantity < 0 or available < 0 or available > quantity or average_cost <= 0 or market_price <= 0:
+                    raise RuntimeError("券商持仓行情快照包含无效数值")
+                positions.append({
+                    **item,
+                    "symbol": symbol,
+                    "quantity": int(quantity),
+                    "available_quantity": int(available),
+                    "average_cost": float(average_cost),
+                    "market_price": float(market_price),
+                    "market_value": float(quantity) * float(market_price),
+                    "unrealized_pnl": float(quantity) * (float(market_price) - float(average_cost)),
+                    "as_of": item.get("as_of") or item.get("updated_at"),
+                })
+            market_value = sum(item["market_value"] for item in positions)
+            unrealized_pnl = sum(item["unrealized_pnl"] for item in positions)
+            equity = normalized_account.get("equity", normalized_account.get("nav", normalized_account.get("total_assets", normalized_account.get("total_asset"))))
+            available_cash = normalized_account.get("available_cash", normalized_account.get("cash"))
+            if not isinstance(equity, (int, float)) or not isinstance(available_cash, (int, float)):
+                raise RuntimeError("券商账户资产快照缺少 equity 或 available_cash")
+            return {
+                "status": "SUCCESS",
+                "account": {
+                    **normalized_account,
+                    "equity": float(equity),
+                    "available_cash": float(available_cash),
+                    "market_value": market_value,
+                    "unrealized_pnl": unrealized_pnl,
+                    "total_exposure_pct": market_value / float(equity) if equity else 0,
+                },
+                "positions": positions,
+                "broker_status": connection,
+                "as_of": datetime.now(UTC).isoformat(),
+            }
+        except HTTPException:
+            raise
+        except (BrokerNotConnectedError, ConnectionError, BrokerNodeRequestError) as exc:
+            raise HTTPException(status_code=503, detail=f"实时账户快照暂时不可用：{exc}") from exc
+        except (TypeError, ValueError, RuntimeError) as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     @app.get("/api/trading/execution-plans")
     def list_execution_plans(account_id: int = Query(...), status: str | None = Query(None)) -> dict[str, Any]:
@@ -1645,36 +2472,59 @@ def create_app() -> FastAPI:
             data = dict(body)
             for key in ("valid_from", "valid_until"):
                 if data.get(key):
-                    data[key] = datetime.fromisoformat(str(data[key]).replace("Z", "+00:00"))
+                    parsed = datetime.fromisoformat(str(data[key]).replace("Z", "+00:00"))
+                    if parsed.tzinfo is None:
+                        parsed = parsed.replace(tzinfo=_SHANGHAI_TZ)
+                    data[key] = parsed
             trade_plan = trade_plan_store.get(account_id, int(data["trade_plan_id"]))
             if not trade_plan:
                 raise ExecutionValidationError("交易计划不存在")
-            if trade_plan["status"] not in {"READY", "ARMED"}:
+            if trade_plan["status"] not in {"READY", "ARMED", "PARTIALLY_EXECUTED"}:
                 raise ExecutionValidationError("只有已确认或已就绪的交易计划才能创建执行计划")
+            request_id = data.get("client_request_id")
+            if request_id:
+                existing_request = next((item for item in execution_store.list_execution_plans(account_id) if str(item.get("client_request_id")) == str(request_id)), None)
+                if existing_request:
+                    if int(existing_request.get("trade_plan_id") or 0) != int(trade_plan["id"]):
+                        raise ExecutionValidationError("client_request_id 已用于其他动作计划")
+                    return {"status": "SUCCESS", "item": existing_request}
+            # A selected start time that is already current or in the past is
+            # ready to run now. `execution_plan_start_reached` is the single
+            # source of truth for whether an active plan may enter dispatch.
             if data.get("symbol") != trade_plan["symbol"]:
                 raise ExecutionValidationError("执行计划股票必须与交易计划一致")
             calculation = trade_plan.get("calculation_snapshot_json") or {}
-            planned_qty = int(calculation.get("planned_qty") or 0)
+            action_executions = [item for item in execution_store.list_execution_plans(account_id) if int(item.get("trade_plan_id") or 0) == int(trade_plan["id"])]
+            total_filled_qty = sum(int(item.get("filled_qty") or 0) for item in action_executions)
+            planned_qty = max(0, int(calculation.get("planned_qty") or 0) - total_filled_qty)
             if int(data.get("target_qty") or 0) != planned_qty:
-                raise ExecutionValidationError("执行数量必须等于已确认交易计划的计划数量")
+                raise ExecutionValidationError(f"执行数量必须等于动作计划剩余数量 {planned_qty} 股")
+            if data.get("client_request_id") is not None and not str(data["client_request_id"]).strip():
+                raise ExecutionValidationError("client_request_id 不能为空")
             input_data = trade_plan.get("input_json") or {}
-            action_type = str(input_data.get("action_type") or "OPEN")
+            # Child action plans persist their canonical action in the
+            # trade_plan column; their input_json contains action parameters
+            # only.  Reading input_json first misclassified REDUCE/CLOSE as
+            # OPEN and consequently rejected the correct SELL execution plan.
+            action_type = _trade_plan_action_type(trade_plan)
             expected_side = "SELL" if action_type in {"REDUCE", "CLOSE"} else "BUY"
             if data.get("side") != expected_side:
                 raise ExecutionValidationError(f"{action_type} 计划只能创建{expected_side}方向执行计划")
-            max_acceptable_price = float(input_data.get("max_acceptable_entry_price") or 0)
             params = data.get("execution_params") or {}
-            checked_prices = []
-            if data.get("execution_type") in {"LIMIT", "PERSISTENT_LIMIT"}:
-                checked_prices.append(("limit_price", params.get("limit_price")))
-            elif data.get("execution_type") == "PRICE_TRIGGER":
-                checked_prices.append(("trigger_price", params.get("trigger_price")))
-            elif data.get("execution_type") == "PRICE_RANGE":
-                checked_prices.extend((("low_price", params.get("low_price")), ("high_price", params.get("high_price"))))
-            for field, raw_price in checked_prices:
-                if expected_side == "BUY" and raw_price is not None and float(raw_price) > max_acceptable_price:
-                    field_label = {"limit_price": "限价", "trigger_price": "触发价", "low_price": "区间最低价", "high_price": "区间最高价"}.get(field, field)
-                    raise ExecutionValidationError(f"{field_label}不能高于交易计划的最高可接受价")
+            order_type = canonical_order_type(params.get("order_type"))
+            exchange = normalize_symbol(trade_plan["symbol"]).split(":", 1)[0]
+            order_type = validate_order_type_for_exchange(exchange, order_type)
+            order_price_key = "limit_price" if order_type == "LIMIT" else "protection_price"
+            order_price = validate_order_price(exchange, order_type, params.get(order_price_key))
+            params["order_type"] = order_type
+            if order_price is not None:
+                params[order_price_key] = order_price
+            risk_profile = trading_store.get_risk_profile(account_id)
+            max_order_qty = risk_profile.get("max_single_order_quantity")
+            if max_order_qty is not None and planned_qty > float(max_order_qty):
+                raise ExecutionValidationError(f"计划数量 {planned_qty:,} 股超过单笔最大数量 {float(max_order_qty):,.0f} 股，请修改计划或账户设置")
+            if data.get("execution_type") == "PERSISTENT_LIMIT" and order_type != "LIMIT":
+                raise ExecutionValidationError("持续限价执行方式只能使用普通限价委托")
             item = execution_store.create_execution_plan(ExecutionPlanInput(**data, account_id=account_id))
             return {"status": "SUCCESS", "item": item}
         except (KeyError, TypeError, ValueError, ExecutionValidationError) as exc:
@@ -1690,12 +2540,100 @@ def create_app() -> FastAPI:
     @app.patch("/api/trading/execution-plans/{execution_plan_id}/status")
     def update_execution_plan_status(execution_plan_id: int, body: dict[str, Any] = Body(...), account_id: int = Query(...)) -> dict[str, Any]:
         try:
-            item = execution_store.update_execution_status(account_id, execution_plan_id, str(body["status"]))
+            requested_status = str(body["status"])
+            if requested_status == "CANCELLED":
+                raise HTTPException(status_code=409, detail="取消执行方案需要同时撤销未成交委托，请使用取消操作")
+            if requested_status in {"ACTIVE", "PAUSED"}:
+                open_order_statuses = {"PENDING_SUBMIT", "SUBMITTED", "ACCEPTED", "PARTIALLY_FILLED", "CANCEL_PENDING", "UNKNOWN"}
+                orders = execution_store.list_orders(account_id, execution_plan_id)
+                if any(str(order.get("status") or "").upper() in open_order_statuses for order in orders):
+                    if requested_status == "PAUSED":
+                        raise HTTPException(status_code=409, detail="这项计划已有未结束的券商委托，不能暂停；如需停止未成交部分，请使用取消（撤单）")
+                    raise HTTPException(status_code=409, detail="这项计划仍有未结束的券商委托，暂不能恢复执行；请先等待委托结束或完成撤单")
+            item = execution_store.update_execution_status(account_id, execution_plan_id, requested_status)
+        except HTTPException:
+            raise
         except (KeyError, TypeError, ValueError, ExecutionValidationError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         if not item:
             raise HTTPException(status_code=409, detail="ExecutionPlan cannot change from its current status")
         return {"status": "SUCCESS", "item": item}
+
+    @app.post("/api/trading/execution-plans/{execution_plan_id}/cancel")
+    def cancel_execution_plan(execution_plan_id: int, account_id: int = Query(...)) -> dict[str, Any]:
+        execution_plan = execution_store.get_execution_plan(account_id, execution_plan_id)
+        if not execution_plan:
+            raise HTTPException(status_code=404, detail="未找到这条执行方案")
+        if execution_plan.get("status") in {"COMPLETED", "CANCELLED", "EXPIRED"}:
+            raise HTTPException(status_code=409, detail="这条执行方案已经结束")
+        cancellable = {"PENDING_SUBMIT", "SUBMITTED", "ACCEPTED", "PARTIALLY_FILLED", "CANCEL_PENDING", "UNKNOWN"}
+        orders = execution_store.list_orders(account_id, execution_plan_id)
+        open_orders = [order for order in orders if str(order.get("status")) in cancellable]
+        without_broker_id = [order for order in open_orders if not order.get("broker_order_id")]
+        if without_broker_id:
+            raise HTTPException(status_code=409, detail="存在尚未取得券商编号的委托。系统已暂停继续提交；请先核实这些委托状态，再取消执行方案。")
+        paused = execution_store.update_execution_status(account_id, execution_plan_id, "PAUSED")
+        if not paused:
+            raise HTTPException(status_code=409, detail="无法暂停这条执行方案")
+        cancel_results = []
+        for order in open_orders:
+            if str(order.get("status")) == "CANCEL_PENDING":
+                result = order.get("raw_broker_data") or {}
+                command_id = result.get("command_id") if isinstance(result, dict) else None
+                if not command_id:
+                    raise HTTPException(status_code=409, detail=f"委托 {order['id']} 正在撤单，但没有可查询的 Node 指令编号；请刷新订单状态后再操作")
+            else:
+                result = None
+                command_id = None
+            try:
+                if command_id is None:
+                    previous_broker_data = order.get("raw_broker_data") or {}
+                    cancel_attempt = int(previous_broker_data.get("_cancel_attempt_count") or 0) if isinstance(previous_broker_data, dict) else 0
+                    result = broker_gateway.cancel_order(account_id, {
+                        "client_order_id": order.get("client_order_id"),
+                        "cancel_request_id": f"cancel:{account_id}:{order['id']}:{cancel_attempt}",
+                    })
+                    command_id = str(result.get("command_id") or "")
+                    if not command_id:
+                        raise HTTPException(status_code=502, detail="Broker Node 未返回撤单指令编号，无法跟踪撤单结果")
+                    marked = execution_store.mark_order_cancel_pending(
+                        account_id,
+                        int(order["id"]),
+                        str(result.get("broker_order_id")) if result.get("broker_order_id") else None,
+                        result,
+                    )
+                    if not marked:
+                        raise HTTPException(status_code=409, detail=f"委托 {order['id']} 已变化，撤单状态未能记录")
+
+                deadline = time.monotonic() + 30
+                node_command = None
+                while time.monotonic() < deadline:
+                    node_command = broker_gateway.get_command(account_id, command_id)
+                    command_status = str(node_command.get("status") or "").upper()
+                    if command_status in {"ACKED", "FAILED_SAFE", "UNKNOWN"}:
+                        break
+                    time.sleep(0.25)
+                command_status = str((node_command or {}).get("status") or "").upper()
+                if command_status not in {"ACKED", "FAILED_SAFE", "UNKNOWN"}:
+                    raise HTTPException(status_code=504, detail="撤单指令仍在 Node 排队或处理中；系统已锁定该委托，再次点击会查询同一条撤单指令，不会重复发送")
+                if command_status == "FAILED_SAFE":
+                    execution_store.restore_order_after_cancel_rejection(account_id, int(order["id"]), command_id)
+                    raise HTTPException(status_code=502, detail=f"Node 未能执行撤单指令：{node_command.get('error_message') or node_command.get('error_code') or '未知原因'}")
+                if command_status == "UNKNOWN":
+                    raise HTTPException(status_code=502, detail="Node 无法确认撤单指令结果；委托已锁定，请核对券商订单状态后再继续")
+                cancel_results.append({"order_id": order["id"], "command_id": command_id, "status": "ACKED"})
+            except HTTPException:
+                raise
+            except BrokerNotConnectedError as exc:
+                raise HTTPException(status_code=503, detail=f"执行方案已暂停，但券商连接不可用，未能完成撤单：{exc}") from exc
+            except BrokerNodeRequestError as exc:
+                raise HTTPException(status_code=502, detail={"message": "执行方案已暂停，但券商撤单请求失败", "broker_status": exc.status, "broker_response": exc.payload}) from exc
+            except (ConnectionError, TimeoutError) as exc:
+                raise HTTPException(status_code=502, detail=f"已提交撤单指令，但暂时无法读取 Node 执行结果；委托已锁定，请重试查询：{exc}") from exc
+        item = execution_store.update_execution_status(account_id, execution_plan_id, "CANCELLED")
+        if not item:
+            raise HTTPException(status_code=409, detail="撤单请求已发出，但执行方案状态无法结束；请刷新核对")
+        return {"status": "SUCCESS", "item": item, "cancel_requests": cancel_results}
 
     @app.get("/api/trading/orders")
     def list_trading_orders(account_id: int = Query(...)) -> dict[str, Any]:
@@ -1728,14 +2666,19 @@ def create_app() -> FastAPI:
         if not orders:
             raise HTTPException(status_code=404, detail="Order not found")
         order = orders[0]
-        if not order.get("broker_order_id"):
-            raise HTTPException(status_code=409, detail="订单尚未获得券商订单号，当前不能执行券商撤单；请先确认提交状态")
         try:
-            result = broker_gateway.cancel_order(account_id, {"client_order_id": order.get("client_order_id"), "cancel_request_id": str(order_id)})
-            item = execution_store.mark_order_cancelled(account_id, order_id, str(result["broker_order_id"]))
+            if not order.get("broker_order_id"):
+                raise HTTPException(status_code=409, detail="订单尚未获得券商订单号，当前不能执行券商撤单；请先确认提交状态")
+            result = broker_gateway.cancel_order(account_id, {"client_order_id": order.get("client_order_id"), "cancel_request_id": f"cancel:{account_id}:{order_id}"})
+            item = execution_store.mark_order_cancel_pending(
+                account_id,
+                order_id,
+                str(result.get("broker_order_id")) if result.get("broker_order_id") else None,
+                result,
+            )
             if not item:
                 raise HTTPException(status_code=409, detail="Order cannot be cancelled from its current status")
-            return {"status": "SUCCESS", "item": item}
+            return {"status": "SUCCESS", "item": item, "cancel_request": result}
         except HTTPException:
             raise
         except BrokerNotConnectedError as exc:
@@ -1752,10 +2695,10 @@ def create_app() -> FastAPI:
             capabilities = broker_gateway.get_capabilities(account_id)
         except BrokerNotConnectedError as exc:
             connection = {"status": "DISCONNECTED", "message": str(exc)}
-            capabilities = {"status": "DISCONNECTED", "native_orders": [], "conditional_execution": [], "algorithms": []}
+            capabilities = {"status": "DISCONNECTED", "native_orders": [], "order_types_by_exchange": {}, "verified_order_types": [], "unverified_order_types": [], "conditional_execution": [], "algorithms": []}
         except (ConnectionError, BrokerNodeRequestError) as exc:
             connection = {"status": "DISCONNECTED", "message": str(exc)}
-            capabilities = {"status": "DISCONNECTED", "native_orders": [], "conditional_execution": [], "algorithms": []}
+            capabilities = {"status": "DISCONNECTED", "native_orders": [], "order_types_by_exchange": {}, "verified_order_types": [], "unverified_order_types": [], "conditional_execution": [], "algorithms": []}
         return {"status": "SUCCESS", "connection": connection, "capabilities": capabilities}
 
     @app.get("/api/trading/control")
@@ -1784,8 +2727,13 @@ def create_app() -> FastAPI:
         cancelled = []
         try:
             for order in open_orders:
-                result = broker_gateway.cancel_order(account_id, {"client_order_id": order.get("client_order_id"), "cancel_request_id": str(order["id"])})
-                item = execution_store.mark_order_cancelled(account_id, order["id"], str(result["broker_order_id"]))
+                result = broker_gateway.cancel_order(account_id, {"client_order_id": order.get("client_order_id"), "cancel_request_id": f"cancel:{account_id}:{order['id']}"})
+                item = execution_store.mark_order_cancel_pending(
+                    account_id,
+                    order["id"],
+                    str(result.get("broker_order_id")) if result.get("broker_order_id") else None,
+                    result,
+                )
                 if not item:
                     raise HTTPException(status_code=409, detail=f"订单 {order['id']} 无法撤销")
                 cancelled.append(item)
@@ -1795,14 +2743,69 @@ def create_app() -> FastAPI:
 
     @app.get("/api/trading/reconciliation/issues")
     def list_reconciliation_issues(account_id: int = Query(...)) -> dict[str, Any]:
-        return {"status": "SUCCESS", "items": execution_store.list_reconciliation_issues(account_id)}
+        items = execution_store.list_reconciliation_issues(account_id)
+        # Keep the record identifier inside each item for audit/detail views,
+        # but expose the count separately so consumers cannot mistake an
+        # auto-increment id (for example, 991) for the number of open issues.
+        return {"status": "SUCCESS", "count": len(items), "items": items}
+
+    @app.post("/api/trading/reconciliation/issues/{issue_id}/resolve")
+    def resolve_reconciliation_issue(issue_id: int, body: ReconciliationResolutionRequest, account_id: int = Query(...)) -> dict[str, Any]:
+        """Close a verified never-submitted local order without deleting audit facts."""
+        if not body.note.strip():
+            raise HTTPException(status_code=422, detail="resolution note cannot be empty")
+        issues = execution_store.list_reconciliation_issues(account_id)
+        issue = next((item for item in issues if int(item["id"]) == issue_id), None)
+        if not issue:
+            raise HTTPException(status_code=404, detail="reconciliation issue not found for account")
+        local = issue.get("local_value") if isinstance(issue.get("local_value"), dict) else {}
+        raw_broker_data = local.get("raw_broker_data") if isinstance(local.get("raw_broker_data"), dict) else {}
+        command_id = raw_broker_data.get("command_id")
+        client_order_id = local.get("client_order_id")
+        if not client_order_id:
+            raise HTTPException(status_code=409, detail="对账记录缺少本地委托标识，不能终态化")
+        if body.resolution_type == "BROKER_COMMAND_NOT_FOUND":
+            if not command_id:
+                raise HTTPException(status_code=409, detail="对账记录缺少可核验的券商命令标识，不能按命令不存在终态化")
+            try:
+                gateway = broker_gateway._gateway(account_id)
+                gateway.get_command(str(command_id))
+                raise HTTPException(status_code=409, detail="券商命令仍存在，不能按未提交委托终态化")
+            except HTTPException:
+                raise
+            except BrokerNodeRequestError as exc:
+                if exc.status != 404:
+                    raise HTTPException(status_code=502, detail={"message": "无法核验券商命令状态", "broker_status": exc.status, "broker_response": exc.payload}) from exc
+            except (BrokerNotConnectedError, ConnectionError) as exc:
+                raise HTTPException(status_code=503, detail=f"券商命令核验失败，未执行终态化：{exc}") from exc
+        elif body.resolution_type == "BROKER_VALIDATION_REJECTED":
+            # A Broker Node HTTP 4xx validation response is terminal only when
+            # its durable order and fill snapshots also contain no local
+            # client_order_id.  This handles rejects that occur before a
+            # command_id is allocated without weakening the unknown-order
+            # safety gate.
+            if int(raw_broker_data.get("status") or 0) not in {400, 401, 403, 409, 422} and "HTTP 400" not in str(local.get("reject_message") or ""):
+                raise HTTPException(status_code=409, detail="当前对账记录没有已核验的券商校验拒绝证据")
+        try:
+            broker_orders = broker_gateway.get_orders(account_id)
+            broker_fills = broker_gateway.get_fills(account_id)
+        except (BrokerNotConnectedError, ConnectionError, BrokerNodeRequestError) as exc:
+            raise HTTPException(status_code=503, detail=f"券商订单/成交核验失败，未执行终态化：{exc}") from exc
+        if any(str(item.get("client_order_id") or "") == str(client_order_id) for item in broker_orders + broker_fills):
+            raise HTTPException(status_code=409, detail="券商仍存在该本地委托或成交事实，不能终态化")
+        try:
+            result = execution_store.resolve_unsubmitted_order_issue(account_id, issue_id, body.note, body.resolution_type)
+        except ExecutionValidationError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"status": "SUCCESS", **result}
 
     @app.post("/api/trading/broker-events/sync")
     def sync_broker_events(account_id: int = Query(...)) -> dict[str, Any]:
         """Synchronize all currently available durable Broker Node events."""
         try:
             result = broker_event_sync.sync_account(account_id)
-            return {"status": "SUCCESS", "sync": result, "cursor": execution_store.get_event_cursor(account_id)}
+            snapshots = broker_event_sync.sync_current_snapshots(account_id)
+            return {"status": "SUCCESS", "sync": result, "snapshots": snapshots, "cursor": execution_store.get_event_cursor(account_id)}
         except BrokerNotConnectedError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         except BrokerNodeRequestError as exc:
@@ -1818,7 +2821,39 @@ def create_app() -> FastAPI:
         if not execution_plan:
             raise HTTPException(status_code=404, detail="ExecutionPlan not found")
         try:
-            order = OrderInput(execution_plan_id=execution_plan_id, symbol=execution_plan["symbol"], side=execution_plan["side"], account_id=account_id, **body)
+            planned_params = execution_plan.get("execution_params_json") or execution_plan.get("execution_params") or {}
+            planned_order_type = canonical_order_type(planned_params.get("order_type"))
+            requested_order_type = canonical_order_type(body.get("order_type"))
+            if requested_order_type != planned_order_type:
+                raise ExecutionValidationError("委托类型必须与已保存的执行计划一致")
+            exchange = normalize_symbol(execution_plan["symbol"]).split(":", 1)[0]
+            validate_order_type_for_exchange(exchange, requested_order_type)
+            price_key = "limit_price" if planned_order_type == "LIMIT" else "protection_price"
+            planned_price = validate_order_price(exchange, planned_order_type, planned_params.get(price_key))
+            requested_price = validate_order_price(exchange, requested_order_type, body.get("price", planned_price))
+            if requested_price != planned_price:
+                raise ExecutionValidationError("委托价格必须与已保存的执行计划一致")
+            order = OrderInput(
+                execution_plan_id=execution_plan_id,
+                symbol=execution_plan["symbol"],
+                side=execution_plan["side"],
+                account_id=account_id,
+                order_type=planned_order_type,
+                quantity=int(body["quantity"]),
+                price=planned_price,
+            )
+            order_type = canonical_order_type(order.order_type)
+            exchange = normalize_symbol(order.symbol).split(":", 1)[0]
+            order_price = validate_order_price(exchange, order_type, order.price)
+            order = OrderInput(
+                execution_plan_id=order.execution_plan_id,
+                symbol=order.symbol,
+                side=order.side,
+                order_type=order_type,
+                quantity=order.quantity,
+                price=order_price,
+                account_id=order.account_id,
+            )
             result = PreTradeRisk.check(trading_store.get_account(account_id), trading_store.get_risk_profile(account_id), execution_plan, order, trading_store.list_positions(account_id), execution_store.list_orders(account_id), datetime.now(UTC))
             return {"status": "SUCCESS", "risk": {"status": result.status, "checks": result.checks}}
         except (TypeError, ValueError, ExecutionValidationError) as exc:
@@ -1829,6 +2864,12 @@ def create_app() -> FastAPI:
         execution_plan = execution_store.get_execution_plan(account_id, execution_plan_id)
         if not execution_plan:
             raise HTTPException(status_code=404, detail="ExecutionPlan not found")
+        try:
+            account = trading_store.get_account(account_id)
+            if not execution_submission_window_open(account, trading_calendar):
+                raise HTTPException(status_code=409, detail="当前不在该账号允许的报单时段，执行计划会在可报单时段继续处理")
+        except TradingCalendarUnavailableError as exc:
+            raise HTTPException(status_code=503, detail=f"交易日历暂不可用，已暂停报单：{exc}") from exc
         control = execution_store.get_control(account_id)
         if control.get("execution_paused"):
             raise HTTPException(status_code=409, detail="交易执行已暂停")
@@ -1836,7 +2877,27 @@ def create_app() -> FastAPI:
         if unresolved_issues:
             raise HTTPException(status_code=409, detail=f"当前账号有 {len(unresolved_issues)} 项未解决对账事项，确认前不能提交新订单")
         try:
-            order = OrderInput(execution_plan_id=execution_plan_id, symbol=execution_plan["symbol"], side=execution_plan["side"], account_id=account_id, **body)
+            planned_params = execution_plan.get("execution_params_json") or execution_plan.get("execution_params") or {}
+            planned_order_type = canonical_order_type(planned_params.get("order_type"))
+            requested_order_type = canonical_order_type(body.get("order_type"))
+            if requested_order_type != planned_order_type:
+                raise ExecutionValidationError("委托类型必须与已保存的执行计划一致")
+            exchange = normalize_symbol(execution_plan["symbol"]).split(":", 1)[0]
+            validate_order_type_for_exchange(exchange, requested_order_type)
+            price_key = "limit_price" if planned_order_type == "LIMIT" else "protection_price"
+            planned_price = validate_order_price(exchange, planned_order_type, planned_params.get(price_key))
+            requested_price = validate_order_price(exchange, requested_order_type, body.get("price"))
+            if requested_price != planned_price:
+                raise ExecutionValidationError("委托价格必须与已保存的执行计划一致")
+            order = OrderInput(
+                execution_plan_id=execution_plan_id,
+                symbol=execution_plan["symbol"],
+                side=execution_plan["side"],
+                account_id=account_id,
+                order_type=planned_order_type,
+                quantity=int(body["quantity"]),
+                price=planned_price,
+            )
             existing_plan_orders = [
                 item for item in execution_store.list_orders(account_id, execution_plan_id)
                 if item.get("status") not in {"CANCELLED", "FILLED", "REJECTED", "EXPIRED"}
@@ -1856,6 +2917,25 @@ def create_app() -> FastAPI:
                 raise HTTPException(status_code=409, detail="券商节点当前处于暂停状态，不能提交订单")
             if node_status.get("execution_enabled") is not True:
                 raise HTTPException(status_code=409, detail="券商节点当前未开放交易执行，不能提交订单")
+            if order.side == "SELL":
+                # T+1 availability is a broker fact and can change after the
+                # last background snapshot. Read it immediately before the
+                # broker boundary so a stale local position cannot produce a
+                # known-invalid sell request.
+                broker_positions = broker_gateway.get_positions(account_id)
+                expected_symbol = _execution_symbol(str(order.symbol))
+                broker_position = next(
+                    (position for position in broker_positions if _snapshot_symbol(position) == expected_symbol),
+                    None,
+                )
+                if broker_position is None:
+                    raise HTTPException(status_code=409, detail="券商当前没有该证券的可卖持仓，不能提交卖出订单")
+                try:
+                    broker_available = int(broker_position.get("available_quantity"))
+                except (TypeError, ValueError) as exc:
+                    raise HTTPException(status_code=502, detail="券商持仓可卖数量字段无效，不能提交卖出订单") from exc
+                if broker_available < order.quantity:
+                    raise HTTPException(status_code=409, detail=f"券商当前可卖数量为 {broker_available} 股，少于本次卖出 {order.quantity} 股")
             client_order_id = f"LLL-{datetime.now(UTC).strftime('%Y%m%d%H%M%S%f')}-{uuid.uuid4().hex[:10]}"
             broker_account = trading_store.get_broker_account(account_id)
             if not broker_account:
@@ -1874,18 +2954,22 @@ def create_app() -> FastAPI:
                 code, exchange = symbol, "SH"
             else:
                 code, exchange = symbol, "SZ"
-            broker_order = broker_gateway.submit_order(account_id, {
+            broker_payload = {
                 "request_id": f"{client_order_id}:submit",
                 "client_order_id": client_order_id,
                 "broker_account_key": broker_account["broker_account_key"],
+                "code": code,
+                "exchange": exchange,
                 "instrument": {"code": code, "exchange": exchange},
                 "side": order.side,
-                "order_type": "LIMIT",
-                "price": str(order.price) if order.price is not None else "0",
+                "order_type": order.order_type,
                 "quantity": order.quantity,
-                "source": {"system": "LLL", "execution_plan_id": execution_plan_id},
+                "source": {"system": "LLL", "execution_plan_id": execution_plan_id, "order_type": order.order_type},
                 "safety_constraints": {"account_id": account_id, "order_type": order.order_type},
-            })
+            }
+            if order.price is not None:
+                broker_payload["price"] = str(order.price)
+            broker_order = broker_gateway.submit_order(account_id, broker_payload)
             broker_status = str(broker_order.get("status") or "").upper()
             if broker_status not in {"QUEUED", "CLAIMED", "DISPATCHING", "SUBMITTED", "ACCEPTED"}:
                 raise RuntimeError("Broker Node order response has no accepted command status")
@@ -1903,7 +2987,12 @@ def create_app() -> FastAPI:
             # exists. Keep the local order non-retryable until event/reconcile
             # confirms its final state.
             if 'item' in locals():
-                execution_store.record_order_update(account_id, int(item["id"]), {"status": "UNKNOWN", "reject_message": str(exc), "raw_broker_data": exc.payload})
+                if _is_definitive_broker_rejection(exc):
+                    detail = exc.payload.get("detail") if isinstance(exc.payload, dict) else {}
+                    reject_code = detail.get("code") if isinstance(detail, dict) else None
+                    execution_store.record_order_update(account_id, int(item["id"]), {"status": "REJECTED", "reject_code": reject_code, "reject_message": _broker_error_message(exc), "raw_broker_data": exc.payload})
+                    raise HTTPException(status_code=422, detail={"message": "券商拒绝了该订单", "broker_status": exc.status, "broker_response": exc.payload}) from exc
+                execution_store.record_order_update(account_id, int(item["id"]), {"status": "UNKNOWN", "reject_message": _broker_error_message(exc), "raw_broker_data": exc.payload})
             raise HTTPException(status_code=502, detail={"message": "券商委托请求失败，订单状态待对账确认", "broker_status": exc.status, "broker_response": exc.payload}) from exc
         except ConnectionError as exc:
             if 'item' in locals():
@@ -1925,6 +3014,8 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         except (ConnectionError, BrokerNodeRequestError) as exc:
             raise HTTPException(status_code=503, detail="券商事实读取失败，对账未完成") from exc
+        except (TypeError, ValueError, TradingDataValidationError) as exc:
+            raise HTTPException(status_code=422, detail=f"对账数据不完整：{exc}") from exc
 
     @app.post("/api/trade-plans")
     def create_trade_plan(body: dict[str, Any] = Body(...), account_id: int = Query(...)) -> dict[str, Any]:
@@ -1932,9 +3023,22 @@ def create_app() -> FastAPI:
             if not trading_store.trade_plan_context(account_id)["is_ready"]:
                 raise TradePlanValidationError("请先完成交易账户和风险规则配置，再创建交易计划")
             plan, account, instrument, expires_at = _trade_plan_payload(body, account_id)
-            calculation = TradePlanCalculator.calculate(plan, account, instrument)
+            if plan.action_type == "OPEN" and plan.trade_id is None and not bool(body.get("allow_independent_trade")):
+                existing_trade = trade_plan_store.find_unfinished_trade(account_id, plan.symbol)
+                if existing_trade:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "code": "UNFINISHED_TRADE_EXISTS",
+                            "message": "这只股票已有一笔未结束的交易，请继续原交易；如果确实要分开管理，请明确确认新建独立交易。",
+                            "trade": existing_trade,
+                        },
+                    )
+            calculation = TradePlanCalculator.calculate(plan, account, instrument, require_complete=bool(body.get("validate_complete")))
             item = trade_plan_store.create(plan, account, instrument, calculation, expires_at)
             return {"status": "SUCCESS", "item": item, "calculation": calculation}
+        except HTTPException:
+            raise
         except (TypeError, ValueError, TradePlanValidationError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -1951,10 +3055,10 @@ def create_app() -> FastAPI:
             if not trading_store.trade_plan_context(account_id)["is_ready"]:
                 raise TradePlanValidationError("请先完成交易账户和风险规则配置，再编辑交易计划")
             plan, account, instrument, _ = _trade_plan_payload(body, account_id)
-            calculation = TradePlanCalculator.calculate(plan, account, instrument)
+            calculation = TradePlanCalculator.calculate(plan, account, instrument, require_complete=bool(body.get("validate_complete")))
             item = trade_plan_store.update_draft(account_id, plan_id, plan, account, instrument, calculation)
             if not item:
-                raise HTTPException(status_code=409, detail="仅草稿状态的交易计划可以编辑")
+                raise HTTPException(status_code=409, detail="只有草稿或尚未开始执行的已确认计划可以编辑；保存后需重新确认")
             return {"status": "SUCCESS", "item": item, "calculation": calculation}
         except HTTPException:
             raise
@@ -1972,8 +3076,17 @@ def create_app() -> FastAPI:
         try:
             if not trading_store.trade_plan_context(account_id)["is_ready"]:
                 raise TradePlanValidationError("请先完成交易账户和风险规则配置，再确认交易计划")
+            existing = trade_plan_store.get(account_id, plan_id)
+            if existing and str(existing.get("action_type") or "OPEN").upper() in {"ADD", "REDUCE", "CLOSE"}:
+                calculation = existing.get("calculation_snapshot_json") or {}
+                if calculation.get("blocking_errors"):
+                    raise HTTPException(status_code=422, detail={"message": "Action plan has blocking errors", "calculation": calculation})
+                item = trade_plan_store.update_status(account_id, plan_id, "READY", calculation)
+                if not item:
+                    raise HTTPException(status_code=409, detail="动作计划无法从当前状态确认")
+                return {"status": "SUCCESS", "item": item, "calculation": calculation}
             plan, account, instrument, _ = _trade_plan_payload(body, account_id)
-            calculation = TradePlanCalculator.calculate(plan, account, instrument)
+            calculation = TradePlanCalculator.calculate(plan, account, instrument, require_complete=True)
             if calculation.get("blocking_errors"):
                 raise HTTPException(status_code=422, detail={"message": "TradePlan has blocking errors", "calculation": calculation})
             item = trade_plan_store.update_status(account_id, plan_id, "READY", calculation)
@@ -2037,24 +3150,25 @@ def create_app() -> FastAPI:
                 "key_takeaways": [],
             }
 
-            # 导入完成的定义包含“全文股票与题材索引已生成”。提取失败时不写入
-            # 新版本文章，避免页面继续使用正文与关键股票不一致的半成品数据。
-            from backend.market_review.review_stock_extraction import extract_and_store_review_stock_mentions
-            extraction = extract_and_store_review_stock_mentions(store, trade_date, content)
-
             saved = store.save_imported_review(
                 trade_date=trade_date,
                 raw_content=content,
                 payload=parsed,
             )
-            saved["stock_extraction"] = extraction
-            
-            # 联动附加同花顺概念与客观市场数据
-            from backend.market_review.market_data_service import fetch_daily_market_objective_data
-            saved["market_data"] = fetch_daily_market_objective_data(trade_date)
-            
-            # 两条链路分别写入独立快照表，可并行运行，避免题材周期和资金脉络被市场全景阻塞。
-            background_tasks.add_task(_launch_imported_review_updates, trade_date)
+            from backend.market_review.review_stock_extraction import scan_review_stock_links
+            saved["article_stock_links"] = scan_review_stock_links(store, content)
+            # Markdown is now immediately readable.  Everything derived from it
+            # runs independently and survives a backend restart.
+            store.enqueue_import_enrichment_job(trade_date)
+            store.enqueue_snapshot_update_job(trade_date)
+            saved["background_updates"] = {
+                "stock_extraction": "PENDING",
+                "concept_board": "PENDING",
+                "market_panorama": "PENDING",
+                "market_memory": "PENDING",
+            }
+            background_tasks.add_task(_start_imported_review_enrichments, trade_date)
+            background_tasks.add_task(_start_imported_review_updates, trade_date)
             return saved
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -2064,19 +3178,141 @@ def create_app() -> FastAPI:
         from backend.market_review.market_data_service import fetch_daily_market_objective_data
         return fetch_daily_market_objective_data(trade_date)
 
+    @app.get("/api/market-review/import-enrichment")
+    def import_enrichment_status(date: str = Query(...)) -> dict[str, Any]:
+        """Status and completed stock bindings for one already-saved review."""
+        store = PostgresMarketReviewStore(_database_url())
+        job = store.load_import_enrichment_job(date)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"{date} 尚无导入后台任务")
+        status = str(job["stock_extraction_status"])
+        article_stock_links = store.list_imported_review_stock_links(date)
+        if not article_stock_links:
+            review = store.load_imported_review(date)
+            if review is not None:
+                from backend.market_review.review_stock_extraction import scan_review_stock_links
+                article_stock_links = scan_review_stock_links(store, str(review["raw_content"]))
+        return {
+            "trade_date": str(job["trade_date"]),
+            "stock_extraction_status": status,
+            "concept_board_status": str(job["concept_board_status"]),
+            "stock_extraction_error": job["stock_extraction_error"],
+            "concept_board_error": job["concept_board_error"],
+            "article_stock_links": article_stock_links,
+        }
+
+    @app.post("/api/market-review/capital-flow-stocks/resolve")
+    def resolve_capital_flow_stocks(body: CapitalFlowStockResolveRequest) -> dict[str, Any]:
+        """Resolve the names recorded in capital-flow snapshots to local securities.
+
+        Capital-flow history predates code-bearing stock fields, so this endpoint only
+        accepts deterministic bindings: exact name, a listing suffix removal, or a
+        unique prefix/suffix match.  Ambiguous names are explicitly returned rather
+        than opening an arbitrary K-line.
+        """
+        requested_names = list(dict.fromkeys(str(value).strip() for value in body.names if str(value).strip()))
+        if not requested_names:
+            return {"resolved": {}, "unresolved": []}
+
+        store = PostgresScreeningStore(_database_url())
+        resolved: dict[str, dict[str, str]] = {}
+        unresolved: list[dict[str, str]] = []
+        with store.connect() as conn:
+            for name in requested_names:
+                rows = conn.execute(
+                    "select asset_code, name from screening_asset_master where asset_type = 'stock' and name = %s order by asset_code",
+                    (name,),
+                ).fetchall()
+                if not rows:
+                    stripped_name = re.sub(r"-[A-Z]+$", "", name.upper()).strip()
+                    if stripped_name and stripped_name != name:
+                        rows = conn.execute(
+                            "select asset_code, name from screening_asset_master where asset_type = 'stock' and name = %s order by asset_code",
+                            (stripped_name,),
+                        ).fetchall()
+                if not rows:
+                    rows = conn.execute(
+                        """
+                        select asset_code, name from screening_asset_master
+                        where asset_type = 'stock' and (name like %s or name like %s)
+                        order by asset_code
+                        """,
+                        (f"{name}%", f"%{name}"),
+                    ).fetchall()
+                if len(rows) == 1:
+                    row = rows[0]
+                    resolved[name] = {"code": str(row["asset_code"]), "name": str(row["name"])}
+                else:
+                    unresolved.append({
+                        "name": name,
+                        "reason": "证券主数据中未找到同名证券" if not rows else "同名证券不唯一，无法安全绑定代码",
+                    })
+        return {"resolved": resolved, "unresolved": unresolved}
+
+    @app.get("/api/stocks/search")
+    def search_stocks(q: str = Query(..., min_length=1, max_length=40)) -> dict[str, Any]:
+        query = q.strip().upper()
+        if not query:
+            return {"items": []}
+        code_query = re.sub(r"\.(SZ|SH|BJ)$", "", query)
+        store = PostgresScreeningStore(_database_url())
+        with store.connect() as conn:
+            rows = conn.execute(
+                """
+                select asset_code, name from screening_asset_master
+                where asset_type = 'stock'
+                  and (upper(name) like %s or replace(upper(asset_code), '.SZ', '') like %s
+                       or replace(upper(asset_code), '.SH', '') like %s
+                       or replace(upper(asset_code), '.BJ', '') like %s)
+                order by case when upper(name) = %s or replace(upper(asset_code), '.SZ', '') = %s
+                                  or replace(upper(asset_code), '.SH', '') = %s
+                                  or replace(upper(asset_code), '.BJ', '') = %s then 0 else 1 end,
+                         asset_code
+                limit 20
+                """,
+                (f"%{query}%", f"%{code_query}%", f"%{code_query}%", f"%{code_query}%",
+                 query, code_query, code_query, code_query),
+            ).fetchall()
+        return {"items": [{"code": str(row["asset_code"]), "name": str(row["name"])} for row in rows]}
+
+    def _load_imported_market_data(trade_date: str) -> dict[str, Any]:
+        """Load exact-date objective data without blocking access to the article.
+
+        A newly imported review may legitimately precede the local daily-bar sync.
+        In that case the article remains readable and the missing data is explicit;
+        no previous-day or synthetic market snapshot is substituted.
+        """
+        from backend.market_review.market_data_service import (
+            MarketObjectiveDataUnavailable,
+            fetch_daily_market_objective_data,
+        )
+
+        try:
+            return {
+                "market_data": fetch_daily_market_objective_data(trade_date),
+                "market_data_status": "READY",
+                "market_data_error": None,
+            }
+        except MarketObjectiveDataUnavailable as exc:
+            return {
+                "market_data": None,
+                "market_data_status": "WAITING_FOR_MARKET_DATA",
+                "market_data_error": str(exc),
+            }
+
     @app.get("/api/market-review/overview/latest")
     def latest_overview() -> dict[str, Any]:
         store = PostgresMarketReviewStore(_database_url())
         imported = store.load_latest_imported_review()
         if imported is not None:
             trade_date = imported["trade_date"]
-            from backend.market_review.market_data_service import fetch_daily_market_objective_data
+            market_data = _load_imported_market_data(trade_date)
             return {
                 "is_imported": True,
                 "trade_date": trade_date,
                 "raw_content": imported["raw_content"],
                 "imported_payload": imported["payload"],
-                "market_data": fetch_daily_market_objective_data(trade_date),
+                **market_data,
                 "created_at": imported["created_at"],
             }
         report = store.load_latest_overview_report()
@@ -2086,21 +3322,30 @@ def create_app() -> FastAPI:
 
     @app.get("/api/market-review/overview/{trade_date}")
     def overview_by_date(trade_date: str) -> dict[str, Any]:
+        # Reject runtime values such as ``[object Object]`` before they reach the
+        # database.  This keeps a client-side date-shape error explicit instead of
+        # misreporting it as a missing historical review.
+        normalized_trade_date = _normalize_trade_date(trade_date, "trade_date")
         store = PostgresMarketReviewStore(_database_url())
-        imported = store.load_imported_review(trade_date)
+        imported = store.load_imported_review(normalized_trade_date)
         if imported is not None:
-            from backend.market_review.market_data_service import fetch_daily_market_objective_data
+            market_data = _load_imported_market_data(normalized_trade_date)
+            from backend.market_review.review_stock_extraction import scan_review_stock_links
+            article_stock_links = store.list_imported_review_stock_links(normalized_trade_date)
+            if not article_stock_links:
+                article_stock_links = scan_review_stock_links(store, str(imported["raw_content"]))
             return {
                 "is_imported": True,
                 "trade_date": imported["trade_date"],
                 "raw_content": imported["raw_content"],
                 "imported_payload": imported["payload"],
-                "market_data": fetch_daily_market_objective_data(trade_date),
+                "article_stock_links": article_stock_links,
+                **market_data,
                 "created_at": imported["created_at"],
             }
-        report = store.load_overview_report(trade_date)
+        report = store.load_overview_report(normalized_trade_date)
         if report is None:
-            raise HTTPException(status_code=404, detail=f"No report found for trade_date={trade_date}")
+            raise HTTPException(status_code=404, detail=f"No report found for trade_date={normalized_trade_date}")
         return report
 
     @app.post("/api/market-review/overview/generate")
@@ -2330,6 +3575,25 @@ def create_app() -> FastAPI:
                 code_str = f"{code_str}.BJ"
 
         resolved_code = code_str
+        if period in {"daily", "30min"}:
+            sync_store = PostgresScreeningStore(_database_url())
+            with sync_store.connect() as conn:
+                asset = conn.execute(
+                    "select asset_type from screening_asset_master where asset_code = %s",
+                    (resolved_code,),
+                ).fetchone()
+            if asset and str(asset["asset_type"]) == "stock":
+                config = sync_store.get_data_management_config()["config"]
+                if config.get("stock_30m_enabled", True):
+                    on_demand_sync = _screening_sync(sync_store)
+                    today = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y%m%d")
+                    try:
+                        with _ON_DEMAND_30M_LOCKS_GUARD:
+                            asset_lock = _ON_DEMAND_30M_LOCKS.setdefault(resolved_code, threading.Lock())
+                        with asset_lock:
+                            on_demand_sync.sync_30m_bar_for_asset(resolved_code, today)
+                    except Exception as exc:
+                        raise HTTPException(status_code=502, detail=f"{resolved_code} 当日 30 分钟行情获取失败：{exc}") from exc
         bars = store.get_kline_bars(asset_code=resolved_code, period=period, adjust=adjust)
         if not bars and code_str != asset_code:
             fallback_bars = store.get_kline_bars(asset_code=asset_code, period=period, adjust=adjust)
@@ -2655,12 +3919,15 @@ def create_app() -> FastAPI:
         from backend.screening.early_turn_service import EarlyTurnService
         store = PostgresScreeningStore(_database_url())
         svc = EarlyTurnService(store=store)
-        return svc.evaluate_single_stock_range(
-            ts_code=ts_code,
-            start_date=start_date,
-            end_date=end_date,
-            strategy_id=strategy_id,
-        )
+        try:
+            return svc.evaluate_single_stock_range(
+                ts_code=ts_code,
+                start_date=start_date,
+                end_date=end_date,
+                strategy_id=strategy_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     # ── A-Pre V2 / Early Turn 早期转强实验 API ────────────────────────────────
     @app.get("/api/early-turn/runs")
@@ -2718,6 +3985,7 @@ def create_app() -> FastAPI:
         q: str | None = Query(default=None),
         industry: str | None = Query(default=None),
         concept: str | None = Query(default=None),
+        bottom_structure: str | None = Query(default=None),
         hot_theme_scope: str | None = Query(default=None),
         hot_theme: str | None = Query(default=None),
         hot_theme_all: bool = Query(default=False),
@@ -2746,6 +4014,7 @@ def create_app() -> FastAPI:
             query_text=q,
             industry=industry,
             concept=concept,
+            bottom_structure=bottom_structure,
             ts_codes=list(hot_matches.keys()) if hot_theme_scope and hot_theme_scope != "ALL" else None,
             exclude_st=exclude_st,
             fundamental_state=fundamental_state,
@@ -2784,6 +4053,7 @@ def create_app() -> FastAPI:
         q: str | None = Query(default=None),
         industry: str | None = Query(default=None),
         concept: str | None = Query(default=None),
+        bottom_structure: str | None = Query(default=None),
         exclude_st: bool = Query(default=False),
         fundamental_state: str | None = Query(default=None),
     ) -> dict[str, Any]:
@@ -2801,6 +4071,7 @@ def create_app() -> FastAPI:
                 query_text=q,
                 industry=industry,
                 concept=concept,
+                bottom_structure=bottom_structure,
                 ts_codes=list(matches.keys()),
                 exclude_st=exclude_st,
                 fundamental_state=fundamental_state,
@@ -2911,7 +4182,7 @@ def create_app() -> FastAPI:
         allowed = {
             "enabled", "timezone", "trading_days_only", "intraday_enabled",
             "intraday_interval_minutes", "intraday_start_time", "intraday_end_time",
-            "daily_enabled", "daily_run_times", "concept_enabled",
+            "daily_enabled", "daily_run_times", "weekly_enabled", "concept_enabled",
             "concept_interval_hours", "industry_enabled", "industry_interval_hours",
             "quality_check_enabled", "retry_attempts", "request_delay_seconds",
             "stock_30m_enabled", "etf_30m_enabled", "sync_log_retention_days", "sync_log_max_rows",
@@ -2983,7 +4254,9 @@ def create_app() -> FastAPI:
         target = req.trade_date.replace("-", "")
         if len(target) != 8 or not target.isdigit():
             raise HTTPException(status_code=422, detail="trade_date 必须是 YYYYMMDD")
-        asset_types = {"stock", "etf"} if req.asset_type == "all" else {req.asset_type}
+        if req.asset_type == "etf":
+            raise HTTPException(status_code=422, detail="ETF 只同步日线，30 分钟数据不提供同步")
+        asset_types = {"stock"}
         store = PostgresScreeningStore(_database_url())
         task_id = str(uuid.uuid4())
         store.create_data_task(task_id, "retry_failed_30m", target)
@@ -3098,39 +4371,15 @@ def create_app() -> FastAPI:
                 store = PostgresScreeningStore(_database_url())
                 with _screening_task_lock:
                     _screening_task_status["progress"] = 15
-                    _screening_task_status["step_message"] = "正在检查并补齐全市场 5500+ A股日线数据..."
+                    _screening_task_status["step_message"] = "正在检查并补齐全市场日线数据..."
                 task_store.update_data_task(task_id, progress=15, stage_message="正在检查并补齐全市场日线数据")
-
-                def _30m_progress(idx: int, total: int, code: str):
-                    pct = 35 + int((idx / max(total, 1)) * 50)
-                    with _screening_task_lock:
-                        _screening_task_status["progress"] = pct
-                        _screening_task_status["step_message"] = f"正在同步 30 分钟 K 线 ({code} {idx}/{total})..."
-                    task_store.update_data_task(task_id, progress=pct, stage_message=f"正在同步 30 分钟 K 线 ({code} {idx}/{total})")
 
                 result = _sync_screening_trade_date(
                     store,
                     None,
-                    progress_callback=_30m_progress,
                     stop_callback=lambda: task_store.is_data_task_cancel_requested(task_id),
                 )
                 target_date = result.get("trade_date") or ""
-                intraday = result.get("counts", {}).get("intraday_30m", {})
-                if intraday.get("status") != "PASS":
-                    raise RuntimeError(
-                        f"30分钟数据未全量完成: {intraday.get('validation') or intraday}"
-                    )
-
-                # 双重完备跳过：若该交易日全量日线与 30m K线均已完备，0.01秒瞬间结束
-                if target_date and store.has_daily_data(target_date) and store.has_30m_data(target_date):
-                    _MARKET_QUOTES_CACHE["timestamp"] = 0.0
-                    with _screening_task_lock:
-                        _screening_task_status["status"] = "success"
-                        _screening_task_status["progress"] = 100
-                        _screening_task_status["step_message"] = f"行情数据已是最新 ({target_date})，无需重复同步！"
-                        _screening_task_status["completed_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-                    task_store.update_data_task(task_id, status="SUCCESS", progress=100, stage_message=f"行情数据已是最新 ({target_date})，无需重复同步", completed_at=datetime.now(UTC), summary_json=result)
-                    return
 
                 with _screening_task_lock:
                     _screening_task_status["progress"] = 90
@@ -3142,9 +4391,9 @@ def create_app() -> FastAPI:
                 with _screening_task_lock:
                     _screening_task_status["status"] = "success"
                     _screening_task_status["progress"] = 100
-                    _screening_task_status["step_message"] = f"目标交易日 {target_date} 全量日线与 30 分钟 K 线数据已成功更新补齐！"
+                    _screening_task_status["step_message"] = f"目标交易日 {target_date} 日线数据已检查并更新；分钟线将在查看股票 K 线时获取。"
                     _screening_task_status["completed_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-                task_store.update_data_task(task_id, status="SUCCESS", progress=100, stage_message=f"目标交易日 {target_date} 数据已成功更新补齐", completed_at=datetime.now(UTC), summary_json=result)
+                task_store.update_data_task(task_id, status="SUCCESS", progress=100, stage_message=f"目标交易日 {target_date} 日线数据检查完成", completed_at=datetime.now(UTC), summary_json=result)
             except Exception as exc:
                 cancelled = "DATA_SYNC_CANCELLED" in str(exc)
                 with _screening_task_lock:
@@ -3514,46 +4763,34 @@ def create_app() -> FastAPI:
         store = PostgresScreeningStore(_database_url())
         return sync_ths_concepts(store, as_of_date=trade_date, force=force)
 
+    @app.post("/api/data/ths-concepts/stock/{ts_code}/refresh")
+    def refresh_stock_ths_concepts_endpoint(ts_code: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        from backend.screening.ths_concept_service import refresh_stock_ths_concepts
+
+        store = PostgresScreeningStore(_database_url())
+        return refresh_stock_ths_concepts(store, ts_code)
+
     @app.get("/api/candidate-secondary")
     def get_candidate_secondary_list_endpoint(
         date: str | None = Query(default=None),
         codes: str | None = Query(default=None),
     ) -> dict[str, Any]:
-        from backend.screening.secondary_eval_engine import SECONDARY_EVAL_VERSION
         store = PostgresScreeningStore(_database_url())
         as_of_date = date or store.latest_candidate_date(RULESET_VERSION) or datetime.now(UTC).strftime("%Y%m%d")
         run_info = store.get_latest_early_turn_run(as_of_date)
-        source_items: list[dict[str, Any]] = []
-        if run_info:
-            source_items = _secondary_candidate_items(store, run_info["run_id"])
-        items = store.get_candidate_secondary_list(as_of_date)
-        source_codes = {item["ts_code"] for item in source_items} if run_info else set()
-        if source_codes:
-            items = [item for item in items if item.get("ts_code") in source_codes]
+        source_items = _secondary_candidate_items(store, run_info["run_id"]) if run_info else []
+        source_codes = {str(item["ts_code"]).upper() for item in source_items}
         target_codes = set(c.strip().upper() for c in codes.split(",") if c.strip()) if codes else None
         if target_codes:
-            items = [item for item in items if item.get("ts_code") in target_codes]
+            source_items = [item for item in source_items if str(item.get("ts_code") or "").upper() in target_codes]
         requested_source_codes = source_codes.intersection(target_codes) if target_codes else source_codes
-        existing_codes = {item["ts_code"] for item in items}
-        needs_recalc = bool(requested_source_codes.difference(existing_codes))
-        needs_recalc = needs_recalc or any(
-            item.get("calc_version") != SECONDARY_EVAL_VERSION
+        items = _current_profile_secondary_items(store, source_items, str(as_of_date))
+        profile_ready_codes = {
+            item["ts_code"]
             for item in items
-            if not requested_source_codes or item.get("ts_code") in requested_source_codes
-        )
-
-        if run_info and needs_recalc and not target_codes:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "error": "SECONDARY_SNAPSHOT_INCOMPLETE",
-                    "as_of_date": as_of_date,
-                    "early_turn_count": len(source_codes),
-                    "secondary_snapshot_count": len(existing_codes),
-                    "candidate_scope": sorted(EARLY_TURN_SECONDARY_STATES),
-                    "message": "当前批次仅生成了技术选股结果，经营、题材和交易特征详情暂未生成。技术评分与生命周期状态不受影响。",
-                },
-            )
+            if item["current_profile_status"]["fundamental"] == "READY"
+            and item["current_profile_status"]["market"] == "READY"
+        }
 
         return {
             "as_of_date": as_of_date,
@@ -3561,20 +4798,56 @@ def create_app() -> FastAPI:
             "count": len(items),
             "coverage": {
                 "requested_count": len(requested_source_codes),
-                "available_count": len(existing_codes.intersection(requested_source_codes)) if requested_source_codes else len(existing_codes),
+                "available_count": len(profile_ready_codes.intersection(requested_source_codes)) if requested_source_codes else len(profile_ready_codes),
             },
         }
 
     @app.get("/api/candidate-secondary/{ts_code}")
-    def get_candidate_secondary_detail_endpoint(ts_code: str, date: str = Query(...)) -> dict[str, Any]:
+    def get_candidate_secondary_detail_endpoint(
+        ts_code: str,
+        date: str = Query(...),
+        compute: bool = Query(default=True),
+        profile_mode: str = Query(default="current"),
+    ) -> dict[str, Any]:
         from backend.screening.ai_deep_research_service import get_ai_stock_research_result
-        from backend.screening.secondary_eval_engine import SECONDARY_EVAL_VERSION, compute_theme_relative_facts, evaluate_single_secondary_candidate
+        from backend.screening.secondary_eval_engine import (
+            SECONDARY_EVAL_VERSION,
+            compute_theme_relative_facts,
+            evaluate_company_evidence,
+            evaluate_single_secondary_candidate,
+        )
+        from backend.screening.industry_sync import SW_SOURCE_VERSION
         from backend.screening.ths_concept_service import get_stock_ths_concepts
 
+        date = _normalize_trade_date(date)
+        profile_mode = str(profile_mode or "selection").strip().lower()
+        if profile_mode != "current":
+            raise HTTPException(status_code=400, detail="profile_mode must be current")
         store = PostgresScreeningStore(_database_url())
-        detail = store.get_candidate_secondary_detail(date, ts_code)
-        reuse_existing = bool(detail and detail.get("calc_version") == SECONDARY_EVAL_VERSION)
-        if not reuse_existing:
+        current_profiles: dict[str, Any] | None = None
+        if profile_mode == "current":
+            from backend.screening.current_stock_profile_service import current_stock_profile_bundle
+            try:
+                current_profiles = current_stock_profile_bundle(store, ts_code)
+            except RuntimeError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+        # Historical secondary snapshots are retained for audit only.  They must
+        # never feed a current user-facing stock profile.
+        detail: dict[str, Any] | None = {}
+        evidence_snapshot_exists = False
+        if profile_mode == "selection":
+            with store.connect() as conn:
+                evidence_snapshot_exists = bool(
+                    conn.execute(
+                        "select 1 from company_evidence_snapshot where as_of_date = %s and ts_code = %s",
+                        (date, ts_code),
+                    ).fetchone()
+                )
+        reuse_existing = evidence_snapshot_exists and bool(
+            detail and detail.get("calc_version") == SECONDARY_EVAL_VERSION
+        )
+        computed_evidence: dict[str, Any] | None = None
+        if profile_mode == "selection" and not reuse_existing and compute:
             _ensure_secondary_data_inputs(store, date, [ts_code])
             aprev2_item = None
             run_info = store.get_latest_early_turn_run(date)
@@ -3587,18 +4860,145 @@ def create_app() -> FastAPI:
                 items = early_turn_res.get("items", [])
                 aprev2_item = items[0] if items else None
             sec, ev, lead, sup = evaluate_single_secondary_candidate(store, ts_code, date, aprev2_item)
+            computed_evidence = ev
             store.save_secondary_evaluation_snapshots(date, [sec], [ev], [lead], [sup])
             detail = store.get_candidate_secondary_detail(date, ts_code)
-        if not detail:
-            raise HTTPException(status_code=500, detail="基本面研究快照生成失败")
-        detail["research_snapshot_status"] = "REUSED" if reuse_existing else "COMPUTED"
-        detail["research_snapshot_message"] = "已复用该交易日已有的基本面研究快照" if reuse_existing else "已基于该交易日基础数据生成基本面研究快照"
+            evidence_snapshot_exists = True
 
-        concepts = get_stock_ths_concepts(store, ts_code, date)
-        ai_research = get_ai_stock_research_result(store, ts_code, date)
+        # 股票基础财务数据按股票唯一维护；没有当前选股日期的研究快照时，
+        # 直接从已入库的 PIT 财务事实生成详情展示数据，但不写入日期快照。
+        if profile_mode == "current":
+            profile_result = (current_profiles or {}).get("fundamental") or {}
+            base_evidence = profile_result.get("result_json") or {}
+            if isinstance(base_evidence, str):
+                base_evidence = json.loads(base_evidence)
+            detail = detail or {}
+            for field in (
+                "latest_report_period", "latest_report_ann_date", "revenue", "revenue_yoy",
+                "parent_net_profit", "parent_net_profit_yoy", "parent_profit_state",
+                "deducted_net_profit", "deducted_net_profit_yoy", "deducted_profit_state",
+                "operating_cashflow", "operating_cashflow_yoy", "gross_margin",
+                "gross_margin_yoy_delta", "forecast_ann_date", "forecast_type",
+                "forecast_p_change_min", "forecast_p_change_max", "forecast_net_profit_min",
+                "forecast_net_profit_max", "express_ann_date", "express_end_date",
+                "express_revenue", "express_n_income", "express_yoy_net_profit",
+                "express_summary", "quarter_facts_json", "data_quality_json",
+                "company_evidence_state", "evidence_reasons", "risk_flags_json",
+                "fact_tags_json", "fundamental_filter_state", "fundamental_filter_reasons_json",
+            ):
+                detail[field] = base_evidence.get(field)
+            market_result = ((current_profiles or {}).get("market") or {}).get("result_json") or {}
+            if isinstance(market_result, str):
+                market_result = json.loads(market_result)
+            detail.update(market_result)
+            detail["current_market_trade_date"] = ((current_profiles or {}).get("market") or {}).get("market_trade_date")
+        elif not evidence_snapshot_exists:
+            base_evidence = computed_evidence or evaluate_company_evidence(store, ts_code, date)
+            if detail is None:
+                detail = {}
+            for field in (
+                "latest_report_period", "latest_report_ann_date", "revenue", "revenue_yoy",
+                "parent_net_profit", "parent_net_profit_yoy", "parent_profit_state",
+                "deducted_net_profit", "deducted_net_profit_yoy", "deducted_profit_state",
+                "operating_cashflow", "operating_cashflow_yoy", "gross_margin",
+                "gross_margin_yoy_delta", "forecast_ann_date", "forecast_type",
+                "forecast_p_change_min", "forecast_p_change_max", "forecast_net_profit_min",
+                "forecast_net_profit_max", "express_ann_date", "express_end_date",
+                "express_revenue", "express_n_income", "express_yoy_net_profit",
+                "express_summary", "quarter_facts_json", "data_quality_json",
+            ):
+                detail[field] = base_evidence.get(field)
+            # 这些字段属于“当前选股日期的分析结果”，基础详情阶段不提前伪装成已分析。
+            detail["company_evidence_state"] = None
+            detail["evidence_reasons"] = []
+            detail["risk_flags_json"] = []
+            detail["fact_tags_json"] = []
+            detail["fundamental_filter_state"] = None
+            detail["fundamental_filter_reasons_json"] = []
+
+        snapshot_status = "CURRENT_PROFILE" if profile_mode == "current" else "REUSED" if reuse_existing else "COMPUTED" if evidence_snapshot_exists else "NOT_COMPUTED"
+        detail = detail or {}
+        # 基本面快照尚未生成时，详情接口仍必须返回证券主数据和申万行业，
+        # 否则复盘抽屉在计算前会错误显示“行业暂无”。
+        sw_membership = store.load_industry_membership_for_date(str(date), SW_SOURCE_VERSION, [ts_code]).get(ts_code) or {}
+        with store.connect() as conn:
+            asset_row = conn.execute(
+                "select name, raw_json->>'main_business' as main_business, raw_json->>'industry' as legacy_industry from screening_asset_master where asset_code = %s",
+                (ts_code,),
+            ).fetchone()
+        sw_industry_l2 = sw_membership.get("l2_name")
+        sw_industry_l3 = sw_membership.get("l3_name")
+        if sw_industry_l2:
+            detail["industry"] = sw_industry_l2
+        elif not detail.get("industry") and asset_row:
+            detail["industry"] = asset_row.get("legacy_industry")
+        if not detail.get("name") and asset_row:
+            detail["name"] = asset_row.get("name")
+        if not detail.get("main_business") and asset_row:
+            detail["main_business"] = asset_row.get("main_business")
+        detail["sw_industry_l1"] = sw_membership.get("l1_name")
+        detail["sw_industry_l2"] = sw_industry_l2
+        detail["sw_industry_l3"] = sw_industry_l3
+        detail["research_snapshot_status"] = snapshot_status
+        detail["research_snapshot_message"] = (
+            "已加载当前股票档案"
+            if profile_mode == "current"
+            else "已复用该交易日已有的基本面研究快照"
+            if reuse_existing
+            else "已基于该交易日基础数据生成基本面研究快照"
+            if snapshot_status == "COMPUTED"
+            else "股票基础财务数据已加载，当前查看日期的选股分析标签尚未生成"
+        )
+
+        theme_profile = (current_profiles or {}).get("theme") if profile_mode == "current" else None
+        company_profile = (current_profiles or {}).get("company") if profile_mode == "current" else None
+        company_result = (company_profile or {}).get("result_json") or {}
+        if isinstance(company_result, str):
+            try:
+                company_result = json.loads(company_result)
+            except json.JSONDecodeError:
+                company_result = {}
+        detail["company_profile"] = company_result if isinstance(company_result, dict) else {}
+        detail["company_profile_status"] = (company_profile or {}).get("status") if company_profile else "NOT_GENERATED"
+        detail["company_profile_refreshed_at"] = (company_profile or {}).get("refreshed_at") if company_profile else None
+        company_manifest = (company_profile or {}).get("source_manifest_json") or {}
+        if isinstance(company_manifest, str):
+            try:
+                company_manifest = json.loads(company_manifest)
+            except json.JSONDecodeError:
+                company_manifest = {}
+        detail["company_profile_sources"] = company_manifest.get("sources", []) if isinstance(company_manifest, dict) else []
+        theme_memory_date = theme_profile.get("market_memory_date") if theme_profile else date
+        concepts = get_stock_ths_concepts(store, ts_code, theme_memory_date)
+        theme_match_record = theme_profile if theme_profile else (store.get_ai_stock_theme_match(ts_code, date) if profile_mode == "selection" else None)
+        if theme_match_record:
+            theme_match = theme_match_record.get("result_json") or {}
+            if isinstance(theme_match, str):
+                try:
+                    theme_match = json.loads(theme_match)
+                except json.JSONDecodeError:
+                    theme_match = {}
+            primary_theme = theme_match.get("primary_active_theme")
+            detail["theme_match_status"] = "READY"
+            detail["theme_match_name"] = primary_theme
+            detail["theme_match_concept_names"] = theme_match.get("matched_ths_concepts") or []
+            detail["theme_match_result"] = theme_match
+            detail["leadership_reasons"] = [
+                {
+                    "type": "POSITIVE" if primary_theme else "INFO",
+                    "msg": theme_match.get("match_rationale") or theme_match.get("no_match_reason") or "主题匹配已完成。",
+                }
+            ]
+            detail["theme_match_ai_elapsed_ms"] = theme_match_record.get("elapsed_ms")
+            detail["theme_match_ai_total_tokens"] = theme_match_record.get("total_tokens")
+            detail["theme_match_web_search_used"] = bool(theme_match_record.get("web_search_used"))
+        else:
+            detail["theme_match_status"] = "NOT_RUN"
+        ai_research = get_ai_stock_research_result(store, ts_code, date) if profile_mode == "selection" else None
         # AI 研究完成后，主题内表现应直接展示本次 AI 识别的近期市场主题，
         # 而不是继续沿用研究前的“待 AI 主题匹配”快照。
         if ai_research:
+            detail["theme_match_status"] = "READY"
             manifest = ai_research.get("source_manifest_json") or {}
             if isinstance(manifest, str):
                 try:
@@ -3634,6 +5034,11 @@ def create_app() -> FastAPI:
                             conn.commit()
                 detail["leadership_state"] = "READY"
                 detail["ai_theme_name"] = primary_theme
+                detail["ai_theme_concept_names"] = (
+                    theme_match.get("matched_ths_concepts")
+                    or detail.get("theme_match_concept_names")
+                    or []
+                )
                 detail["ai_theme_relative"] = relative
                 detail["leadership_reasons"] = [
                     {"type": "POSITIVE", "msg": theme_match.get("match_rationale") or f"AI 识别近期市场相关主题：{primary_theme}"}
@@ -3643,6 +5048,7 @@ def create_app() -> FastAPI:
                 # AI 已判断为未命中近期市场主题；两者的业务含义不同。
                 detail["leadership_state"] = "NO_ACTIVE_THEME_MATCH"
                 detail["ai_theme_name"] = None
+                detail["ai_theme_concept_names"] = []
                 detail["ai_theme_relative"] = {}
                 detail["leadership_reasons"] = [
                     {"type": "INFO", "msg": theme_match.get("no_match_reason") or "当前未识别到近期市场主线主题。"}
@@ -3693,6 +5099,7 @@ def create_app() -> FastAPI:
 
         return {
             "as_of_date": date,
+            "profile_mode": profile_mode,
             "ts_code": ts_code,
             "detail": detail,
             "concepts_info": concepts,
@@ -3700,6 +5107,19 @@ def create_app() -> FastAPI:
             "recent_90d_klines": recent_90d_klines,
             "selection_changes": selection_changes,
         }
+
+    @app.post("/api/candidate-secondary/{ts_code}/run")
+    def run_single_candidate_secondary_endpoint(ts_code: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Refresh one current stock profile without creating a dated snapshot."""
+        normalized_code = str(ts_code).strip().upper()
+        if not normalized_code:
+            raise HTTPException(status_code=400, detail="ts_code is required")
+        store = PostgresScreeningStore(_database_url())
+        try:
+            result = _refresh_current_profiles_for_items(store, [{"ts_code": normalized_code}])
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"status": "SUCCESS", "ts_code": normalized_code, **result}
 
     @app.post("/api/candidate-secondary/run")
     def run_candidate_secondary_endpoint(body: dict[str, Any]) -> dict[str, Any]:
@@ -3718,6 +5138,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail="最低分必须是数字")
         hot_theme_scope = str(body.get("hot_theme_scope") or "ALL")
         hot_theme = body.get("hot_theme") or None
+        bottom_structure = body.get("bottom_structure") or None
         hot_codes = None
         if hot_theme_scope != "ALL":
             from backend.screening.hot_theme_filter_service import load_hot_theme_matches
@@ -3731,6 +5152,7 @@ def create_app() -> FastAPI:
             query_text=body.get("q") or None,
             industry=body.get("industry") or None,
             concept=body.get("concept") or None,
+            bottom_structure=bottom_structure,
             ts_codes=hot_codes,
             limit=None,
         ).get("items", [])
@@ -3740,7 +5162,10 @@ def create_app() -> FastAPI:
         if not source_items:
             raise HTTPException(status_code=404, detail="当前筛选条件下没有可进行基本面研究的股票")
 
-        result = _run_secondary_evaluation_for_items(store, as_of_date, source_items)
+        try:
+            result = _refresh_current_profiles_for_items(store, source_items)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {"status": "SUCCESS", "as_of_date": as_of_date, "run_id": run_info["run_id"], **result}
 
     @app.post("/api/ai/stock-research")
@@ -3797,6 +5222,83 @@ def create_app() -> FastAPI:
         )
         return {"status": "SUBMITTED", "job_id": job_id, "as_of_date": as_of_date}
 
+    @app.post("/api/ai/stock-theme-match")
+    def run_ai_stock_theme_match_endpoint(body: dict[str, Any], background_tasks: BackgroundTasks) -> dict[str, Any]:
+        from backend.screening.ai_deep_research_service import run_ai_stock_theme_match
+
+        as_of_date = body.get("date") or body.get("as_of_date")
+        ts_code = str(body.get("ts_code") or "").strip().upper()
+        if not ts_code:
+            raise HTTPException(status_code=400, detail="ts_code is required")
+        store = PostgresScreeningStore(_database_url())
+        try:
+            if not bool(body.get("historical", False)):
+                with _stock_theme_jobs_lock:
+                    existing_job_id = _stock_theme_active_by_code.get(ts_code)
+                    if existing_job_id and existing_job_id in _stock_theme_jobs:
+                        return {"status": "SUBMITTED", "job_id": existing_job_id, "ts_code": ts_code}
+                    job_id = f"STOCKTHEME_{uuid.uuid4().hex}"
+                    _stock_theme_jobs[job_id] = {
+                        "job_id": job_id,
+                        "ts_code": ts_code,
+                        "status": "queued",
+                        "progress": 0,
+                        "step_message": "主题匹配与企业资料研究已提交，等待执行…",
+                        "error": None,
+                        "company_profile_error": None,
+                        "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    }
+                    _stock_theme_active_by_code[ts_code] = job_id
+                background_tasks.add_task(_run_stock_theme_match_job, job_id, ts_code)
+                return {"status": "SUBMITTED", "job_id": job_id, "ts_code": ts_code}
+            if not as_of_date:
+                raise HTTPException(status_code=400, detail="date is required for historical theme matching")
+            return {"status": "SUCCESS", **run_ai_stock_theme_match(store, ts_code, str(as_of_date))}
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.get("/api/ai/stock-theme-match-status/{job_id}")
+    def get_stock_theme_match_status_endpoint(job_id: str) -> dict[str, Any]:
+        with _stock_theme_jobs_lock:
+            job = _stock_theme_jobs.get(job_id)
+            if not job:
+                raise HTTPException(status_code=404, detail="主题匹配任务不存在或已过期")
+            return dict(job)
+
+    @app.get("/api/ai/stock-theme-match-status/by-stock/{ts_code}")
+    def get_stock_theme_match_status_by_stock_endpoint(ts_code: str) -> dict[str, Any]:
+        code = str(ts_code or "").strip().upper()
+        if not code:
+            raise HTTPException(status_code=400, detail="ts_code is required")
+        with _stock_theme_jobs_lock:
+            jobs = [job for job in _stock_theme_jobs.values() if job.get("ts_code") == code]
+            if not jobs:
+                return {"status": "idle", "ts_code": code, "job_id": None}
+            latest = max(jobs, key=lambda item: str(item.get("started_at") or ""))
+            return dict(latest)
+
+    @app.post("/api/stock-profiles/{ts_code}/fundamental/refresh")
+    def refresh_current_fundamental_profile_endpoint(ts_code: str) -> dict[str, Any]:
+        store = PostgresScreeningStore(_database_url())
+        try:
+            normalized_code = str(ts_code).strip().upper()
+            if not normalized_code:
+                raise HTTPException(status_code=400, detail="ts_code is required")
+            # This is an explicit user refresh.  Do not use the historical
+            # "has any financial row" gate here: that gate is suitable for
+            # avoiding duplicate background work, but it cannot detect a newly
+            # released quarterly report.  Fetch all PIT financial sources first,
+            # then rebuild the current profile from the newly stored facts.
+            financial_sync = _sync_financials_for_stock(store, normalized_code)
+            from backend.screening.current_stock_profile_service import get_or_refresh_current_fundamental_profile
+            get_or_refresh_current_fundamental_profile(store, normalized_code)
+            profile = store.get_current_stock_profile("fundamental", normalized_code)
+            if not profile:
+                raise RuntimeError("当前基本面档案刷新后无法读取")
+            return {"status": "SUCCESS", "profile": profile, "refreshed_count": 1, "financial_sync": financial_sync}
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
     @app.get("/api/ai/stock-research-status/{job_id}")
     def get_ai_stock_research_status_endpoint(job_id: str) -> dict[str, Any]:
         with _ai_research_jobs_lock:
@@ -3818,7 +5320,7 @@ def create_app() -> FastAPI:
         store = PostgresScreeningStore(_database_url())
         cached = get_cached_market_memory(store, date)
         if cached is None:
-            snapshot_status, message = _snapshot_task_state(date, _market_memory_status, _market_memory_lock)
+            snapshot_status, message = _snapshot_task_state(date, "memory", _market_memory_status, _market_memory_lock)
             return {
                 "status": snapshot_status,
                 "as_of_date": date,
@@ -3836,7 +5338,7 @@ def create_app() -> FastAPI:
         return {
             "status": "SUCCESS",
             "as_of_date": date,
-            "memory_json": memory_json,
+            "memory_json": _attach_theme_phase_daily_quotes(store, memory_json, date),
             "summary_markdown": summary_markdown,
         }
 
@@ -3847,7 +5349,7 @@ def create_app() -> FastAPI:
         store = PostgresScreeningStore(_database_url())
         cached = get_cached_v2(store, date)
         if cached is None:
-            snapshot_status, message = _snapshot_task_state(date, _market_panorama_status, _market_panorama_lock)
+            snapshot_status, message = _snapshot_task_state(date, "panorama", _market_panorama_status, _market_panorama_lock)
             return {
                 "status": snapshot_status,
                 "as_of_date": date,
@@ -3871,7 +5373,12 @@ def create_app() -> FastAPI:
         with _market_panorama_lock:
             if _market_panorama_status["running"]:
                 raise HTTPException(status_code=409, detail="市场全景正在更新")
-        background_tasks.add_task(_run_market_panorama_async, date, force_rebuild)
+        review_store = PostgresMarketReviewStore(_database_url())
+        if review_store.get_snapshot_update_job(date) is not None:
+            review_store.retry_snapshot_update_part(date, "panorama")
+            background_tasks.add_task(_start_imported_review_updates, date, force_rebuild)
+        else:
+            background_tasks.add_task(_run_market_panorama_async, date, force_rebuild)
         action = "重建" if force_rebuild else "更新"
         return {"status": "SUCCESS", "message": f"已启动 {date} 市场全景{action}"}
 
@@ -3889,7 +5396,12 @@ def create_app() -> FastAPI:
         if not date:
             raise HTTPException(status_code=400, detail="date is required")
         force_refresh = bool(body.get("force_refresh", False))
-        background_tasks.add_task(_run_market_memory_async, date, force_refresh)
+        review_store = PostgresMarketReviewStore(_database_url())
+        if review_store.get_snapshot_update_job(date) is not None:
+            review_store.retry_snapshot_update_part(date, "memory")
+            background_tasks.add_task(_start_imported_review_updates, date)
+        else:
+            background_tasks.add_task(_run_market_memory_async, date, force_refresh)
         return {"status": "SUCCESS", "message": f"已启动 {date} 市场全景后台更新任务"}
 
     @app.post("/api/market-review/market-memory/overview/trigger")
@@ -3946,7 +5458,8 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail="Group name is required")
         parent_id = body.get("parent_id")
         parent_id = int(parent_id) if parent_id is not None else None
-        group = store.create_watchlist_group(name, parent_id)
+        group_icon = str(body.get("icon") or "folder")
+        group = store.create_watchlist_group(name, parent_id, group_icon)
         return {"status": "SUCCESS", "group": group}
 
     @app.put("/api/watchlist/groups/{group_id}")
@@ -3987,7 +5500,10 @@ def create_app() -> FastAPI:
         }
 
     @app.post("/api/watchlist/stocks/toggle")
-    def toggle_watchlist_stock_endpoint(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    def toggle_watchlist_stock_endpoint(
+        background_tasks: BackgroundTasks,
+        body: dict[str, Any] = Body(...),
+    ) -> dict[str, Any]:
         store = PostgresScreeningStore(_database_url())
         asset_code = str(body.get("asset_code") or "").strip()
         if not asset_code:
@@ -4001,8 +5517,19 @@ def create_app() -> FastAPI:
             is_added = store.toggle_watchlist_stock(asset_code, group_id, source)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        profile_refresh_status = None
+        if is_added:
+            store.enqueue_watchlist_profile_refresh(asset_code)
+            background_tasks.add_task(_drain_watchlist_profile_refresh_jobs)
+            profile_refresh_status = "PENDING"
         code_set = store.get_watchlist_code_set()
-        return {"status": "SUCCESS", "asset_code": asset_code, "in_watchlist": is_added, "watchlist_codes": list(code_set)}
+        return {
+            "status": "SUCCESS",
+            "asset_code": asset_code,
+            "in_watchlist": is_added,
+            "watchlist_codes": list(code_set),
+            "profile_refresh_status": profile_refresh_status,
+        }
 
     @app.get("/api/watchlist/ai-pool")
     def get_ai_analysis_pool_endpoint() -> dict[str, Any]:

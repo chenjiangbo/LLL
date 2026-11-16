@@ -25,12 +25,29 @@ def test_gateway_maps_read_and_order_routes(monkeypatch):
             def read(self): return b'{"payload": []}'
         return Response()
 
-    monkeypatch.setattr("backend.trading.gm_broker_gateway.urlopen", fake_open)
+    monkeypatch.setattr(gateway._http, "open", fake_open)
     assert gateway.get_positions() == []
     gateway.submit_order({"request_id": "r", "client_order_id": "c"})
     assert seen[0][1].endswith("/api/v1/positions")
     assert seen[1][0] == "POST"
     assert all(item[3] is None for item in seen)
+
+
+def test_gateway_sends_broker_api_token_for_command_lookup(monkeypatch):
+    gateway = GMBrokerHttpGateway("http://node", api_token="node-token")
+    seen = []
+
+    def fake_open(request, timeout):
+        seen.append((request.method, request.full_url, request.headers.get("Authorization")))
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def read(self): return b'{"command_id": "cmd-1"}'
+        return Response()
+
+    monkeypatch.setattr(gateway._http, "open", fake_open)
+    assert gateway.get_command("cmd-1")["command_id"] == "cmd-1"
+    assert seen == [("GET", "http://node/api/v1/commands/cmd-1", "Bearer node-token")]
 
 
 def test_gateway_surfaces_http_error(monkeypatch):
